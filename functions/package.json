@@ -1,0 +1,22 @@
+{
+  "name": "acai-mais-sabor-functions",
+  "private": true,
+  "type": "module",
+  "main": "lib/functions/src/index.js",
+  "engines": { "node": "22" },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts --exclude src/create-order.integration.test.ts",
+    "test:integration": "vitest run --config vitest.config.ts src/create-order.integration.test.ts",
+    "seed:emulator": "node scripts/seed-emulator.mjs"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.6.0",
+    "firebase-functions": "^7.0.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

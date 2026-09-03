@@ -1,0 +1,15 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["nextjs", "react", "jsx-a11y", "typescript"],
+  "ignorePatterns": ["components/ui/**", "functions/lib/**", "**/node_modules/**", "dist/**"],
+  "rules": {
+    "nextjs/no-html-link-for-pages": "off",
+    "nextjs/no-img-element": "off",
+    "react/react-compiler": "off",
+    "jsx-a11y/anchor-has-content": "off",
+    "jsx-a11y/control-has-associated-label": "off",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "typescript/no-deprecated": "off",
+    "typescript/no-base-to-string": "off"
+  }
+}

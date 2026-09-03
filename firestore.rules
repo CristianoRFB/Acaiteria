@@ -1,0 +1,43 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function userRole() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
+    function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
+    function isAdmin() { return userRole() == 'admin'; }
+
+    match /storePublicConfig/{id} {
+      allow read: if true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /storePrivateConfig/{id} {
+      allow read, write: if isAdmin();
+    }
+    match /categories/{id} {
+      allow read: if isStaff() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /products/{id} {
+      allow read: if isStaff() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /modifierGroups/{id} {
+      allow read: if isStaff() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /modifiers/{id} {
+      allow read: if isStaff() || resource.data.active == true;
+      allow create, update, delete: if isAdmin();
+    }
+    match /orders/{id} {
+      allow read: if isStaff();
+      allow create, update, delete: if false;
+    }
+    match /users/{uid} {
+      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
+      allow write: if isAdmin();
+    }
+    match /orderRequests/{id} { allow read, write: if false; }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

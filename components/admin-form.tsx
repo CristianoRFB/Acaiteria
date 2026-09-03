@@ -1,0 +1,3 @@
+import type { InputHTMLAttributes, TextareaHTMLAttributes } from 'react';
+export function AdminField({ label, ...props }: InputHTMLAttributes<HTMLInputElement> & { label: string }) { return <label className="block text-sm font-bold">{label}<input {...props} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal outline-none focus:border-[#82204f]" /></label>; }
+export function AdminTextarea({ label, ...props }: TextareaHTMLAttributes<HTMLTextAreaElement> & { label: string }) { return <label className="block text-sm font-bold">{label}<textarea {...props} className="mt-2 min-h-24 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] p-3 font-mono text-xs font-normal outline-none focus:border-[#82204f]" /></label>; }
