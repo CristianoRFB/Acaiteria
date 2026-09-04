@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor' });
 const db = getFirestore();
 const endpoint = 'http://127.0.0.1:5001/demo-acai-mais-sabor/southamerica-east1/createOrder';
-const basePayload = { customer: { name: 'Cliente Integração', whatsapp: '17999999999' }, items: [{ productId: 'simple', sizeId: 'unico', quantity: 1, selections: [] }], fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX' }, clientPreviewTotalCents: 1800 };
+const basePayload = { customer: { name: 'Cliente Integração', whatsapp: '17999999999' }, items: [{ productId: 'simple', sizeId: 'unico', quantity: 1, selections: [] }], fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX', needsChange: false }, clientPreviewTotalCents: 1800 };
 
 async function call(data: unknown) {
   const response = await fetch(endpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data }) });

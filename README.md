@@ -4,6 +4,8 @@ Sistema real de pedidos personalizáveis para a operação da Açaí + Sabor em 
 
 O WhatsApp é opcional e só aparece depois que o pedido já foi salvo. Ele nunca é a fonte de verdade.
 
+O catálogo de desenvolvimento foi transcrito das duas imagens fornecidas pela loja. Ele inclui 26 combinados, copo montável, 8 grupos de acompanhamentos, milk-shakes, sorvetes, bebidas, shakes de açaí e salada de frutas. Os preços ficam em `shared/menu-data.mjs`, fonte única usada pela prévia e pelo seed do emulador.
+
 ## Arquitetura
 
 - Frontend React 19, TypeScript, Vinext/Vite e Tailwind, mobile-first.
@@ -106,15 +108,15 @@ Para maior volume, adicionar rate limit por IP/device em infraestrutura gerencia
 
 ## Dados obrigatórios antes do lançamento
 
-- WhatsApp, endereço, telefone e horário oficiais.
-- Catálogo, categorias, tamanhos, preços, grupos, cotas, premium, repetição e disponibilidade.
-- Retirada/delivery, taxa ou zonas e formas de pagamento aceitas.
+- WhatsApp, endereço e telefone oficiais.
+- Conferência final da transcrição, disponibilidade diária e regra da embalagem de viagem (cadastrada atualmente como adicional de R$ 1,00 por item).
+- Confirmação das formas de pagamento aceitas.
 - Fotos e assets autorizados. `public/development-acai-placeholder.png` é apenas desenvolvimento.
 - Política de privacidade/retenção revisada pelo responsável.
 - Usuário admin real, Firebase prod, Rules e App Check implantados.
 - Pedido real de teste e treinamento da equipe no fluxo de status.
 
-O endereço, telefone, horário, taxas e cardápio do seed não são declarações oficiais.
+O cardápio, os horários semanais e a taxa de entrega refletem as imagens e o texto fornecidos em setembro de 2026. Endereço, telefone e WhatsApp ainda não foram informados. Feriados são exibidos como orientação, mas exigem pausa/ajuste manual no painel porque o sistema semanal não consulta um calendário oficial de feriados.
 
 ## Limitações atuais
 

@@ -2,7 +2,7 @@
 
 import { onAuthStateChanged, type User } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import { developmentCatalog, developmentStoreConfig } from '@/lib/development-seed';
 import { getFirebaseClient, hasFirebaseConfig, useDevelopmentSeed } from '@/lib/firebase/client';
@@ -41,19 +41,35 @@ interface CartState {
   clear: () => void;
 }
 const CartContext = createContext<CartState | null>(null);
-const CART_KEY = 'acai-mais-sabor-cart-v1';
+const CART_KEY = 'acai-mais-sabor-cart-v2';
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItemDraft[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  useEffect(() => { try { const saved = localStorage.getItem(CART_KEY); if (saved) setItems(JSON.parse(saved)); } catch { localStorage.removeItem(CART_KEY); } setHydrated(true); }, []);
-  useEffect(() => { if (hydrated) localStorage.setItem(CART_KEY, JSON.stringify(items)); }, [hydrated, items]);
-  const add = useCallback((item: Omit<CartItemDraft, 'cartItemId'>) => { const id = crypto.randomUUID(); setItems((old) => [...old, { ...item, cartItemId: id }]); return id; }, []);
-  const update = useCallback((id: string, item: Omit<CartItemDraft, 'cartItemId'>) => setItems((old) => old.map((candidate) => candidate.cartItemId === id ? { ...item, cartItemId: id } : candidate)), []);
-  const remove = useCallback((id: string) => setItems((old) => old.filter((item) => item.cartItemId !== id)), []);
-  const setQuantity = useCallback((id: string, quantity: number) => setItems((old) => old.map((item) => item.cartItemId === id ? { ...item, quantity: Math.max(1, Math.min(20, quantity)) } : item)), []);
-  const duplicate = useCallback((id: string) => setItems((old) => { const item = old.find((candidate) => candidate.cartItemId === id); return item ? [...old, { ...item, cartItemId: crypto.randomUUID() }] : old; }), []);
-  const clear = useCallback(() => setItems([]), []);
+  const itemsRef = useRef<CartItemDraft[]>([]);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(CART_KEY);
+      const loaded = saved ? JSON.parse(saved) as CartItemDraft[] : [];
+      itemsRef.current = Array.isArray(loaded) ? loaded : [];
+      setItems(itemsRef.current);
+    } catch {
+      localStorage.removeItem(CART_KEY);
+      itemsRef.current = [];
+      setItems([]);
+    }
+  }, []);
+  const commit = useCallback((updateItems: (current: CartItemDraft[]) => CartItemDraft[]) => {
+    const next = updateItems(itemsRef.current);
+    itemsRef.current = next;
+    localStorage.setItem(CART_KEY, JSON.stringify(next));
+    setItems(next);
+  }, []);
+  const add = useCallback((item: Omit<CartItemDraft, 'cartItemId'>) => { const id = crypto.randomUUID(); commit((old) => [...old, { ...item, cartItemId: id }]); return id; }, [commit]);
+  const update = useCallback((id: string, item: Omit<CartItemDraft, 'cartItemId'>) => commit((old) => old.map((candidate) => candidate.cartItemId === id ? { ...item, cartItemId: id } : candidate)), [commit]);
+  const remove = useCallback((id: string) => commit((old) => old.filter((item) => item.cartItemId !== id)), [commit]);
+  const setQuantity = useCallback((id: string, quantity: number) => commit((old) => old.map((item) => item.cartItemId === id ? { ...item, quantity: Math.max(1, Math.min(20, quantity)) } : item)), [commit]);
+  const duplicate = useCallback((id: string) => commit((old) => { const item = old.find((candidate) => candidate.cartItemId === id); return item ? [...old, { ...item, cartItemId: crypto.randomUUID() }] : old; }), [commit]);
+  const clear = useCallback(() => commit(() => []), [commit]);
   const value = useMemo(() => ({ items, add, update, remove, setQuantity, duplicate, clear }), [items, add, update, remove, setQuantity, duplicate, clear]);
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

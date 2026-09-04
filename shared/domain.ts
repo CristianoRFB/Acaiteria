@@ -6,6 +6,19 @@ export type Role = 'admin' | 'staff';
 export interface StoreHoursWindow { open: string; close: string }
 export interface StoreDayHours { day: number; closed: boolean; windows: StoreHoursWindow[] }
 export interface DeliveryZone { id: string; name: string; feeCents: number; active: boolean }
+export type StoreScheduleConfig = Pick<StorePublicConfig, 'hours' | 'timezone'> & Partial<Pick<StorePublicConfig, 'holidayDates' | 'holidayHours'>>;
+export interface BusinessHoursForDate extends StoreDayHours { date: string; isHoliday: boolean }
+export interface NextOpening { date: string; day: number; open: string; close: string; isHoliday: boolean; dayOffset: number }
+export interface DeliveryEstimate { label: string; detail: string; busy: boolean }
+export interface StoreAvailability {
+  acceptingOrders: boolean;
+  scheduleOpen: boolean;
+  reason: 'OPEN' | 'INACTIVE' | 'PAUSED' | 'OUTSIDE_HOURS';
+  today: BusinessHoursForDate;
+  closesAt?: string;
+  nextOpening: NextOpening | null;
+  estimate: DeliveryEstimate;
+}
 export interface StorePublicConfig {
   storeName: string;
   instagramHandle?: string;
@@ -19,9 +32,16 @@ export interface StorePublicConfig {
   enforceHours: boolean;
   timezone: string;
   hours: StoreDayHours[];
+  holidayDates?: string[];
+  holidayHours?: StoreHoursWindow[];
   fulfillmentModes: FulfillmentMode[];
   paymentMethods: Array<'PIX' | 'CARD' | 'CASH'>;
   deliveryConfig: { mode: DeliveryMode; fixedFeeCents?: number; zones?: DeliveryZone[] };
+  orderInstructions?: string;
+  deliveryEstimate?: string;
+  busyDeliveryEstimate?: string;
+  holidayHoursNote?: string;
+  gratitudeMessage?: string;
   privacyNotice?: string;
   status: 'ACTIVE' | 'INACTIVE';
   updatedAt?: unknown;
@@ -256,20 +276,123 @@ export function calculateCartPreview(items: CartItemDraft[], catalog: CatalogSna
   return { items: priced, subtotalCents: sumMoney(priced.map((item) => item.totalPriceCents)) };
 }
 
-export function isStoreOpen(now: Date, config: Pick<StorePublicConfig, 'hours' | 'timezone'>): boolean {
-  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: config.timezone, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+
+function getZonedParts(now: Date, timezone: string): { date: string; day: number; minutes: number } {
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: timezone, year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   const parts = Object.fromEntries(formatter.formatToParts(now).map((part) => [part.type, part.value]));
-  const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  const day = config.hours.find((candidate) => candidate.day === dayMap[parts.weekday]);
-  if (!day || day.closed) return false;
-  const minutes = Number(parts.hour) * 60 + Number(parts.minute);
-  return day.windows.some((window) => {
-    const [openHour, openMinute] = window.open.split(':').map(Number);
-    const [closeHour, closeMinute] = window.close.split(':').map(Number);
-    const start = openHour * 60 + openMinute;
-    const end = closeHour * 60 + closeMinute;
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    day: dayMap[parts.weekday],
+    minutes: Number(parts.hour) * 60 + Number(parts.minute),
+  };
+}
+
+function timeToMinutes(value: string): number {
+  const [hour, minute] = value.split(':').map(Number);
+  return hour * 60 + minute;
+}
+
+export function getBusinessHours(now: Date, config: StoreScheduleConfig): BusinessHoursForDate {
+  const zoned = getZonedParts(now, config.timezone);
+  const isHoliday = Boolean(config.holidayDates?.includes(zoned.date));
+  if (isHoliday) return { date: zoned.date, day: zoned.day, closed: !(config.holidayHours?.length), windows: config.holidayHours ?? [], isHoliday: true };
+  const weekly = config.hours.find((candidate) => candidate.day === zoned.day);
+  return { date: zoned.date, day: zoned.day, closed: weekly?.closed ?? true, windows: weekly?.windows ?? [], isHoliday: false };
+}
+
+export function getTodayDeliveryHours(now: Date, config: StoreScheduleConfig): string {
+  const schedule = getBusinessHours(now, config);
+  return schedule.closed || !schedule.windows.length ? 'Fechado' : schedule.windows.map((window) => `${window.open} às ${window.close}`).join(' / ');
+}
+
+export function isStoreOpen(now: Date, config: StoreScheduleConfig): boolean {
+  try {
+    const schedule = getBusinessHours(now, config);
+    if (schedule.closed) return false;
+    const minutes = getZonedParts(now, config.timezone).minutes;
+    return schedule.windows.some((window) => {
+      const start = timeToMinutes(window.open);
+      const end = timeToMinutes(window.close);
+      return Number.isFinite(start) && Number.isFinite(end) && (end >= start ? minutes >= start && minutes < end : minutes >= start || minutes < end);
+    });
+  } catch {
+    return false;
+  }
+}
+
+export function getNextOpening(now: Date, config: StoreScheduleConfig): NextOpening | null {
+  try {
+    const current = getZonedParts(now, config.timezone);
+    const seenDates = new Set<string>();
+    for (let offset = 0; offset <= 370; offset += 1) {
+      const probe = new Date(now.getTime() + offset * 86_400_000);
+      const zoned = getZonedParts(probe, config.timezone);
+      if (seenDates.has(zoned.date)) continue;
+      seenDates.add(zoned.date);
+      const schedule = getBusinessHours(probe, config);
+      if (schedule.closed) continue;
+      for (const window of [...schedule.windows].sort((a, b) => a.open.localeCompare(b.open))) {
+        const startsAt = timeToMinutes(window.open);
+        if (!Number.isFinite(startsAt) || !Number.isFinite(timeToMinutes(window.close))) continue;
+        if (zoned.date === current.date && startsAt <= current.minutes) continue;
+        return { date: zoned.date, day: zoned.day, open: window.open, close: window.close, isHoliday: schedule.isHoliday, dayOffset: seenDates.size - 1 };
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export function formatNextOpening(next: NextOpening | null): string {
+  if (!next) return 'Sem próxima abertura configurada';
+  if (next.dayOffset === 0) return `Hoje às ${next.open}`;
+  if (next.dayOffset === 1) return `Amanhã às ${next.open}`;
+  const names = ['domingo', 'segunda-feira', 'terça-feira', 'quarta-feira', 'quinta-feira', 'sexta-feira', 'sábado'];
+  return `${names[next.day]} às ${next.open}`;
+}
+
+export function getDeliveryEstimate(now: Date, config: StoreScheduleConfig): DeliveryEstimate {
+  let busy = true;
+  try {
+    const schedule = getBusinessHours(now, config);
+    busy = schedule.isHoliday || schedule.day === 0 || schedule.day === 6;
+  } catch {
+    // An invalid timezone/configuration must never produce an optimistic promise.
+  }
+  return busy
+    ? { label: 'a partir de 60 min', detail: 'O tempo pode variar conforme a demanda.', busy: true }
+    : { label: '30–40 min', detail: 'O tempo pode variar conforme a demanda.', busy: false };
+}
+
+export function getStoreAvailability(now: Date, config: StorePublicConfig): StoreAvailability {
+  let today: BusinessHoursForDate;
+  try {
+    today = getBusinessHours(now, config);
+  } catch {
+    today = { date: '', day: 0, closed: true, windows: [], isHoliday: false };
+  }
+  const scheduleOpen = isStoreOpen(now, config);
+  const active = config.status === 'ACTIVE';
+  const enabled = config.orderingEnabled;
+  const acceptingOrders = active && enabled && (!config.enforceHours || scheduleOpen);
+  const reason = !active ? 'INACTIVE' : !enabled ? 'PAUSED' : config.enforceHours && !scheduleOpen ? 'OUTSIDE_HOURS' : 'OPEN';
+  const minutes = (() => { try { return getZonedParts(now, config.timezone).minutes; } catch { return -1; } })();
+  const currentWindow = scheduleOpen ? today.windows.find((window) => {
+    const start = timeToMinutes(window.open);
+    const end = timeToMinutes(window.close);
     return end >= start ? minutes >= start && minutes < end : minutes >= start || minutes < end;
-  });
+  }) : undefined;
+  return {
+    acceptingOrders,
+    scheduleOpen,
+    reason,
+    today,
+    ...(currentWindow ? { closesAt: currentWindow.close } : {}),
+    nextOpening: scheduleOpen ? null : getNextOpening(now, config),
+    estimate: getDeliveryEstimate(now, config),
+  };
 }
 
 export function normalizePhone(value: string): string {

@@ -9,7 +9,8 @@ import { z } from 'zod';
 import {
   calculateCartPreview,
   calculateDeliveryFee,
-  isStoreOpen,
+  formatNextOpening,
+  getStoreAvailability,
   normalizePhone,
   ORDER_TRANSITIONS,
   type CatalogSnapshot,
@@ -27,15 +28,17 @@ const selectionSchema = z.object({ groupId: z.string().min(1).max(100), items: z
 const itemSchema = z.object({ productId: z.string().min(1).max(100), sizeId: z.string().min(1).max(100), quantity: z.number().int().min(1).max(20), selections: z.array(selectionSchema).max(30), notes: z.string().trim().max(300).optional() });
 export const createOrderSchema = z.object({
   clientRequestId: z.uuid(),
-  customer: z.object({ name: z.string().trim().min(2).max(80), whatsapp: z.string().min(8).max(30), address: z.object({ street: z.string().trim().min(2).max(120), number: z.string().trim().min(1).max(20), neighborhood: z.string().trim().min(2).max(80), reference: z.string().trim().max(120).optional() }).optional() }),
+  customer: z.object({ name: z.string().trim().min(2).max(80), whatsapp: z.string().min(8).max(30), address: z.object({ street: z.string().trim().min(2).max(120), number: z.string().trim().min(1).max(20), complement: z.string().trim().max(80).optional(), neighborhood: z.string().trim().min(2).max(80), reference: z.string().trim().max(120).optional() }).optional() }),
   items: z.array(itemSchema).min(1).max(30),
   fulfillment: z.object({ mode: z.enum(['PICKUP', 'DELIVERY']), zoneId: z.string().max(100).optional() }),
-  payment: z.object({ method: z.enum(['PIX', 'CARD', 'CASH']), changeForCents: z.number().int().min(0).max(1_000_000).optional() }),
+  payment: z.object({ method: z.enum(['PIX', 'CARD', 'CASH']), needsChange: z.boolean(), changeForCents: z.number().int().min(0).max(1_000_000).optional() }),
   notes: z.string().trim().max(500).optional(),
   clientPreviewTotalCents: z.number().int().min(0).max(10_000_000).optional(),
 }).superRefine((value, context) => {
   if (value.fulfillment.mode === 'DELIVERY' && !value.customer.address) context.addIssue({ code: 'custom', message: 'Endereço obrigatório para delivery.', path: ['customer', 'address'] });
-  if (value.payment.method !== 'CASH' && value.payment.changeForCents !== undefined) context.addIssue({ code: 'custom', message: 'Troco só pode ser informado para dinheiro.', path: ['payment', 'changeForCents'] });
+  if (value.payment.method !== 'CASH' && (value.payment.needsChange || value.payment.changeForCents !== undefined)) context.addIssue({ code: 'custom', message: 'Troco só pode ser informado para dinheiro.', path: ['payment', 'needsChange'] });
+  if (value.payment.method === 'CASH' && value.payment.needsChange && value.payment.changeForCents === undefined) context.addIssue({ code: 'custom', message: 'Informe para quanto precisa de troco.', path: ['payment', 'changeForCents'] });
+  if (value.payment.method === 'CASH' && !value.payment.needsChange && value.payment.changeForCents !== undefined) context.addIssue({ code: 'custom', message: 'Remova o valor do troco ou marque que precisa de troco.', path: ['payment', 'changeForCents'] });
 });
 
 async function loadCatalog(): Promise<{ catalog: CatalogSnapshot; config: StorePublicConfig }> {
@@ -54,8 +57,8 @@ async function loadCatalog(): Promise<{ catalog: CatalogSnapshot; config: StoreP
   };
 }
 
-function makeOrderNumber(now = new Date()): string {
-  const day = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: '2-digit', month: '2-digit', day: '2-digit' }).format(now).replace(/-/g, '');
+function makeOrderNumber(now = new Date(), timeZone = 'America/Sao_Paulo'): string {
+  const day = new Intl.DateTimeFormat('en-CA', { timeZone, year: '2-digit', month: '2-digit', day: '2-digit' }).format(now).replace(/-/g, '');
   return `#A${day}${randomBytes(2).toString('hex').toUpperCase()}`;
 }
 function makePublicCode(): string { return randomBytes(16).toString('base64url'); }
@@ -73,8 +76,15 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
   }
 
   const { catalog, config } = await loadCatalog();
-  if (config.status !== 'ACTIVE' || !config.orderingEnabled) throw new HttpsError('failed-precondition', config.pauseMessage || 'Pedidos pausados pela loja.');
-  if (config.enforceHours && !isStoreOpen(new Date(), config)) throw new HttpsError('failed-precondition', 'A loja está fechada para novos pedidos.');
+  const requestTime = new Date();
+  const availability = getStoreAvailability(requestTime, config);
+  if (!availability.acceptingOrders) {
+    const message = availability.reason === 'INACTIVE' || availability.reason === 'PAUSED'
+      ? config.pauseMessage || 'Pedidos pausados pela loja.'
+      : 'A loja está fechada para novos pedidos.';
+    const nextOpening = availability.nextOpening ? ` Próxima abertura: ${formatNextOpening(availability.nextOpening)}.` : '';
+    throw new HttpsError('failed-precondition', `${message}${nextOpening}`);
+  }
   if (!config.fulfillmentModes.includes(input.fulfillment.mode)) throw new HttpsError('failed-precondition', 'Forma de recebimento indisponível.');
   if (!config.paymentMethods.includes(input.payment.method)) throw new HttpsError('failed-precondition', 'Forma de pagamento indisponível.');
 
@@ -86,6 +96,9 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
   let deliveryFeeCents: number;
   try { deliveryFeeCents = calculateDeliveryFee(config.deliveryConfig, input.fulfillment.mode, input.fulfillment.zoneId); } catch (cause) { throw new HttpsError('failed-precondition', cause instanceof Error ? cause.message : 'Delivery inválido.'); }
   const totalCents = cart.subtotalCents + deliveryFeeCents;
+  if (input.payment.method === 'CASH' && input.payment.needsChange && input.payment.changeForCents! < totalCents) {
+    throw new HttpsError('invalid-argument', 'O valor para troco precisa ser igual ou maior que o total do pedido.');
+  }
   if (input.clientPreviewTotalCents !== undefined && input.clientPreviewTotalCents !== totalCents) {
     logger.info('createOrder price changed', { requestId, preview: input.clientPreviewTotalCents, canonical: totalCents });
     throw new HttpsError('failed-precondition', `O cardápio mudou. O novo total é ${(totalCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}. Revise e confirme novamente.`);
@@ -95,7 +108,7 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
 
   const orderRef = db.collection('orders').doc();
   const requestRef = db.doc(`orderRequests/${input.clientRequestId}`);
-  const orderNumber = makeOrderNumber();
+  const orderNumber = makeOrderNumber(requestTime, config.timezone);
   const publicCode = makePublicCode();
   const now = FieldValue.serverTimestamp();
   const orderData = {
