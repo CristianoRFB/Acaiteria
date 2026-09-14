@@ -1,0 +1,22 @@
+export type Stage='confirmation'|'art'|'digitizing'|'approval'|'ready'|'production'|'finishing'|'done'|'delivered';
+export type Priority='normal'|'high'|'urgent';
+export type Personalization={id:string;text:string;role?:string;size?:string;font:string;threadColor:string};
+export type Spec={placement:string;width:number;height:number;colors:string[];stitches:number;hoop:string;material:string;stabilizer?:string;notes?:string};
+export type OrderItem={id:string;description:string;productType:string;quantity:number;sizes:Record<string,number>;garmentColor:string;source:'customer'|'studio';personalizations:Personalization[];spec:Spec;artworkId?:string;matrixId?:string;completed:number};
+export type Activity={id:string;at:string;label:string};
+export type Order={id:string;number:number;customerId:string;createdAt:string;promisedAt:string;priority:Priority;source:'WhatsApp'|'Indicação'|'Recorrente'|'Orçamento';status:Stage;items:OrderItem[];total:number;paid:number;delivery:{mode:'Retirada'|'Entrega local'|'Envio';status:'Pendente'|'Pronto'|'Enviado'|'Entregue';carrier?:string;tracking?:string};notes?:string;sourceQuoteId?:string;activity:Activity[]};
+export type Customer={id:string;name:string;company?:string;phone:string;city:string;type:'consumer'|'business';notes?:string;createdAt:string};
+export type ArtVersion={id:string;number:number;type:'original'|'proof'|'digitized-preview'|'production';fileName:string;format:string;createdAt:string;status:'draft'|'sent'|'changes'|'approved'|'ready';notes?:string};
+export type Artwork={id:string;orderItemId:string;status:'received'|'digitizing'|'proof'|'awaiting'|'changes'|'approved'|'production-ready';versions:ArtVersion[];currentVersionId:string;approvedVersionId?:string;changes:{id:string;fromVersionId:string;at:string;text:string;resolvedByVersionId?:string}[]};
+export type Matrix={id:string;name:string;customerId?:string;width:number;height:number;stitches:number;colors:string[];hoop:string;formats:string[];status:'ready'|'review';createdAt:string;lastUsedAt:string;compatibility:string;uses:string[]};
+export type Quote={id:string;number:number;customerId:string;createdAt:string;validUntil:string;status:'draft'|'sent'|'approved'|'converted';description:string;quantity:number;digitizingFee:number;urgencyFee:number;shippingFee:number;discount:number;total:number;notes?:string;convertedOrderId?:string};
+export type Material={id:string;category:'Linha'|'Peça em branco'|'Insumo';code:string;name:string;unit:string;stock:number;minimum:number;color?:string};
+export type DemoState={version:2;seededAt:string;customers:Customer[];orders:Order[];artworks:Artwork[];matrices:Matrix[];quotes:Quote[];materials:Material[]};
+export const WORKFLOW:{id:Stage;label:string}[]=[{id:'confirmation',label:'Aguardando sinal'},{id:'art',label:'Arte pendente'},{id:'digitizing',label:'Digitalização'},{id:'approval',label:'Aguardando aprovação'},{id:'ready',label:'Pronto para produção'},{id:'production',label:'Em produção'},{id:'finishing',label:'Acabamento'},{id:'done',label:'Pronto'},{id:'delivered',label:'Entregue / Enviado'}];
+export const stageLabel=(stage:Stage)=>WORKFLOW.find((item)=>item.id===stage)?.label??stage;
+export const formatMoney=(value:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(value);
+export const formatDate=(value:string)=>new Intl.DateTimeFormat('pt-BR').format(new Date(`${value}T12:00:00`));
+export const orderQuantity=(order:Order)=>order.items.reduce((sum,item)=>sum+item.quantity,0);
+export const completedQuantity=(order:Order)=>order.items.reduce((sum,item)=>sum+item.completed,0);
+export const balance=(order:Order)=>Math.max(0,order.total-order.paid);
+export function validateState(input:unknown):input is DemoState{if(!input||typeof input!=='object')return false;const x=input as Partial<DemoState>;return x.version===2&&Array.isArray(x.orders)&&Array.isArray(x.customers)&&Array.isArray(x.matrices)&&Array.isArray(x.artworks)&&Array.isArray(x.quotes)&&Array.isArray(x.materials)&&x.orders.every(o=>o.items.every(i=>i.completed>=0&&i.completed<=i.quantity&&i.personalizations.length<=i.quantity))&&x.artworks.every(a=>a.versions.some(v=>v.id===a.currentVersionId)&&(!a.approvedVersionId||a.versions.some(v=>v.id===a.approvedVersionId)));}
