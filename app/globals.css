@@ -50,6 +50,15 @@
 
 body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+img, svg, video, canvas { max-width: 100%; }
+
+@media (max-width: 639px) {
+  h1 { overflow-wrap: anywhere; }
+  button, a { max-width: 100%; }
 }
 
 :root {
