@@ -2,7 +2,7 @@ import {describe,expect,it} from 'vitest';
 import {balance,completedQuantity,orderQuantity,validateState} from './domain';
 import {createSeed} from './seed';
 
-describe('domínio da demonstração de bordados',()=>{
+describe('domínio da demonstração de açaís e sorvetes',()=>{
   const state=createSeed(new Date('2026-08-27T12:00:00'));
 
   it('gera IDs, números e referências consistentes',()=>{
