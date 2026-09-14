@@ -18,14 +18,19 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       setState({ catalog: developmentCatalog, config: developmentStoreConfig, loading: false, development: true });
       return;
     }
-    const { db } = getFirebaseClient();
+    let db;
+    try { db = getFirebaseClient().db; } catch (error) {
+      setState((old) => ({ ...old, loading: false, error: error instanceof Error ? error.message : 'Firebase indisponível.' }));
+      return;
+    }
     const stops: Array<() => void> = [];
     const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig };
     const publish = () => setState({ ...next, catalog: { ...next.catalog }, loading: false, development: false });
     stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { if (snap.exists()) next.config = snap.data() as StorePublicConfig; publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
     const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => { (next.catalog[key] as T[]) = snap.docs.map((item) => ({ id: item.id, ...item.data() }) as T); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
     stops.push(subscribe('categories', 'categories'), subscribe('products', 'products'), subscribe('modifierGroups', 'groups'), subscribe('modifiers', 'modifiers'));
-    return () => stops.forEach((stop) => stop());
+    const timeout = window.setTimeout(() => setState((old) => old.loading ? { ...old, loading: false, error: 'Não foi possível conectar ao Firebase. Verifique a configuração e tente novamente.' } : old), 10000);
+    return () => { window.clearTimeout(timeout); stops.forEach((stop) => stop()); };
   }, []);
   return <CatalogContext.Provider value={state}>{children}</CatalogContext.Provider>;
 }
