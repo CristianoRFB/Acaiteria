@@ -37,6 +37,7 @@ export default function CheckoutPage() {
   const [zoneId, setZoneId] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [whatsappFallbackUrl, setWhatsappFallbackUrl] = useState('');
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
@@ -116,6 +117,20 @@ export default function CheckoutPage() {
     } catch (cause: unknown) {
       const message = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';
       setError(message);
+      const number = config.whatsappNumber?.replace(/\D/g, '');
+      if (number) {
+        const lines = [
+          'Olá! Quero fazer este pedido:',
+          ...preview.items.map((item) => `- ${item.quantity}x ${item.productName} (${item.sizeLabel}) — ${formatBRL(item.totalPriceCents)}`),
+          `Total previsto: ${formatBRL(totalCents)}`,
+          `Nome: ${fields.name}`,
+          `WhatsApp: ${fields.whatsapp}`,
+          fulfillment === 'DELIVERY' ? `Endereço: ${fields.street}, ${fields.number} - ${fields.neighborhood}` : 'Retirada na loja',
+          `Pagamento: ${paymentLabels[paymentMethod]}${paymentMethod === 'CASH' && needsChange ? ` (troco para ${formatBRL(changeForCents ?? 0)})` : ''}`,
+          fields.orderNotes ? `Observação: ${fields.orderNotes}` : '',
+        ].filter(Boolean).join('\n');
+        setWhatsappFallbackUrl(`https://wa.me/${number}?text=${encodeURIComponent(lines)}`);
+      }
       setSubmitting(false);
     }
   }
@@ -161,7 +176,7 @@ export default function CheckoutPage() {
           <textarea id="orderNotes" name="orderNotes" maxLength={500} value={fields.orderNotes} onChange={(event) => updateField('orderNotes', event.target.value)} className="min-h-24 w-full rounded-[18px] border border-[#82204f]/15 bg-[#fffaf5] p-4 text-sm outline-none focus:border-[#82204f]" placeholder="Opcional" />
         </CheckoutSection>
 
-        {error && <div role="alert" aria-live="assertive" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800">{error}<span className="mt-1 block font-normal">Seu carrinho e os dados preenchidos foram preservados.</span></div>}
+        {error && <div role="alert" aria-live="assertive" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800"><p>{error}</p><span className="mt-1 block font-normal">Seu carrinho e os dados preenchidos foram preservados.</span>{whatsappFallbackUrl && <a href={whatsappFallbackUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-full bg-[#1f9d55] px-4 py-2 font-bold text-white">Enviar pedido pelo WhatsApp</a>}</div>}
       </div>
 
       <aside><div className="sticky top-26 rounded-[28px] bg-[#351924] p-6 text-white shadow-[0_22px_50px_rgba(53,25,36,.16)]">
