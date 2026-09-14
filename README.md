@@ -2,7 +2,7 @@
 
 Sistema real de pedidos personalizáveis para a operação da Açaí + Sabor em Santa Fé do Sul. O cliente monta o produto, vê uma prévia do preço, finaliza sem conta e recebe um código. A Cloud Function valida novamente o cardápio e calcula o valor canônico antes de persistir o pedido. A equipe acompanha e atualiza a fila no painel autenticado.
 
-O WhatsApp é opcional e só aparece depois que o pedido já foi salvo. Ele nunca é a fonte de verdade.
+No modo gratuito atual, o checkout envia o pedido montado diretamente para o WhatsApp oficial da loja via link `wa.me`, sem Cloud Functions e sem upgrade de plano.
 
 O catálogo de desenvolvimento foi transcrito das duas imagens fornecidas pela loja. Ele inclui 26 combinados, copo montável, 8 grupos de acompanhamentos, milk-shakes, sorvetes, bebidas, shakes de açaí e salada de frutas. Os preços ficam em `shared/menu-data.mjs`, fonte única usada pela prévia e pelo seed do emulador.
 
@@ -11,8 +11,7 @@ O catálogo de desenvolvimento foi transcrito das duas imagens fornecidas pela l
 - Frontend React 19, TypeScript, Vinext/Vite e Tailwind, mobile-first.
 - Firebase Authentication para `admin` e `staff`.
 - Cloud Firestore para configuração, catálogo, usuários e pedidos.
-- Cloud Functions v2 em `southamerica-east1` para `createOrder`, `getPublicOrder`, `updateOrderStatus` e renderização do frontend.
-- Firebase Hosting serve os assets e encaminha rotas para a Function `web`.
+- O checkout possui fallback gratuito para WhatsApp quando Functions não estão disponíveis.
 - Rules deny-by-default; pedidos não aceitam leitura/escrita pública direta.
 - Emuladores de Auth, Firestore, Functions e Hosting para desenvolvimento.
 
@@ -20,7 +19,24 @@ Coleções: `storePublicConfig`, `storePrivateConfig`, `categories`, `products`,
 
 ## Fluxo
 
-Cliente → catálogo Firestore → configurador dinâmico → carrinho local (somente draft) → `createOrder` → validação/preço server-side → snapshot em `orders` → fila do admin → status rastreável → WhatsApp opcional.
+Cliente → catálogo Firestore → configurador dinâmico → carrinho → checkout → mensagem completa no WhatsApp da loja. O painel admin gerencia catálogo, adicionais, horários e configurações.
+
+## Telas e rotas
+
+Versão publicada: https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site
+
+- `/` — cardápio e categorias
+- `/montar` — monte seu açaí interativo
+- `/carrinho` — itens e totais
+- `/checkout` — endereço, pagamento e troco
+- `/admin/login` — login administrativo
+- `/admin` — visão geral da operação
+- `/admin/pedidos` — fila de pedidos
+- `/admin/catalogo` — produtos e preços
+- `/admin/adicionais` — grupos e complementos
+- `/admin/configuracoes` — loja, horários e WhatsApp
+
+As telas são responsivas e podem ser visualizadas diretamente no link de produção acima.
 
 ## Rodar localmente
 
