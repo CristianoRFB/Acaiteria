@@ -7,7 +7,7 @@ import { useEffect, type ReactNode } from 'react';
 import { useAuth } from '@/components/providers';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 
-const links = [{ href: '/admin', label: 'Visão geral', icon: LayoutDashboard }, { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag }, { href: '/admin/catalogo', label: 'Catálogo', icon: Boxes }, { href: '/admin/adicionais', label: 'Adicionais', icon: SlidersHorizontal }, { href: '/admin/configuracoes', label: 'Configurações', icon: Settings }];
+const links = [{ href: '/admin/integracao', label: 'Integração Saipos', icon: SlidersHorizontal }, { href: '/admin', label: 'Visão geral', icon: LayoutDashboard }, { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag }, { href: '/admin/catalogo', label: 'Catálogo', icon: Boxes }, { href: '/admin/adicionais', label: 'Adicionais', icon: SlidersHorizontal }, { href: '/admin/configuracoes', label: 'Configurações', icon: Settings }];
 export function AdminShell({ children, adminOnly = false }: { children: ReactNode; adminOnly?: boolean }) {
   const { user, role, loading } = useAuth();
   useEffect(() => { if (!loading && (!user || !role)) window.location.href = '/admin/login'; }, [loading, user, role]);

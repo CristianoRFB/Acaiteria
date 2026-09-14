@@ -15,7 +15,8 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-export const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId);
+export const hasFirebaseConfig = Boolean(firebaseConfig.apiKey && firebaseConfig.projectId && firebaseConfig.appId)
+  && !(process.env.NODE_ENV === 'production' && (firebaseConfig.projectId?.startsWith('demo-') || process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true'));
 export const useDevelopmentSeed = process.env.NODE_ENV === 'development' && process.env.NEXT_PUBLIC_USE_DEVELOPMENT_SEED !== 'false';
 
 let app: FirebaseApp | null = null;

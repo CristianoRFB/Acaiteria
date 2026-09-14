@@ -1,5 +1,6 @@
 {
   "indexes": [
+    { "collectionGroup": "orders", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "integration.status", "order": "ASCENDING" }, { "fieldPath": "updatedAt", "order": "ASCENDING" }] },
     { "collectionGroup": "products", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "active", "order": "ASCENDING" }, { "fieldPath": "displayOrder", "order": "ASCENDING" }] },
     { "collectionGroup": "categories", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "active", "order": "ASCENDING" }, { "fieldPath": "displayOrder", "order": "ASCENDING" }] },
     { "collectionGroup": "modifierGroups", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "active", "order": "ASCENDING" }, { "fieldPath": "displayOrder", "order": "ASCENDING" }] },

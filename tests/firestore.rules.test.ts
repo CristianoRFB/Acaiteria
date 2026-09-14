@@ -26,6 +26,8 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDocs(collection(db, 'orders')));
     await assertFails(getDoc(doc(db, 'orders', 'secret')));
     await assertFails(getDoc(doc(db, 'users', 'admin-uid')));
+    await assertFails(getDoc(doc(db, 'integrationConfig', 'saipos')));
+    await assertFails(getDocs(collection(db, 'orders', 'secret', 'integrationAttempts')));
   });
   it('staff lê pedidos, mas não ganha escrita administrativa', async () => {
     const db = env.authenticatedContext('staff-uid').firestore();
@@ -38,5 +40,6 @@ describe('Firestore Rules deny by default', () => {
     await assertSucceeds(setDoc(doc(db, 'products', 'new'), { active: true, displayOrder: 2 }));
     await assertSucceeds(setDoc(doc(db, 'storePublicConfig', 'main'), { orderingEnabled: true }));
     await assertFails(setDoc(doc(db, 'orders', 'bypass'), { status: 'COMPLETED' }));
+    await assertFails(setDoc(doc(db, 'integrationConfig', 'saipos'), { mappings: {} }));
   });
 });

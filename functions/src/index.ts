@@ -1,10 +1,16 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
+import { onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
+import { configuredMode } from './integration/provider.js';
+import { processIntegration } from './integration/service.js';
+import { customerIntegrationMessage } from '../../shared/integration.js';
+export { getIntegrationReadiness, saveIntegrationMappings, retryOrderIntegration } from './integration/admin.js';
 
 import {
   calculateCartPreview,
@@ -28,6 +34,7 @@ const selectionSchema = z.object({ groupId: z.string().min(1).max(100), items: z
 const itemSchema = z.object({ productId: z.string().min(1).max(100), sizeId: z.string().min(1).max(100), quantity: z.number().int().min(1).max(20), selections: z.array(selectionSchema).max(30), notes: z.string().trim().max(300).optional() });
 export const createOrderSchema = z.object({
   clientRequestId: z.uuid(),
+  source: z.enum(['WEB', 'QR', 'TABLET', 'TOTEM']).default('WEB'),
   customer: z.object({ name: z.string().trim().min(2).max(80), whatsapp: z.string().min(8).max(30), address: z.object({ street: z.string().trim().min(2).max(120), number: z.string().trim().min(1).max(20), complement: z.string().trim().max(80).optional(), neighborhood: z.string().trim().min(2).max(80), reference: z.string().trim().max(120).optional() }).optional() }),
   items: z.array(itemSchema).min(1).max(30),
   fulfillment: z.object({ mode: z.enum(['PICKUP', 'DELIVERY']), zoneId: z.string().max(100).optional() }),
@@ -69,8 +76,10 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
   const parsed = createOrderSchema.safeParse(request.data);
   if (!parsed.success) { logger.warn('createOrder invalid payload', { requestId, issues: parsed.error.issues.map((issue) => issue.message) }); throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Pedido inválido.'); }
   const input = parsed.data;
+  const requestHash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
   const existingRequest = await db.doc(`orderRequests/${input.clientRequestId}`).get();
   if (existingRequest.exists) {
+    if (existingRequest.data()?.requestHash && existingRequest.data()?.requestHash !== requestHash) throw new HttpsError('already-exists', 'Esta tentativa já pertence a outro pedido. Confira seu pedido anterior.');
     const existing = await db.doc(`orders/${existingRequest.data()?.orderId}`).get();
     if (existing.exists) { const data = existing.data()!; return { orderNumber: data.orderNumber, publicCode: data.publicCode, subtotalCents: data.pricing.subtotalCents, deliveryFeeCents: data.pricing.deliveryFeeCents, totalCents: data.pricing.totalCents, idempotent: true }; }
   }
@@ -119,7 +128,8 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
     payment: input.payment,
     pricing: { subtotalCents: cart.subtotalCents, deliveryFeeCents, totalCents, currency: 'BRL' },
     status: 'NEW' as OrderStatus,
-    source: 'WEB',
+    source: input.source,
+    integration: { provider: configuredMode(), status: 'PENDING', attemptCount: 0 },
     notes: input.notes ?? '',
     statusHistory: [{ status: 'NEW', at: Timestamp.now(), actor: 'customer' }],
     clientRequestId: input.clientRequestId,
@@ -127,9 +137,12 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
   let finalOrderId = orderRef.id;
   await db.runTransaction(async (transaction) => {
     const idempotency = await transaction.get(requestRef);
-    if (idempotency.exists) { finalOrderId = idempotency.data()?.orderId as string; return; }
+    if (idempotency.exists) {
+      if (idempotency.data()?.requestHash && idempotency.data()?.requestHash !== requestHash) throw new HttpsError('already-exists', 'Tentativa já usada com outro conteúdo.');
+      finalOrderId = idempotency.data()?.orderId as string; return;
+    }
     transaction.create(orderRef, orderData);
-    transaction.create(requestRef, { orderId: orderRef.id, createdAt: now });
+    transaction.create(requestRef, { orderId: orderRef.id, requestHash, createdAt: now });
   });
   if (finalOrderId !== orderRef.id) {
     const existing = await db.doc(`orders/${finalOrderId}`).get(); const data = existing.data();
@@ -147,7 +160,7 @@ export const getPublicOrder = onCall({ region, timeoutSeconds: 15, memory: '256M
   const snapshot = await db.collection('orders').where('publicCode', '==', parsed.data.publicCode).limit(1).get();
   if (snapshot.empty) throw new HttpsError('not-found', 'Pedido não encontrado.');
   const data = snapshot.docs[0].data();
-  return { orderNumber: data.orderNumber, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status };
+  return { orderNumber: data.orderNumber, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, integrationMessage: customerIntegrationMessage(data.integration) };
 });
 
 async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Role> {
@@ -167,12 +180,26 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(orderRef);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Operação e cancelamento devem ser realizados no Saipos. Sincronização de status ainda não homologada.');
     const current = snapshot.data()?.status as OrderStatus;
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
     transaction.update(orderRef, { status, updatedAt: FieldValue.serverTimestamp(), statusHistory: FieldValue.arrayUnion({ status, at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: FieldValue.serverTimestamp(), cancellationReason: reason || '' } : {}) });
   });
   logger.info('updateOrderStatus completed', { orderId, status, actorUid: request.auth?.uid });
   return { ok: true };
+});
+
+export const integrateCreatedOrder = onDocumentCreated({ document: 'orders/{orderId}', region, retry: true }, async (event) => { if (event.data?.data().integration) await processIntegration(event.params.orderId); });
+export const recoverOrderIntegrations = onSchedule({ schedule: 'every 5 minutes', region }, async () => {
+  // Bounded work per run; composite index is versioned in firestore.indexes.json.
+  for (const status of ['PENDING', 'SENDING', 'ERROR']) {
+    const pending = await db.collection('orders').where('integration.status', '==', status).orderBy('updatedAt').limit(25).get();
+    for (const order of pending.docs) {
+      await processIntegration(order.id);
+      // Rotate deferred/permanent entries so they cannot starve later records.
+      await order.ref.update({ updatedAt: FieldValue.serverTimestamp() });
+    }
+  }
 });
 
 // Renderiza o frontend Vinext no Firebase Functions; o Hosting serve os assets
