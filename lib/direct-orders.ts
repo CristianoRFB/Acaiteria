@@ -1,6 +1,6 @@
 import { arrayUnion, doc, runTransaction, serverTimestamp, Timestamp, type Firestore } from 'firebase/firestore';
 
-import { getCustomerOrderStatusMessage, ORDER_TRANSITIONS, type OrderStatus, type PricedItem } from '@/shared/domain';
+import { getCustomerOrderStatusMessage, ORDER_TRANSITIONS, PUBLIC_CODE_RETENTION_MS, type OrderStatus, type PricedItem } from '@/shared/domain';
 
 interface DirectOrderPayload {
   clientRequestId: string;
@@ -73,7 +73,7 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
       estimatedMinutes,
     };
     transaction.set(orderRef, order);
-    transaction.set(publicRef, { orderNumber: input.orderNumber, publicCode: input.publicCode, createdAt, updatedAt: createdAt, items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents: input.totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
+    transaction.set(publicRef, { orderNumber: input.orderNumber, publicCode: input.publicCode, createdAt, updatedAt: createdAt, expiresAt: Timestamp.fromMillis(createdAt.toMillis() + PUBLIC_CODE_RETENTION_MS), items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents: input.totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
   });
 }
 

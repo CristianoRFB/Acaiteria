@@ -2,6 +2,8 @@ export type OrderStatus = 'NEW' | 'CONFIRMED' | 'PREPARING' | 'READY' | 'OUT_FOR
 export type FulfillmentMode = 'PICKUP' | 'DELIVERY';
 export type DeliveryMode = 'NONE' | 'CONFIRM' | 'FIXED' | 'ZONES';
 export type Role = 'admin' | 'staff';
+/** Janela mínima para manter o código público disponível ao cliente. */
+export const PUBLIC_CODE_RETENTION_MS = 30 * 60 * 1000;
 
 export interface StoreHoursWindow { open: string; close: string }
 export interface StoreDayHours { day: number; closed: boolean; windows: StoreHoursWindow[] }
