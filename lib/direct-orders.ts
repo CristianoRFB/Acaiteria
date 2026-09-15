@@ -65,5 +65,7 @@ export async function updateOrderStatusDirect(db: Firestore, orderId: string, st
 
 export function isFunctionsUnavailable(cause: unknown): boolean {
   const code = typeof cause === 'object' && cause && 'code' in cause ? String((cause as { code?: unknown }).code) : '';
-  return /functions\/(not-found|unavailable|deadline-exceeded)/i.test(code);
+  if (/functions\/(not-found|unavailable|deadline-exceeded|internal|unknown)/i.test(code)) return true;
+  const message = cause instanceof Error ? cause.message : String(cause ?? '');
+  return /failed to fetch|network|load failed|service unavailable|status code 5\d\d/i.test(message);
 }
