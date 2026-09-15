@@ -21,6 +21,7 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
   const publicRef = doc(db, 'publicOrders', input.publicCode);
   const createdAt = Timestamp.now();
   const integration = { provider: 'disabled', status: 'DISABLED', attemptCount: 0 } as const;
+  const items = input.items.map((item) => ({ ...item, ...(item.notes ? { notes: item.notes } : {}) }));
   await runTransaction(db, async (transaction) => {
     const existing = await transaction.get(orderRef);
     if (existing.exists()) return;
@@ -30,7 +31,7 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
       customer: input.customer,
-      items: input.items,
+      items,
       fulfillment: input.fulfillment,
       payment: input.payment,
       pricing: { subtotalCents: input.subtotalCents, deliveryFeeCents: input.deliveryFeeCents, totalCents: input.totalCents, currency: 'BRL' },
@@ -42,7 +43,7 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
       clientRequestId: input.clientRequestId,
     };
     transaction.set(orderRef, order);
-    transaction.set(publicRef, { orderNumber: input.orderNumber, publicCode: input.publicCode, createdAt, updatedAt: createdAt, items: input.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents: input.totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
+    transaction.set(publicRef, { orderNumber: input.orderNumber, publicCode: input.publicCode, createdAt, updatedAt: createdAt, items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents: input.totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
   });
 }
 
