@@ -26,6 +26,21 @@ export interface DirectOrderDetailsUpdate {
   payment?: { method: 'PIX' | 'CARD' | 'CASH'; needsChange: boolean; changeForCents?: number | null };
 }
 
+export type CustomerEditDecision = 'ACCEPTED' | 'REJECTED';
+
+export interface PublicOrderEditProposal {
+  status: 'PENDING' | CustomerEditDecision;
+  summary: string;
+  requestedAt?: unknown;
+  requestedBy?: string;
+  respondedAt?: unknown;
+  before: {
+    items: PricedItem[];
+    pricing: { totalCents: number };
+    fulfillment: { mode: 'PICKUP' | 'DELIVERY' };
+  };
+}
+
 export async function createDirectOrder(db: Firestore, input: DirectOrderPayload) {
   const orderRef = doc(db, 'orders', input.publicCode);
   const publicRef = doc(db, 'publicOrders', input.publicCode);
@@ -68,6 +83,7 @@ export async function updateOrderStatusDirect(db: Firestore, orderId: string, st
     const snapshot = await transaction.get(orderRef);
     if (!snapshot.exists()) throw new Error('Pedido não encontrado.');
     const current = snapshot.data().status as OrderStatus;
+    if (snapshot.data().customerEditApproval?.status === 'PENDING') throw new Error('Aguardando a aprovação do cliente para continuar este pedido.');
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new Error(`Transição ${current} → ${status} não permitida.`);
     const publicCode = String(snapshot.data().publicCode || orderId);
     transaction.update(orderRef, { status, updatedAt: serverTimestamp(), statusHistory: arrayUnion({ status, at: Timestamp.now(), actor: 'admin', ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: serverTimestamp(), cancellationReason: reason || '' } : {}) });
@@ -82,9 +98,71 @@ export async function updateOrderDetailsDirect(db: Firestore, orderId: string, i
     if (!snapshot.exists()) throw new Error('Pedido não encontrado.');
     if (!['NEW', 'CONFIRMED'].includes(String(snapshot.data().status))) throw new Error('Este pedido não pode mais ser editado porque já entrou em preparo.');
     const publicCode = String(snapshot.data().publicCode || orderId);
-    const update = { customer: input.customer, notes: input.notes.slice(0, 500), updatedAt: serverTimestamp(), lastEditedAt: serverTimestamp(), lastEditedBy: actorUid, ...(input.items ? { items: input.items } : {}), ...(input.pricing ? { pricing: { ...input.pricing, currency: 'BRL' } } : {}), ...(input.fulfillment ? { fulfillment: input.fulfillment } : {}), ...(input.payment ? { payment: input.payment } : {}) };
+    const current = snapshot.data();
+    const before = {
+      customer: current.customer,
+      notes: current.notes ?? '',
+      items: current.items ?? [],
+      pricing: current.pricing,
+      fulfillment: current.fulfillment,
+      payment: current.payment,
+    };
+    const proposedItems = input.items ?? before.items;
+    const proposedPricing = input.pricing ? { ...input.pricing, currency: 'BRL' } : before.pricing;
+    const proposedFulfillment = input.fulfillment ?? before.fulfillment;
+    const changes = [
+      input.items || input.pricing ? 'itens e total' : '',
+      input.customer ? 'dados do cliente' : '',
+      input.fulfillment ? 'forma de recebimento' : '',
+      input.payment ? 'pagamento' : '',
+      input.notes !== before.notes ? 'observações' : '',
+    ].filter(Boolean);
+    const proposal: PublicOrderEditProposal = {
+      status: 'PENDING',
+      summary: `A loja ajustou ${changes.length ? changes.join(', ') : 'os dados do pedido'}. Confira e escolha se concorda.`,
+      requestedAt: Timestamp.now(),
+      requestedBy: actorUid,
+      before: { items: before.items, pricing: { totalCents: before.pricing.totalCents }, fulfillment: { mode: before.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } },
+    } as PublicOrderEditProposal;
+    const update = { customer: input.customer, notes: input.notes.slice(0, 500), updatedAt: serverTimestamp(), lastEditedAt: serverTimestamp(), lastEditedBy: actorUid, customerEditApproval: { status: 'PENDING' as const, requestedAt: Timestamp.now(), requestedBy: actorUid, previous: before }, ...(input.items ? { items: input.items } : {}), ...(input.pricing ? { pricing: proposedPricing } : {}), ...(input.fulfillment ? { fulfillment: input.fulfillment } : {}), ...(input.payment ? { payment: input.payment } : {}) };
     transaction.update(orderRef, update);
-    transaction.set(doc(db, 'publicOrders', publicCode), { ...(input.items ? { items: input.items } : {}), ...(input.pricing ? { pricing: { totalCents: input.pricing.totalCents } } : {}), ...(input.fulfillment ? { fulfillment: { mode: input.fulfillment.mode } } : {}), updatedAt: serverTimestamp() }, { merge: true });
+    transaction.set(doc(db, 'publicOrders', publicCode), { items: proposedItems, pricing: { totalCents: proposedPricing.totalCents }, fulfillment: { mode: proposedFulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' }, editProposal: proposal, updatedAt: serverTimestamp() }, { merge: true });
+  });
+}
+
+/** Resposta anônima do cliente. Só altera a proposta no espelho público; a aplicação final/reversão é feita pelo painel autenticado. */
+export async function respondToOrderEditDirect(db: Firestore, publicCode: string, decision: CustomerEditDecision) {
+  const publicRef = doc(db, 'publicOrders', publicCode);
+  await runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(publicRef);
+    if (!snapshot.exists()) throw new Error('Pedido não encontrado.');
+    const proposal = snapshot.data().editProposal as PublicOrderEditProposal | undefined;
+    if (!proposal || proposal.status !== 'PENDING') throw new Error('Esta alteração já foi respondida.');
+    transaction.update(publicRef, { editProposal: { ...proposal, status: decision, respondedAt: serverTimestamp() }, updatedAt: serverTimestamp() });
+  });
+}
+
+/** Registra a decisão no pedido privado e, em caso de recusa, restaura a versão anterior. */
+export async function finalizeOrderEditDirect(db: Firestore, orderId: string, decision: CustomerEditDecision) {
+  await runTransaction(db, async (transaction) => {
+    const orderRef = doc(db, 'orders', orderId);
+    const orderSnapshot = await transaction.get(orderRef);
+    if (!orderSnapshot.exists()) throw new Error('Pedido não encontrado.');
+    const current = orderSnapshot.data();
+    const approval = current.customerEditApproval;
+    if (!approval || approval.status !== 'PENDING') throw new Error('Não há alteração aguardando decisão.');
+    const publicCode = String(current.publicCode || orderId);
+    const publicRef = doc(db, 'publicOrders', publicCode);
+    const publicSnapshot = await transaction.get(publicRef);
+    const proposal = publicSnapshot.exists() ? publicSnapshot.data().editProposal as PublicOrderEditProposal | undefined : undefined;
+    const common = { customerEditApproval: { ...approval, status: decision, decidedAt: serverTimestamp() }, updatedAt: serverTimestamp() };
+    if (decision === 'REJECTED') {
+      transaction.update(orderRef, { ...common, customer: approval.previous.customer, notes: approval.previous.notes, items: approval.previous.items, pricing: approval.previous.pricing, fulfillment: approval.previous.fulfillment, payment: approval.previous.payment });
+      if (proposal) transaction.set(publicRef, { items: proposal.before.items, pricing: proposal.before.pricing, fulfillment: proposal.before.fulfillment, editProposal: { ...proposal, status: 'REJECTED', respondedAt: serverTimestamp() }, updatedAt: serverTimestamp() }, { merge: true });
+    } else {
+      transaction.update(orderRef, common);
+      if (proposal) transaction.set(publicRef, { editProposal: { ...proposal, status: 'ACCEPTED', respondedAt: serverTimestamp() }, updatedAt: serverTimestamp() }, { merge: true });
+    }
   });
 }
 

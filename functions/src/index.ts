@@ -165,7 +165,7 @@ export const getPublicOrder = onCall({ region, timeoutSeconds: 15, memory: '256M
   const data = snapshot.docs[0].data();
   const history = Array.isArray(data.statusHistory) ? data.statusHistory as Array<{ status?: OrderStatus; reason?: string; at?: Timestamp }> : [];
   const latest = history[history.length - 1];
-  return { orderNumber: data.orderNumber, publicCode: data.publicCode, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), estimatedMinutes: data.estimatedMinutes ?? 15, items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, statusMessage: getCustomerOrderStatusMessage(data.status as OrderStatus, latest?.reason), integrationMessage: customerIntegrationMessage(data.integration) };
+  return { orderNumber: data.orderNumber, publicCode: data.publicCode, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), estimatedMinutes: data.estimatedMinutes ?? 15, items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, statusMessage: getCustomerOrderStatusMessage(data.status as OrderStatus, latest?.reason), integrationMessage: customerIntegrationMessage(data.integration), editProposal: data.editProposal };
 });
 
 async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Role> {
@@ -187,6 +187,7 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
     if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Operação e cancelamento devem ser realizados no Saipos. Sincronização de status ainda não homologada.');
     const current = snapshot.data()?.status as OrderStatus;
+    if (snapshot.data()?.customerEditApproval?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Aguardando a aprovação do cliente para continuar este pedido.');
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
     transaction.update(orderRef, { status, updatedAt: FieldValue.serverTimestamp(), statusHistory: FieldValue.arrayUnion({ status, at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: FieldValue.serverTimestamp(), cancellationReason: reason || '' } : {}) });
     const publicCode = String(snapshot.data()?.publicCode || orderId);
@@ -218,7 +219,11 @@ export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
     const current = snapshot.data()?.status as OrderStatus;
     if (!['NEW', 'CONFIRMED'].includes(current)) throw new HttpsError('failed-precondition', 'Este pedido não pode mais ser editado porque já entrou em preparo.');
-    transaction.update(orderRef, { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid });
+    const data = snapshot.data()!;
+    const previous = { customer: data.customer, notes: data.notes ?? '', items: data.items ?? [], pricing: data.pricing, fulfillment: data.fulfillment, payment: data.payment };
+    const proposal = { status: 'PENDING', summary: 'A loja ajustou os dados do pedido. Confira e escolha se concorda.', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, before: { items: previous.items, pricing: { totalCents: previous.pricing.totalCents }, fulfillment: { mode: previous.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } } };
+    transaction.update(orderRef, { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', customerEditApproval: { status: 'PENDING', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, previous }, updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid });
+    transaction.set(db.doc(`publicOrders/${String(data.publicCode || input.orderId)}`), { editProposal: proposal, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   });
   logger.info('updateOrderDetails completed', { orderId: input.orderId, actorUid: request.auth?.uid });
   return { ok: true };

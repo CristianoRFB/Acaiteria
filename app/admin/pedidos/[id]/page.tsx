@@ -18,7 +18,7 @@ import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
-import { isFunctionsUnavailable, updateOrderDetailsDirect, updateOrderStatusDirect } from '@/lib/direct-orders';
+import { finalizeOrderEditDirect, isFunctionsUnavailable, updateOrderDetailsDirect, updateOrderStatusDirect, type CustomerEditDecision, type PublicOrderEditProposal } from '@/lib/direct-orders';
 import { useCatalog } from '@/components/providers';
 import {
   calculateCartPreview,
@@ -52,6 +52,7 @@ interface FullOrder {
   publicCode?: string;
   estimatedMinutes?: number;
   notes?: string;
+  customerEditApproval?: { status: 'PENDING' | CustomerEditDecision; requestedAt?: Timestamp; requestedBy?: string; decidedAt?: Timestamp; previous: { customer: FullOrder['customer']; notes: string; items: PricedItem[]; pricing: FullOrder['pricing']; fulfillment: { mode: string; deliveryFeePending?: boolean }; payment: FullOrder['payment'] } };
   statusHistory: Array<{ status: OrderStatus; at: Timestamp; reason?: string }>;
 }
 const labels: Record<OrderStatus, string> = {
@@ -79,6 +80,7 @@ export default function OrderDetailPage() {
   const [editFulfillmentMode, setEditFulfillmentMode] = useState<'PICKUP' | 'DELIVERY'>('PICKUP');
   const [editPaymentMethod, setEditPaymentMethod] = useState<'PIX' | 'CARD' | 'CASH'>('PIX');
   const [editChangeFor, setEditChangeFor] = useState('');
+  const [publicEditProposal, setPublicEditProposal] = useState<PublicOrderEditProposal | null>(null);
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(
     () =>
@@ -102,6 +104,10 @@ export default function OrderDetailPage() {
     setEditChangeFor(order.payment.changeForCents ? String(order.payment.changeForCents / 100).replace('.', ',') : '');
   }, [order]);
   useEffect(() => { if (order?.estimatedMinutes) setEstimateMinutes(String(order.estimatedMinutes)); }, [order?.estimatedMinutes]);
+  useEffect(() => {
+    if (!order?.publicCode) { setPublicEditProposal(null); return undefined; }
+    return onSnapshot(doc(getFirebaseClient().db, 'publicOrders', order.publicCode), (snapshot) => setPublicEditProposal((snapshot.data()?.editProposal as PublicOrderEditProposal | undefined) ?? null), () => setPublicEditProposal(null));
+  }, [order?.publicCode]);
   async function update(status: OrderStatus, reason?: string) {
     if (!order) return;
     if (status === 'CANCELLED' && !reason) {
@@ -216,6 +222,13 @@ export default function OrderDetailPage() {
       setItemsError(cause instanceof Error ? cause.message : 'Confira os itens e tente novamente.');
     } finally { setBusy(false); }
   }
+  async function finalizeEdit(decision: CustomerEditDecision) {
+    if (!order) return;
+    setBusy(true); setError('');
+    try { await finalizeOrderEditDirect(getFirebaseClient().db, order.id, decision); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível registrar a decisão.'); }
+    finally { setBusy(false); }
+  }
   async function saveEstimate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!order) return;
@@ -266,6 +279,7 @@ export default function OrderDetailPage() {
             </p>
           )}
           <IntegrationOrderPanel orderId={order.id} state={order.integration} />
+          {order.customerEditApproval?.status === 'PENDING' && <section className="mt-5 rounded-[26px] border-2 border-[#d7f04a] bg-[#fffde8] p-5 shadow-sm sm:p-6"><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Aprovação do cliente</p><h2 className="mt-1 text-xl font-black">Alteração enviada para confirmação</h2><p className="mt-2 text-sm leading-relaxed text-[#6f5360]">O pedido foi editado e não pode avançar para preparo até o cliente responder no link de acompanhamento.</p>{publicEditProposal?.status === 'ACCEPTED' && <><p className="mt-3 rounded-xl bg-[#d7f04a]/50 p-3 text-sm font-black text-[#351924]">O cliente concordou com as alterações.</p><Button disabled={busy} onClick={() => void finalizeEdit('ACCEPTED')} className="mt-3 rounded-full bg-[#82204f] text-white">Registrar aceite e liberar pedido</Button></>}{publicEditProposal?.status === 'REJECTED' && <><p className="mt-3 rounded-xl bg-red-100 p-3 text-sm font-black text-red-800">O cliente recusou as alterações.</p><Button disabled={busy} onClick={() => void finalizeEdit('REJECTED')} className="mt-3 rounded-full bg-[#82204f] text-white">Reverter para a versão anterior</Button></>}{(!publicEditProposal || publicEditProposal.status === 'PENDING') && <p className="mt-3 text-sm font-bold text-[#826a75]">Aguardando a resposta do cliente no acompanhamento público.</p>}</section>}
           <div className="mt-7 grid gap-5 xl:grid-cols-[1fr_360px]">
             <section className="rounded-[26px] bg-white p-5 shadow-sm sm:p-6">
               <h2 className="text-xl font-black">Itens</h2>
