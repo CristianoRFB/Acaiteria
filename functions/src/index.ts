@@ -20,7 +20,6 @@ import {
   getCustomerOrderStatusMessage,
   normalizePhone,
   ORDER_TRANSITIONS,
-  PUBLIC_CODE_RETENTION_MS,
   type CatalogSnapshot,
   type OrderStatus,
   type Role,
@@ -121,7 +120,6 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
   const requestRef = db.doc(`orderRequests/${input.clientRequestId}`);
   const orderNumber = makeOrderNumber(requestTime, config.timezone);
   const publicCode = makePublicCode();
-  const publicCodeExpiresAt = Timestamp.fromMillis(requestTime.getTime() + PUBLIC_CODE_RETENTION_MS);
   const now = FieldValue.serverTimestamp();
   const orderData = {
     orderNumber, publicCode, createdAt: now, updatedAt: now,
@@ -146,8 +144,8 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
       finalOrderId = idempotency.data()?.orderId as string; return;
     }
     transaction.create(orderRef, orderData);
-    transaction.create(db.doc(`publicOrders/${publicCode}`), { orderNumber, publicCode, createdAt: now, updatedAt: now, expiresAt: publicCodeExpiresAt, items: cart.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes: orderData.estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
-    transaction.create(requestRef, { orderId: orderRef.id, requestHash, createdAt: now, expiresAt: publicCodeExpiresAt });
+    transaction.create(db.doc(`publicOrders/${publicCode}`), { orderNumber, publicCode, createdAt: now, updatedAt: now, items: cart.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes: orderData.estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
+    transaction.create(requestRef, { orderId: orderRef.id, requestHash, createdAt: now });
   });
   if (finalOrderId !== orderRef.id) {
     const existing = await db.doc(`orders/${finalOrderId}`).get(); const data = existing.data();
@@ -242,28 +240,6 @@ export const recoverOrderIntegrations = onSchedule({ schedule: 'every 5 minutes'
       await order.ref.update({ updatedAt: FieldValue.serverTimestamp() });
     }
   }
-});
-
-/**
- * Remove somente dados temporários de consulta/idempotência. O pedido privado
- * permanece para histórico, financeiro e operação. Espelhos de pedidos ainda
- * em andamento ficam disponíveis até serem concluídos ou cancelados.
- */
-export const cleanupExpiredPublicData = onSchedule({ schedule: 'every 15 minutes', region }, async () => {
-  const now = Timestamp.now();
-  const [publicOrders, orderRequests] = await Promise.all([
-    db.collection('publicOrders').where('expiresAt', '<=', now).limit(200).get(),
-    db.collection('orderRequests').where('expiresAt', '<=', now).limit(200).get(),
-  ]);
-  const batch = db.batch();
-  let deleted = 0;
-  for (const snapshot of publicOrders.docs) {
-    const status = snapshot.data().status as OrderStatus | undefined;
-    if (status === 'COMPLETED' || status === 'CANCELLED') { batch.delete(snapshot.ref); deleted += 1; }
-  }
-  for (const snapshot of orderRequests.docs) { batch.delete(snapshot.ref); deleted += 1; }
-  if (deleted) await batch.commit();
-  logger.info('cleanupExpiredPublicData completed', { publicCandidates: publicOrders.size, requestCandidates: orderRequests.size, deleted });
 });
 
 // Renderiza o frontend Vinext no Firebase Functions; o Hosting serve os assets
