@@ -1,7 +1,7 @@
 'use client';
 
 import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
-import { Save } from 'lucide-react';
+import { Plus, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 
 import { AdminField, AdminTextarea } from '@/components/admin-form';
@@ -14,17 +14,35 @@ import { normalizeStoreConfig } from '@/shared/store-config';
 const fallbackHours: StoreDayHours[] = [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, closed: true, windows: [] }));
 const defaultHolidayHours: StoreHoursWindow[] = [{ open: '15:00', close: '21:50' }];
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
+const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
 
 export default function SettingsPage() {
   const [config, setConfig] = useState<StorePublicConfig | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [hoursDraft, setHoursDraft] = useState<StoreDayHours[]>(fallbackHours);
+  const [holidayDatesDraft, setHolidayDatesDraft] = useState<string[]>([]);
+  const [holidayHoursDraft, setHolidayHoursDraft] = useState<StoreHoursWindow[]>(defaultHolidayHours);
+  const [holidayDateInput, setHolidayDateInput] = useState('');
 
   useEffect(() => onSnapshot(
     doc(getFirebaseClient().db, 'storePublicConfig', 'main'),
     (snapshot) => setConfig(normalizeStoreConfig(snapshot.exists() ? snapshot.data() : undefined)),
     (_cause) => { setConfig(normalizeStoreConfig(undefined)); setError('Não foi possível carregar as configurações da loja. Os valores padrão estão disponíveis para revisão.'); },
   ), []);
+  useEffect(() => {
+    if (!config) return;
+    setHoursDraft((config.hours?.length === 7 ? config.hours : fallbackHours).map((day) => ({ ...day, windows: day.windows.map((window) => ({ ...window })) })));
+    setHolidayDatesDraft([...(config.holidayDates ?? [])]);
+    setHolidayHoursDraft(config.holidayHours?.length ? config.holidayHours.map((window) => ({ ...window })) : defaultHolidayHours);
+  }, [config]);
+
+  function updateDay(day: number, value: Partial<StoreDayHours>) { setHoursDraft((old) => old.map((item) => item.day === day ? { ...item, ...value } : item)); }
+  function updateWindow(day: number, index: number, value: Partial<StoreHoursWindow>) { setHoursDraft((old) => old.map((item) => item.day === day ? { ...item, windows: item.windows.map((window, windowIndex) => windowIndex === index ? { ...window, ...value } : window) } : item)); }
+  function addWindow(day: number) { setHoursDraft((old) => old.map((item) => item.day === day ? { ...item, closed: false, windows: [...item.windows, { open: '14:00', close: '21:50' }] } : item)); }
+  function removeWindow(day: number, index: number) { setHoursDraft((old) => old.map((item) => item.day === day ? { ...item, windows: item.windows.filter((_, windowIndex) => windowIndex !== index) } : item)); }
+  function addHolidayDate() { if (!/^\d{4}-\d{2}-\d{2}$/.test(holidayDateInput) || holidayDatesDraft.includes(holidayDateInput)) return; setHolidayDatesDraft((old) => [...old, holidayDateInput].sort()); setHolidayDateInput(''); }
+  function updateHolidayWindow(index: number, value: Partial<StoreHoursWindow>) { setHolidayHoursDraft((old) => old.map((window, windowIndex) => windowIndex === index ? { ...window, ...value } : window)); }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -33,7 +51,7 @@ export default function SettingsPage() {
     const data = new FormData(event.currentTarget);
 
     try {
-      const hours = JSON.parse(String(data.get('hours'))) as StoreDayHours[];
+      const hours = JSON.parse(String(data.get('hours') || '[]')) as StoreDayHours[];
       const holidayDates = JSON.parse(String(data.get('holidayDates') || '[]')) as string[];
       const holidayHours = JSON.parse(String(data.get('holidayHours') || '[]')) as StoreHoursWindow[];
       const zones = JSON.parse(String(data.get('zones') || '[]'));
@@ -113,9 +131,10 @@ export default function SettingsPage() {
       </SettingsSection>
 
       <SettingsSection title="Horários">
-        <p className="text-xs text-[#826a75]">Timezone fixa: America/Sao_Paulo. O fechamento é exclusivo: às 21:50 a loja já aparece fechada.</p>
-        <div className="mt-4"><AdminTextarea label="7 dias em JSON (0=domingo, 6=sábado)" name="hours" defaultValue={JSON.stringify(config.hours ?? fallbackHours, null, 2)} rows={15} /></div>
-        <div className="mt-4 grid gap-4 sm:grid-cols-2"><AdminTextarea label="Feriados em JSON (AAAA-MM-DD)" name="holidayDates" defaultValue={JSON.stringify(config.holidayDates ?? [], null, 2)} rows={8} /><AdminTextarea label="Janelas dos feriados em JSON" name="holidayHours" defaultValue={JSON.stringify(config.holidayHours ?? defaultHolidayHours, null, 2)} rows={8} /></div>
+        <p className="text-sm leading-relaxed text-[#6f5360]">Escolha os dias e informe os horários de abertura e fechamento. Não é necessário editar códigos. Às 21:50 a loja já aparece fechada.</p>
+        <input type="hidden" name="hours" value={JSON.stringify(hoursDraft)} readOnly />
+        <div className="mt-4 space-y-3">{[...hoursDraft].sort((a, b) => a.day - b.day).map((day) => <div key={day.day} className="rounded-2xl border border-[#82204f]/12 bg-[#fffaf5] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><strong>{dayNames[day.day]}</strong><label className="flex items-center gap-2 text-sm font-bold"><input type="checkbox" checked={day.closed} onChange={(event) => updateDay(day.day, { closed: event.target.checked, windows: event.target.checked ? [] : (day.windows.length ? day.windows : [{ open: '14:00', close: '21:50' }]) })} /> Loja fechada</label></div>{!day.closed && <div className="mt-3 space-y-2">{day.windows.map((window, index) => <div key={`${day.day}-${index}`} className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold">Abre<input aria-label={`${dayNames[day.day]} abre ${index + 1}`} type="time" value={window.open} onChange={(event) => updateWindow(day.day, index, { open: event.target.value })} className="mt-1 h-10 rounded-xl border border-[#82204f]/15 bg-white px-3 text-sm" /></label><label className="text-xs font-bold">Fecha<input aria-label={`${dayNames[day.day]} fecha ${index + 1}`} type="time" value={window.close} onChange={(event) => updateWindow(day.day, index, { close: event.target.value })} className="mt-1 h-10 rounded-xl border border-[#82204f]/15 bg-white px-3 text-sm" /></label>{day.windows.length > 1 && <button type="button" onClick={() => removeWindow(day.day, index)} className="inline-flex h-10 items-center gap-1 rounded-xl px-3 text-xs font-black text-red-700 hover:bg-red-50"><Trash2 className="size-3.5" /> Remover</button>}</div>)}<button type="button" onClick={() => addWindow(day.day)} className="mt-1 inline-flex items-center gap-1 text-xs font-black text-[#82204f]"><Plus className="size-3.5" /> Adicionar outro horário</button></div>}</div>)}</div>
+        <div className="mt-6 grid gap-5 sm:grid-cols-2"><div className="rounded-2xl border border-[#82204f]/12 bg-[#fffaf5] p-4"><h3 className="text-sm font-black">Feriados</h3><p className="mt-1 text-xs leading-relaxed text-[#826a75]">Adicione as datas em que a loja seguirá o horário especial.</p><div className="mt-3 flex gap-2"><input aria-label="Data do feriado" type="date" value={holidayDateInput} onChange={(event) => setHolidayDateInput(event.target.value)} className="h-10 min-w-0 flex-1 rounded-xl border border-[#82204f]/15 bg-white px-3 text-sm" /><button type="button" onClick={addHolidayDate} className="inline-flex h-10 items-center gap-1 rounded-xl bg-[#82204f] px-3 text-xs font-black text-white"><Plus className="size-3.5" /> Adicionar</button></div><div className="mt-3 flex flex-wrap gap-2">{holidayDatesDraft.map((date) => <span key={date} className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-1.5 text-xs font-bold">{date}<button type="button" aria-label={`Remover feriado ${date}`} onClick={() => setHolidayDatesDraft((old) => old.filter((item) => item !== date))} className="text-red-700">×</button></span>)}{!holidayDatesDraft.length && <span className="text-xs text-[#826a75]">Nenhum feriado cadastrado.</span>}</div><input type="hidden" name="holidayDates" value={JSON.stringify(holidayDatesDraft)} readOnly /></div><div className="rounded-2xl border border-[#82204f]/12 bg-[#fffaf5] p-4"><h3 className="text-sm font-black">Horário de feriados</h3><p className="mt-1 text-xs leading-relaxed text-[#826a75]">Esse horário será aplicado nas datas adicionadas ao lado.</p><input type="hidden" name="holidayHours" value={JSON.stringify(holidayHoursDraft)} readOnly /><div className="mt-3 space-y-2">{holidayHoursDraft.map((window, index) => <div key={index} className="flex flex-wrap items-end gap-2"><label className="text-xs font-bold">Abre<input aria-label={`Feriado abre ${index + 1}`} type="time" value={window.open} onChange={(event) => updateHolidayWindow(index, { open: event.target.value })} className="mt-1 h-10 rounded-xl border border-[#82204f]/15 bg-white px-3 text-sm" /></label><label className="text-xs font-bold">Fecha<input aria-label={`Feriado fecha ${index + 1}`} type="time" value={window.close} onChange={(event) => updateHolidayWindow(index, { close: event.target.value })} className="mt-1 h-10 rounded-xl border border-[#82204f]/15 bg-white px-3 text-sm" /></label>{holidayHoursDraft.length > 1 && <button type="button" onClick={() => setHolidayHoursDraft((old) => old.filter((_, windowIndex) => windowIndex !== index))} className="inline-flex h-10 items-center gap-1 rounded-xl px-3 text-xs font-black text-red-700 hover:bg-red-50"><Trash2 className="size-3.5" /> Remover</button>}</div>)}<button type="button" onClick={() => setHolidayHoursDraft((old) => [...old, { open: '15:00', close: '21:50' }])} className="mt-1 inline-flex items-center gap-1 text-xs font-black text-[#82204f]"><Plus className="size-3.5" /> Adicionar outro horário</button></div></div></div>
       </SettingsSection>
 
       <SettingsSection title="Privacidade"><AdminTextarea label="Aviso operacional (revisar juridicamente antes do lançamento)" name="privacyNotice" defaultValue={config.privacyNotice} /></SettingsSection>
