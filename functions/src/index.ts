@@ -10,6 +10,7 @@ import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { configuredMode } from './integration/provider.js';
 import { processIntegration } from './integration/service.js';
 import { customerIntegrationMessage } from '../../shared/integration.js';
+import { withBeverageOptions } from '../../shared/beverage-options.js';
 export { getIntegrationReadiness, saveIntegrationMappings, retryOrderIntegration } from './integration/admin.js';
 
 import {
@@ -56,12 +57,12 @@ async function loadCatalog(): Promise<{ catalog: CatalogSnapshot; config: StoreP
   if (!configSnap.exists) throw new HttpsError('failed-precondition', 'Loja ainda não configurada.');
   return {
     config: configSnap.data() as StorePublicConfig,
-    catalog: {
+    catalog: withBeverageOptions({
       products: productsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as CatalogSnapshot['products'],
       categories: categoriesSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as CatalogSnapshot['categories'],
       groups: groupsSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as CatalogSnapshot['groups'],
       modifiers: modifiersSnap.docs.map((doc) => ({ id: doc.id, ...doc.data() })) as CatalogSnapshot['modifiers'],
-    },
+    }),
   };
 }
 

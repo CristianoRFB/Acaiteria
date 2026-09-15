@@ -62,7 +62,7 @@ describe('cardápio transcrito', () => {
     expect(prices('salada-de-frutas')).toEqual([1600]);
     expect(prices('agua-sem-gas')).toEqual([350]);
     expect(prices('agua-com-gas')).toEqual([400]);
-    expect(prices('refrigerante')).toEqual([500]);
+    expect(prices('refrigerante')).toEqual([500, 700, 1000]);
   });
 
   it('confere taxa, horários e textos operacionais', () => {

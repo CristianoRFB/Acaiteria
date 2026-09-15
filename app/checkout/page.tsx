@@ -112,16 +112,26 @@ export default function CheckoutPage() {
 
     setSubmitting(true);
     try {
-      const { functions } = getFirebaseClient();
-      const createOrder = httpsCallable<typeof payload, { publicCode: string; orderNumber: string; totalCents: number }>(functions, 'createOrder');
       let response: { data: { publicCode: string; orderNumber: string; totalCents: number } };
-      try {
-        response = await createOrder(payload);
-      } catch (cause) {
-        if (!isFunctionsUnavailable(cause)) throw cause;
+      const usesLegacyBeverageOptions = payload.items.some((item) => item.productId === 'refrigerante' && (item.sizeId !== 'unico' || item.selections.some((selection) => selection.groupId === 'sabores-refrigerante')));
+      const saveDirect = async () => {
         const orderNumber = `#A${new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', year: '2-digit', month: '2-digit', day: '2-digit' }).format(new Date()).replace(/\//g, '')}${directPublicCode.slice(-4).toUpperCase()}`;
         await createDirectOrder(getFirebaseClient().db, { clientRequestId, publicCode: directPublicCode, orderNumber, customer: { name: fields.name.trim(), whatsapp: fields.whatsapp, ...(fulfillment === 'DELIVERY' ? { address: { street: fields.street.trim(), number: fields.number.trim(), complement: fields.complement.trim(), neighborhood: fields.neighborhood.trim(), reference: fields.reference.trim() } } : {}) }, items: preview.items, fulfillment: { mode: fulfillment, ...(zoneId ? { zoneId } : {}) }, payment: { method: paymentMethod, needsChange: paymentMethod === 'CASH' ? Boolean(needsChange) : false, ...(paymentMethod === 'CASH' && needsChange ? { changeForCents } : {}) }, notes: fields.orderNotes, subtotalCents: preview.subtotalCents, deliveryFeeCents: deliveryFee, totalCents, estimatedMinutes: config.orderEstimateMinutes ?? 15 });
-        response = { data: { publicCode: directPublicCode, orderNumber, totalCents } };
+        return { publicCode: directPublicCode, orderNumber, totalCents };
+      };
+      if (usesLegacyBeverageOptions) {
+        // A versão gratuita do catálogo pode enriquecer o refrigerante no navegador.
+        // Nesse caso gravamos pelo mesmo fallback direto para preservar sabor, ml e preço.
+        response = { data: await saveDirect() };
+      } else {
+        const { functions } = getFirebaseClient();
+        const createOrder = httpsCallable<typeof payload, { publicCode: string; orderNumber: string; totalCents: number }>(functions, 'createOrder');
+        try {
+          response = await createOrder(payload);
+        } catch (cause) {
+          if (!isFunctionsUnavailable(cause)) throw cause;
+          response = { data: await saveDirect() };
+        }
       }
       cart.clear();
       sessionStorage.removeItem('acai-checkout-request-id');

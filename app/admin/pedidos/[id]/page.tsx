@@ -110,6 +110,13 @@ export default function OrderDetailPage() {
   }, [order?.publicCode]);
   async function update(status: OrderStatus, reason?: string) {
     if (!order) return;
+    const needsFinalize = status === 'CONFIRMED' && order.customerEditApproval?.status === 'PENDING';
+    if (needsFinalize) {
+      if (publicEditProposal?.status !== 'ACCEPTED') {
+        setError('O cliente precisa aceitar as alterações antes de confirmar o pedido.');
+        return;
+      }
+    }
     if (status === 'CANCELLED' && !reason) {
       setCancelOpen(true);
       return;
@@ -117,6 +124,10 @@ export default function OrderDetailPage() {
     setBusy(true);
     setError('');
     try {
+      if (needsFinalize) {
+        // A resposta pública já foi dada: registra o aceite privado antes da transição.
+        await finalizeOrderEditDirect(getFirebaseClient().db, order.id, 'ACCEPTED');
+      }
       const callable = httpsCallable(
         getFirebaseClient().functions,
         'updateOrderStatus',
@@ -333,7 +344,7 @@ export default function OrderDetailPage() {
                       <Button
                         key={status}
                         disabled={
-                          busy || order.integration?.provider === 'saipos'
+                          busy || order.integration?.provider === 'saipos' || (status === 'CONFIRMED' && order.customerEditApproval?.status === 'PENDING' && publicEditProposal?.status !== 'ACCEPTED')
                         }
                         onClick={() => update(status)}
                         className="h-11 justify-start rounded-xl bg-[#d7f04a] px-4 font-black text-[#351924] hover:bg-[#c4dd36]"
@@ -346,6 +357,7 @@ export default function OrderDetailPage() {
                         Marcar: {labels[status]}
                       </Button>
                     ))}
+                  {order.customerEditApproval?.status === 'PENDING' && order.status === 'NEW' && <p className="rounded-xl bg-[#fffde8] p-3 text-xs font-bold leading-relaxed text-[#856b12]">{publicEditProposal?.status === 'ACCEPTED' ? 'O cliente aceitou. Marcar como confirmado vai aplicar o aceite e liberar o pedido.' : 'Confirmação bloqueada até o cliente responder à proposta de alteração.'}</p>}
                   {ORDER_TRANSITIONS[order.status].includes('CANCELLED') && (
                     <Button
                       disabled={

@@ -70,6 +70,24 @@ const simple = (id, name, description, categoryId, label, price, displayOrder) =
   modifierGroupIds: [],
 });
 
+const refrigerante = {
+  id: 'refrigerante',
+  name: 'Refrigerantes',
+  slug: 'refrigerantes',
+  description: 'Escolha o sabor e o tamanho do seu refrigerante.',
+  active: true,
+  categoryId: 'bebidas',
+  productType: 'CUSTOMIZABLE',
+  imageUrl: '/menu/products/bebida.jpg',
+  displayOrder: 3,
+  sizes: [
+    { id: '350ml', label: '350 ml', active: true, basePriceCents: 500, displayOrder: 1 },
+    { id: '600ml', label: '600 ml', active: true, basePriceCents: 700, displayOrder: 2 },
+    { id: '1l', label: '1 litro', active: true, basePriceCents: 1000, displayOrder: 3 },
+  ],
+  modifierGroupIds: ['sabores-refrigerante'],
+};
+
 const modifier = (id, name, priceCents, displayOrder, options = {}) => ({
   id,
   name,
@@ -212,7 +230,7 @@ export const menuCatalog = {
     simple('salada-de-frutas', 'Salada de frutas', 'Banana, morango, kiwi e uva.', 'salada-frutas', '300 ml', 1600, 1),
     simple('agua-sem-gas', 'Água sem gás', 'Bebida gelada.', 'bebidas', 'Unidade', 350, 1),
     simple('agua-com-gas', 'Água com gás', 'Bebida gelada.', 'bebidas', 'Unidade', 400, 2),
-    simple('refrigerante', 'Refrigerante', 'Consulte os sabores disponíveis.', 'bebidas', 'Unidade', 500, 3),
+    refrigerante,
   ],
   groups: [
     {
@@ -274,6 +292,19 @@ export const menuCatalog = {
       displayOrder: 1,
       pricingMode: 'includedQuota',
       modifierIds: ['bola-maracuja', 'bola-milho', 'bola-cafe-chocolate', 'bola-chocolate-belga', 'bola-pistache', 'bola-morango', 'bola-flocos', 'bola-unicornio', 'bola-nutellissimo', 'bola-ninho-trufado', 'bola-iogurte-amarena', 'bola-prestigio', 'bola-bombom'],
+    },
+    {
+      id: 'sabores-refrigerante',
+      name: 'Escolha o sabor',
+      description: 'Selecione o refrigerante que você quer receber.',
+      active: true,
+      required: true,
+      minSelections: 1,
+      maxSelections: 1,
+      allowDuplicate: false,
+      displayOrder: 1,
+      pricingMode: 'includedQuota',
+      modifierIds: ['refri-coca-cola', 'refri-guarana', 'refri-fanta', 'refri-sprite', 'refri-pepsi', 'refri-sukita'],
     },
   ],
   modifiers: [
@@ -352,5 +383,6 @@ export const menuCatalog = {
     ...['Açaí', 'Beijinho', 'Brigadeiro', 'Capuccino', 'Chocolate', 'Creme', 'Creme de avelã', 'Cupuaçu', 'Doce de leite', 'Ferrero Rocher', 'Kinder Ovo', 'Maracujá', 'Morango', 'Ninho', 'Ovomaltine', 'Paçoca', 'Prestígio', 'Sensação'].map((name, index) => modifier(`milk-${['acai', 'beijinho', 'brigadeiro', 'capuccino', 'chocolate', 'creme', 'creme-avela', 'cupuacu', 'doce-leite', 'ferrero-rocher', 'kinder-ovo', 'maracuja', 'morango', 'ninho', 'ovomaltine', 'pacoca', 'prestigio', 'sensacao'][index]}`, name, 250, index + 1, { maxQuantity: 1 })),
     modifier('milk-pistache', 'Pistache', 200, 19, { premium: true, maxQuantity: 1 }),
     ...['Maracujá', 'Milho', 'Café com chocolate', 'Chocolate belga', 'Pistache', 'Morango', 'Flocos', 'Unicórnio', 'Nutellíssimo', 'Ninho trufado', 'Iogurte com amarena', 'Prestígio', 'Bombom'].map((name, index) => modifier(`bola-${['maracuja', 'milho', 'cafe-chocolate', 'chocolate-belga', 'pistache', 'morango', 'flocos', 'unicornio', 'nutellissimo', 'ninho-trufado', 'iogurte-amarena', 'prestigio', 'bombom'][index]}`, name, 0, index + 1, { maxQuantity: 1 })),
+    ...['Coca-Cola', 'Guaraná', 'Fanta Laranja', 'Sprite', 'Pepsi', 'Sukita Laranja'].map((name, index) => modifier(`refri-${['coca-cola', 'guarana', 'fanta', 'sprite', 'pepsi', 'sukita'][index]}`, name, 0, index + 1, { maxQuantity: 1, imageUrl: '/menu/products/bebida.jpg' })),
   ],
 };
