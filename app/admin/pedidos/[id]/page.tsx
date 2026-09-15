@@ -18,6 +18,7 @@ import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
+import { isFunctionsUnavailable, updateOrderStatusDirect } from '@/lib/direct-orders';
 import {
   formatBRL,
   ORDER_TRANSITIONS,
@@ -95,7 +96,12 @@ export default function OrderDetailPage() {
         getFirebaseClient().functions,
         'updateOrderStatus',
       );
-      await callable({ orderId: order.id, status, reason });
+      try {
+        await callable({ orderId: order.id, status, reason });
+      } catch (cause) {
+        if (!isFunctionsUnavailable(cause)) throw cause;
+        await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
+      }
       setCancelOpen(false);
       setCancelReason('');
     } catch (cause) {

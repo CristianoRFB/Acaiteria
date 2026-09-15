@@ -2,6 +2,7 @@
 
 import { Check, ChefHat, Clock3, MessageCircle, PackageCheck, RefreshCw } from 'lucide-react';
 import { httpsCallable } from 'firebase/functions';
+import { doc, onSnapshot } from 'firebase/firestore';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -27,11 +28,21 @@ export default function OrderPage() {
   const [order, setOrder] = useState<PublicOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [legacyMode, setLegacyMode] = useState(false);
   const load = useCallback(async () => {
     if (!hasFirebaseConfig) { setError('Firebase não configurado.'); setLoading(false); return; }
     try { const { functions } = getFirebaseClient(); const lookup = httpsCallable<{ publicCode: string }, PublicOrder>(functions, 'getPublicOrder'); const response = await lookup({ publicCode }); setOrder(response.data); setError(''); } catch { setError('Pedido não encontrado ou temporariamente indisponível.'); } finally { setLoading(false); }
   }, [publicCode]);
-  useEffect(() => { void load(); const timer = setInterval(() => void load(), 8000); return () => clearInterval(timer); }, [load]);
+  useEffect(() => {
+    if (!hasFirebaseConfig) { void load(); return undefined; }
+    const { db } = getFirebaseClient();
+    const stop = onSnapshot(doc(db, 'publicOrders', publicCode), (snapshot) => {
+      if (snapshot.exists()) { setOrder(snapshot.data() as PublicOrder); setLoading(false); setError(''); setLegacyMode(false); }
+      else { setLegacyMode(true); void load(); }
+    }, () => { setLegacyMode(true); void load(); });
+    return () => stop();
+  }, [load, publicCode]);
+  useEffect(() => { if (!legacyMode) return undefined; const timer = setInterval(() => void load(), 8000); return () => clearInterval(timer); }, [legacyMode, load]);
   function whatsappUrl() { if (!order || !config.whatsappNumber) return '#'; const summary = order.items.map((item) => `${item.quantity}x ${item.productName} (${item.sizeLabel})`).join('\n'); const message = `Olá! Pedido ${order.orderNumber}\n${summary}\nTotal: ${formatBRL(order.pricing.totalCents)}\n${order.fulfillment.mode === 'PICKUP' ? 'Retirada' : 'Delivery'}`; return `https://wa.me/${config.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`; }
   if (loading) return <main className="grid min-h-screen place-items-center bg-[#fffaf5]"><RefreshCw className="size-6 animate-spin text-[#82204f]" /></main>;
   if (!order) return <main className="min-h-screen bg-[#fffaf5]"><PublicHeader /><div className="mx-auto max-w-lg px-6 py-24 text-center"><h1 className="text-3xl font-black">Não encontramos esse pedido</h1><p className="mt-2 text-sm text-[#826a75]">{error}</p><Button className="mt-6 rounded-full bg-[#82204f] text-white" onClick={load}>Tentar novamente</Button></div></main>;

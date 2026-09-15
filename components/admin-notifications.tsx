@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import type { OrderStatus } from '@/shared/domain';
 import { formatBRL } from '@/shared/domain';
+import { isFunctionsUnavailable, updateOrderStatusDirect } from '@/lib/direct-orders';
 import { httpsCallable } from 'firebase/functions';
 
 interface NewOrder {
@@ -46,7 +47,13 @@ export function AdminNotifications() {
     setBusy(orderId);
     setMessage('');
     try {
-      await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId, status, ...(status === 'CANCELLED' ? { reason: 'Recusado pela loja' } : {}) });
+      const reason = status === 'CANCELLED' ? 'Recusado pela loja' : undefined;
+      try {
+        await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId, status, ...(reason ? { reason } : {}) });
+      } catch (cause) {
+        if (!isFunctionsUnavailable(cause)) throw cause;
+        await updateOrderStatusDirect(getFirebaseClient().db, orderId, status, reason);
+      }
       setMessage(status === 'CONFIRMED' ? 'Pedido aceito.' : 'Pedido recusado.');
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Não foi possível atualizar o pedido.');
