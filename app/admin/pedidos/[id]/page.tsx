@@ -1,6 +1,6 @@
 'use client';
 
-import { doc, onSnapshot, serverTimestamp, Timestamp, updateDoc } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import {
   ArrowLeft,
@@ -44,6 +44,8 @@ interface FullOrder {
     totalCents: number;
   };
   status: OrderStatus;
+  publicCode?: string;
+  estimatedMinutes?: number;
   notes?: string;
   statusHistory: Array<{ status: OrderStatus; at: Timestamp; reason?: string }>;
 }
@@ -64,6 +66,7 @@ export default function OrderDetailPage() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [editOpen, setEditOpen] = useState(false);
+  const [estimateMinutes, setEstimateMinutes] = useState('15');
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(
     () =>
@@ -83,6 +86,7 @@ export default function OrderDetailPage() {
     if (!order) return;
     setEditFields({ name: order.customer.name, whatsapp: order.customer.whatsapp, street: order.customer.address?.street ?? '', number: order.customer.address?.number ?? '', complement: order.customer.address?.complement ?? '', neighborhood: order.customer.address?.neighborhood ?? '', reference: order.customer.address?.reference ?? '', notes: order.notes ?? '' });
   }, [order]);
+  useEffect(() => { if (order?.estimatedMinutes) setEstimateMinutes(String(order.estimatedMinutes)); }, [order?.estimatedMinutes]);
   async function update(status: OrderStatus, reason?: string) {
     if (!order) return;
     if (status === 'CANCELLED' && !reason) {
@@ -157,6 +161,19 @@ export default function OrderDetailPage() {
     } finally {
       setBusy(false);
     }
+  }
+  async function saveEstimate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!order) return;
+    const minutes = Number(estimateMinutes);
+    if (!Number.isSafeInteger(minutes) || minutes < 5 || minutes > 240) { setError('Informe uma previsão entre 5 e 240 minutos.'); return; }
+    setBusy(true); setError('');
+    try {
+      const db = getFirebaseClient().db;
+      await updateDoc(doc(db, 'orders', order.id), { estimatedMinutes: minutes, estimatedUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      if (order.publicCode) await setDoc(doc(db, 'publicOrders', order.publicCode), { estimatedMinutes: minutes, estimatedUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar a previsão.'); }
+    finally { setBusy(false); }
   }
   return (
     <AdminShell>
@@ -276,6 +293,14 @@ export default function OrderDetailPage() {
                     <p className="text-sm text-white/55">Fluxo encerrado.</p>
                   )}
                 </div>
+              </section>
+              <section className="rounded-[26px] bg-white p-5 shadow-sm">
+                <h2 className="text-lg font-black">Previsão para o cliente</h2>
+                <p className="mt-1 text-xs leading-relaxed text-[#826a75]">Ajuste o tempo estimado sem usar contagem regressiva falsa.</p>
+                <form onSubmit={saveEstimate} className="mt-4 flex gap-2">
+                  <label className="flex-1 text-xs font-bold">Minutos<input type="number" min="5" max="240" value={estimateMinutes} onChange={(event) => setEstimateMinutes(event.target.value)} className="mt-1 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 text-sm font-normal" /></label>
+                  <Button type="submit" disabled={busy} className="mt-5 h-11 rounded-xl bg-[#82204f] px-4 font-black text-white">Salvar</Button>
+                </form>
               </section>
               <section className="rounded-[26px] bg-white p-5 shadow-sm">
                 <h2 className="text-lg font-black">Entrega e pagamento</h2>

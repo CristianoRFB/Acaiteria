@@ -43,6 +43,8 @@ export default function SettingsPage() {
       const deliveryMode = String(data.get('deliveryMode')) as StorePublicConfig['deliveryConfig']['mode'];
       const fixedFeeCents = Number(data.get('fixedFeeCents'));
       if (deliveryMode === 'FIXED' && (!Number.isSafeInteger(fixedFeeCents) || fixedFeeCents < 0)) throw new Error('Taxa fixa inválida.');
+      const orderEstimateMinutes = Number(data.get('orderEstimateMinutes'));
+      if (!Number.isSafeInteger(orderEstimateMinutes) || orderEstimateMinutes < 5 || orderEstimateMinutes > 240) throw new Error('A previsão padrão deve ficar entre 5 e 240 minutos.');
 
       const payload: StorePublicConfig & { updatedAt: unknown } = {
         storeName: String(data.get('storeName')).trim(),
@@ -69,6 +71,7 @@ export default function SettingsPage() {
         orderInstructions: String(data.get('orderInstructions')).trim(),
         deliveryEstimate: String(data.get('deliveryEstimate')).trim(),
         busyDeliveryEstimate: String(data.get('busyDeliveryEstimate')).trim(),
+        orderEstimateMinutes,
         holidayHoursNote: String(data.get('holidayHoursNote')).trim(),
         gratitudeMessage: String(data.get('gratitudeMessage')).trim(),
         privacyNotice: String(data.get('privacyNotice')).trim(),
@@ -101,7 +104,7 @@ export default function SettingsPage() {
       </SettingsSection>
 
       <SettingsSection title="Mensagem ao cliente">
-        <div className="space-y-4"><AdminTextarea label="Instruções do pedido" name="orderInstructions" defaultValue={config.orderInstructions} /><AdminField label="Prazo normal" name="deliveryEstimate" defaultValue={config.deliveryEstimate} /><AdminField label="Prazo em dias movimentados" name="busyDeliveryEstimate" defaultValue={config.busyDeliveryEstimate} /><AdminField label="Horário em feriados" name="holidayHoursNote" defaultValue={config.holidayHoursNote} /><AdminTextarea label="Mensagem de agradecimento" name="gratitudeMessage" defaultValue={config.gratitudeMessage} /></div>
+        <div className="space-y-4"><AdminTextarea label="Instruções do pedido" name="orderInstructions" defaultValue={config.orderInstructions} /><div className="grid gap-4 sm:grid-cols-2"><AdminField label="Tempo padrão para ficar pronto (minutos)" name="orderEstimateMinutes" type="number" min="5" max="240" defaultValue={config.orderEstimateMinutes ?? 15} /><AdminField label="Prazo de entrega" name="deliveryEstimate" defaultValue={config.deliveryEstimate} /></div><AdminField label="Prazo em dias movimentados" name="busyDeliveryEstimate" defaultValue={config.busyDeliveryEstimate} /><AdminField label="Horário em feriados" name="holidayHoursNote" defaultValue={config.holidayHoursNote} /><AdminTextarea label="Mensagem de agradecimento" name="gratitudeMessage" defaultValue={config.gratitudeMessage} /><p className="text-xs text-[#826a75]">O cliente verá esta previsão no acompanhamento. Use uma estimativa realista; não exibimos contagem regressiva falsa.</p></div>
       </SettingsSection>
 
       <SettingsSection title="Delivery">

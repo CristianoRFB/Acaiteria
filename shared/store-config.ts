@@ -26,6 +26,7 @@ export const defaultStorePublicConfig: StorePublicConfig = {
   orderInstructions: 'Faça seu pedido e informe o endereço, a forma de pagamento e, caso precise, o valor para troco.',
   deliveryEstimate: 'O tempo de entrega varia de 30 a 40 minutos.',
   busyDeliveryEstimate: 'Aos finais de semana e feriados, o prazo pode ser de 60 minutos ou mais.',
+  orderEstimateMinutes: 15,
   holidayHoursNote: 'Em feriados, entregamos das 15:00 às 21:50.',
   gratitudeMessage: 'Estamos à disposição! Somos gratos por essa troca! 🙏🏻🙏🏻🙏🏻',
   privacyNotice: 'Seus dados são usados apenas para preparar e entregar este pedido.',
@@ -122,6 +123,12 @@ export function normalizeStoreConfig(raw: unknown): StorePublicConfig {
     orderInstructions: text(data.orderInstructions, fallback.orderInstructions ?? ''),
     deliveryEstimate: text(data.deliveryEstimate, fallback.deliveryEstimate ?? ''),
     busyDeliveryEstimate: text(data.busyDeliveryEstimate, fallback.busyDeliveryEstimate ?? ''),
+    orderEstimateMinutes: (() => {
+      const minutes = Number(data.orderEstimateMinutes);
+      return Number.isSafeInteger(minutes) && minutes >= 5 && minutes <= 240
+        ? minutes
+        : fallback.orderEstimateMinutes ?? 15;
+    })(),
     holidayHoursNote: text(data.holidayHoursNote, fallback.holidayHoursNote ?? ''),
     gratitudeMessage: text(data.gratitudeMessage, fallback.gratitudeMessage ?? ''),
     privacyNotice: text(data.privacyNotice, fallback.privacyNotice ?? ''),

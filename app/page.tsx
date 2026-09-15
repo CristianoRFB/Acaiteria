@@ -4,6 +4,7 @@ import { ArrowRight, Clock3, MapPin, Timer, WalletCards } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { PublicHeader } from '@/components/public-header';
+import { OrderLookup } from '@/components/order-lookup';
 import { useCatalog } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { formatBRL, formatNextOpening, getStoreAvailability, type Product, type ProductCategory } from '@/shared/domain';
@@ -45,6 +46,8 @@ export default function Home() {
         </div>
       </div>
     </section>
+
+    <OrderLookup />
 
     <section className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10">
       <div className="grid overflow-hidden rounded-[30px] bg-[#351924] text-white shadow-[0_20px_55px_rgba(53,25,36,.14)] lg:grid-cols-[1.25fr_.75fr]">

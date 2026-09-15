@@ -45,6 +45,15 @@ export default function InformationPage() {
         </div>
       </section>
 
+      <section className="mt-4 rounded-[28px] bg-white p-6 shadow-sm">
+        <h2 className="text-xl font-black">Dúvidas sobre o pedido</h2>
+        <div className="mt-4 space-y-3 text-sm text-[#6f5360]">
+          <details className="rounded-2xl bg-[#fffaf5] p-4"><summary className="cursor-pointer font-black text-[#351924]">Como acompanho meu pedido?</summary><p className="mt-2 leading-relaxed">Depois de confirmar, copie o código exibido e use a área “Acompanhe seu pedido” na página inicial. A tela atualiza sozinha quando a loja aceitar ou mudar o status.</p></details>
+          <details className="rounded-2xl bg-[#fffaf5] p-4"><summary className="cursor-pointer font-black text-[#351924]">A previsão é exata?</summary><p className="mt-2 leading-relaxed">É uma estimativa inicial e pode variar conforme a demanda. Quando a equipe ajustar o tempo, a nova previsão aparecerá no acompanhamento.</p></details>
+          <details className="rounded-2xl bg-[#fffaf5] p-4"><summary className="cursor-pointer font-black text-[#351924]">Posso falar com a loja?</summary><p className="mt-2 leading-relaxed">Sim. No acompanhamento do pedido há um botão para abrir o WhatsApp da loja, quando o contato estiver habilitado.</p></details>
+        </div>
+      </section>
+
       <div className="mt-4 grid gap-4 sm:grid-cols-2">
         <InfoCard icon={ShieldCheck} title="Privacidade"><p>{config.privacyNotice || 'Política em revisão antes do lançamento.'}</p></InfoCard>
         <InfoCard icon={Heart} title="Agradecimento"><p>{config.gratitudeMessage}</p></InfoCard>

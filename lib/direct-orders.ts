@@ -14,6 +14,7 @@ interface DirectOrderPayload {
   subtotalCents: number;
   deliveryFeeCents: number;
   totalCents: number;
+  estimatedMinutes?: number;
 }
 
 export async function createDirectOrder(db: Firestore, input: DirectOrderPayload) {
@@ -21,6 +22,7 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
   const publicRef = doc(db, 'publicOrders', input.publicCode);
   const createdAt = Timestamp.now();
   const integration = { provider: 'disabled', status: 'DISABLED', attemptCount: 0 } as const;
+  const estimatedMinutes = Number.isSafeInteger(input.estimatedMinutes) ? Math.min(240, Math.max(5, input.estimatedMinutes as number)) : 15;
   const items = input.items.map((item) => ({ ...item, ...(item.notes ? { notes: item.notes } : {}) }));
   await runTransaction(db, async (transaction) => {
     // A leitura preventiva usa o espelho público: o cliente ainda não tem
@@ -44,9 +46,10 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
       notes: input.notes ?? '',
       statusHistory: [{ status: 'NEW' as const, at: createdAt, actor: 'customer' }],
       clientRequestId: input.clientRequestId,
+      estimatedMinutes,
     };
     transaction.set(orderRef, order);
-    transaction.set(publicRef, { orderNumber: input.orderNumber, publicCode: input.publicCode, createdAt, updatedAt: createdAt, items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents: input.totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
+    transaction.set(publicRef, { orderNumber: input.orderNumber, publicCode: input.publicCode, createdAt, updatedAt: createdAt, items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents: input.totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
   });
 }
 
@@ -59,7 +62,7 @@ export async function updateOrderStatusDirect(db: Firestore, orderId: string, st
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new Error(`Transição ${current} → ${status} não permitida.`);
     const publicCode = String(snapshot.data().publicCode || orderId);
     transaction.update(orderRef, { status, updatedAt: serverTimestamp(), statusHistory: arrayUnion({ status, at: Timestamp.now(), actor: 'admin', ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: serverTimestamp(), cancellationReason: reason || '' } : {}) });
-    transaction.set(doc(db, 'publicOrders', publicCode), { status, statusMessage: getCustomerOrderStatusMessage(status, reason), updatedAt: serverTimestamp() }, { merge: true });
+    transaction.set(doc(db, 'publicOrders', publicCode), { status, statusMessage: getCustomerOrderStatusMessage(status, reason), estimatedMinutes: snapshot.data().estimatedMinutes ?? 15, updatedAt: serverTimestamp() }, { merge: true });
   });
 }
 

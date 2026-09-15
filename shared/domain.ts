@@ -40,6 +40,8 @@ export interface StorePublicConfig {
   orderInstructions?: string;
   deliveryEstimate?: string;
   busyDeliveryEstimate?: string;
+  /** Tempo inicial estimado para o pedido ficar pronto, em minutos. */
+  orderEstimateMinutes?: number;
   holidayHoursNote?: string;
   gratitudeMessage?: string;
   privacyNotice?: string;
@@ -156,6 +158,23 @@ export function getCustomerOrderStatusMessage(status: OrderStatus, reason?: stri
   if (status === 'OUT_FOR_DELIVERY') return 'Pedido saiu para entrega. Fique de olho no seu WhatsApp.';
   if (status === 'COMPLETED') return 'Pedido concluído. Obrigado pela preferência!';
   return reason ? `Pedido recusado pela loja: ${reason}` : 'Pedido recusado pela loja. Entre em contato para mais informações.';
+}
+
+export interface OrderEstimate {
+  label: string;
+  detail: string;
+  minutes?: number;
+}
+
+/** Estimativa orientativa, sem contagem regressiva artificial. */
+export function getOrderEstimateForStatus(status: OrderStatus, baseMinutes = 15): OrderEstimate {
+  const safeMinutes = Number.isSafeInteger(baseMinutes) ? Math.min(240, Math.max(5, baseMinutes)) : 15;
+  if (status === 'READY') return { label: 'Pronto agora', detail: 'Seu pedido está pronto para retirada ou saiu para entrega.' };
+  if (status === 'OUT_FOR_DELIVERY') return { label: 'Em rota', detail: 'A previsão pode variar conforme o trajeto.' };
+  if (status === 'COMPLETED') return { label: 'Concluído', detail: 'Pedido finalizado. Obrigado pela preferência!' };
+  if (status === 'CANCELLED') return { label: 'Sem previsão', detail: 'Este pedido foi recusado pela loja.' };
+  if (status === 'PREPARING') return { label: `cerca de ${Math.max(5, Math.round(safeMinutes * 0.65))} min`, detail: 'Estamos preparando seu pedido.' };
+  return { label: `cerca de ${safeMinutes} min`, detail: 'Estimativa inicial; pode variar conforme a demanda.', minutes: safeMinutes };
 }
 
 export function formatBRL(cents: number): string {

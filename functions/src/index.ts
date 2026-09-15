@@ -134,6 +134,7 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
     notes: input.notes ?? '',
     statusHistory: [{ status: 'NEW', at: Timestamp.now(), actor: 'customer' }],
     clientRequestId: input.clientRequestId,
+    estimatedMinutes: Math.min(240, Math.max(5, config.orderEstimateMinutes ?? 15)),
   };
   let finalOrderId = orderRef.id;
   await db.runTransaction(async (transaction) => {
@@ -143,6 +144,7 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
       finalOrderId = idempotency.data()?.orderId as string; return;
     }
     transaction.create(orderRef, orderData);
+    transaction.create(db.doc(`publicOrders/${publicCode}`), { orderNumber, publicCode, createdAt: now, updatedAt: now, items: cart.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes: orderData.estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
     transaction.create(requestRef, { orderId: orderRef.id, requestHash, createdAt: now });
   });
   if (finalOrderId !== orderRef.id) {
@@ -163,7 +165,7 @@ export const getPublicOrder = onCall({ region, timeoutSeconds: 15, memory: '256M
   const data = snapshot.docs[0].data();
   const history = Array.isArray(data.statusHistory) ? data.statusHistory as Array<{ status?: OrderStatus; reason?: string; at?: Timestamp }> : [];
   const latest = history[history.length - 1];
-  return { orderNumber: data.orderNumber, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, statusMessage: getCustomerOrderStatusMessage(data.status as OrderStatus, latest?.reason), integrationMessage: customerIntegrationMessage(data.integration) };
+  return { orderNumber: data.orderNumber, publicCode: data.publicCode, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), estimatedMinutes: data.estimatedMinutes ?? 15, items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, statusMessage: getCustomerOrderStatusMessage(data.status as OrderStatus, latest?.reason), integrationMessage: customerIntegrationMessage(data.integration) };
 });
 
 async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Role> {
@@ -187,6 +189,8 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     const current = snapshot.data()?.status as OrderStatus;
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
     transaction.update(orderRef, { status, updatedAt: FieldValue.serverTimestamp(), statusHistory: FieldValue.arrayUnion({ status, at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: FieldValue.serverTimestamp(), cancellationReason: reason || '' } : {}) });
+    const publicCode = String(snapshot.data()?.publicCode || orderId);
+    transaction.set(db.doc(`publicOrders/${publicCode}`), { status, statusMessage: getCustomerOrderStatusMessage(status, reason), estimatedMinutes: snapshot.data()?.estimatedMinutes ?? 15, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
   });
   logger.info('updateOrderStatus completed', { orderId, status, actorUid: request.auth?.uid });
   return { ok: true };

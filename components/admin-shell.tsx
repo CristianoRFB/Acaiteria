@@ -13,6 +13,7 @@ import { useEffect, type ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers';
 import { AdminNotifications } from '@/components/admin-notifications';
+import { BrandLogo } from '@/components/brand-logo';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 
 const links = [
@@ -64,13 +65,8 @@ export function AdminShell({
     <div className="min-h-screen bg-[#f8f5f6] text-[#2b1722]">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-[#351924] p-5 text-white lg:flex">
         <a href="/admin" className="flex items-center gap-3">
-          <span className="grid size-10 place-items-center rounded-full bg-[#82204f] font-black">
-            A+
-          </span>
-          <span>
-            <strong className="block">Açaí + Sabor</strong>
-            <small className="text-white/50">Painel operacional</small>
-          </span>
+          <BrandLogo inverse />
+          <span className="sr-only">Painel operacional</span>
         </a>
         <nav className="mt-8 space-y-1">
           {links.map(({ href, label, icon: Icon }) => (
@@ -99,8 +95,8 @@ export function AdminShell({
       </aside>
       <div className="lg:pl-64">
         <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-white/90 px-4 backdrop-blur lg:px-8">
-          <a href="/admin" className="font-black lg:hidden">
-            A+ Admin
+          <a href="/admin" className="font-black lg:hidden" aria-label="Açaí + Sabor, painel">
+            <BrandLogo compact />
           </a>
           <nav className="flex gap-1 overflow-x-auto lg:hidden">
             {links.slice(1).map(({ href, label, icon: Icon }) => (
