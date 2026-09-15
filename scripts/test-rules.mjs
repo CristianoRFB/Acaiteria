@@ -12,8 +12,7 @@ function portOpen(port) {
 
 const existing = await portOpen(8180);
 const command = existing
-  ? ['npx', ['vitest', 'run', '--config', 'vitest.config.ts', 'tests/firestore.rules.test.ts']]
-  : ['npx', ['firebase-tools', 'emulators:exec', '--project', 'demo-acai-mais-sabor', '--only', 'firestore', 'vitest run --config vitest.config.ts tests/firestore.rules.test.ts']];
-const executable = process.platform === 'win32' ? `${command[0]}.cmd` : command[0];
-const child = spawn(executable, command[1], { stdio: 'inherit', shell: false, env: { ...process.env, ...(existing ? { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8180' } : {}) } });
+  ? ['node_modules/vitest/vitest.mjs', ['run', '--config', 'vitest.config.ts', 'tests/firestore.rules.test.ts']]
+  : ['node_modules/firebase-tools/lib/bin/firebase.js', ['emulators:exec', '--project', 'demo-acai-mais-sabor', '--only', 'firestore', 'vitest run --config vitest.config.ts tests/firestore.rules.test.ts']];
+const child = spawn(process.execPath, [command[0], ...command[1]], { stdio: 'inherit', shell: false, env: { ...process.env, ...(existing ? { FIRESTORE_EMULATOR_HOST: '127.0.0.1:8180' } : {}) } });
 child.on('exit', (code) => process.exit(code ?? 1));
