@@ -18,10 +18,15 @@ import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
-import { isFunctionsUnavailable, updateOrderStatusDirect } from '@/lib/direct-orders';
+import { isFunctionsUnavailable, updateOrderDetailsDirect, updateOrderStatusDirect } from '@/lib/direct-orders';
+import { useCatalog } from '@/components/providers';
 import {
+  calculateCartPreview,
   formatBRL,
   ORDER_TRANSITIONS,
+  type CartItemDraft,
+  type CatalogSnapshot,
+  type ModifierGroup,
   type OrderStatus,
   type PricedItem,
 } from '@/shared/domain';
@@ -60,12 +65,16 @@ const labels: Record<OrderStatus, string> = {
 };
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
+  const { catalog } = useCatalog();
   const [order, setOrder] = useState<FullOrder | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [editOpen, setEditOpen] = useState(false);
+  const [itemsOpen, setItemsOpen] = useState(false);
+  const [itemDrafts, setItemDrafts] = useState<CartItemDraft[]>([]);
+  const [itemsError, setItemsError] = useState('');
   const [estimateMinutes, setEstimateMinutes] = useState('15');
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(
@@ -148,19 +157,56 @@ export default function OrderDetailPage() {
             : {}),
         };
       }
-      await updateDoc(doc(getFirebaseClient().db, 'orders', order.id), {
-        customer,
-        notes: editFields.notes.trim(),
-        updatedAt: serverTimestamp(),
-        lastEditedAt: serverTimestamp(),
-        lastEditedBy: getFirebaseClient().auth.currentUser?.uid ?? '',
-      });
+      const actorUid = getFirebaseClient().auth.currentUser?.uid;
+      if (!actorUid) throw new Error('Sessão administrativa expirada. Entre novamente.');
+      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer, notes: editFields.notes.trim() }, actorUid);
       setEditOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
     } finally {
       setBusy(false);
     }
+  }
+  function openItemsEditor() {
+    if (!order) return;
+    setItemsError('');
+    setItemDrafts(order.items.map((item, index) => ({ cartItemId: `edit-${index}`, productId: item.productId, sizeId: item.sizeId, quantity: item.quantity, notes: item.notes, selections: item.modifierSelections.map((group) => ({ groupId: group.groupId, items: group.items.map((selected) => ({ modifierId: selected.modifierId, quantity: selected.quantity })) })) })));
+    setItemsOpen(true);
+  }
+  function updateDraft(index: number, update: Partial<CartItemDraft>) {
+    setItemDrafts((old) => old.map((draft, draftIndex) => draftIndex === index ? { ...draft, ...update } : draft));
+    setItemsError('');
+  }
+  function changeProduct(index: number, productId: string) {
+    const product = catalog.products.find((candidate) => candidate.id === productId);
+    updateDraft(index, { productId, sizeId: product?.sizes.find((size) => size.active)?.id ?? '', selections: [] });
+  }
+  function toggleModifier(index: number, groupId: string, modifierId: string, maximum: number) {
+    const draft = itemDrafts[index];
+    if (!draft) return;
+    const groups = draft.selections.map((group) => ({ groupId: group.groupId, items: group.items.map((item) => ({ ...item })) }));
+    const group = groups.find((candidate) => candidate.groupId === groupId) ?? { groupId, items: [] };
+    if (!groups.includes(group)) groups.push(group);
+    const selected = group.items.find((item) => item.modifierId === modifierId);
+    if (!selected) group.items.push({ modifierId, quantity: 1 });
+    else if (selected.quantity < maximum) selected.quantity += 1;
+    else group.items = group.items.filter((item) => item.modifierId !== modifierId);
+    updateDraft(index, { selections: groups });
+  }
+  async function saveItems(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!order) return;
+    setBusy(true); setItemsError(''); setError('');
+    try {
+      const preview = calculateCartPreview(itemDrafts, catalog);
+      const actorUid = getFirebaseClient().auth.currentUser?.uid;
+      if (!actorUid) throw new Error('Sessão administrativa expirada. Entre novamente.');
+      const pricing = { subtotalCents: preview.subtotalCents, deliveryFeeCents: order.pricing.deliveryFeeCents, totalCents: preview.subtotalCents + order.pricing.deliveryFeeCents };
+      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer: order.customer, notes: order.notes ?? '', items: preview.items, pricing }, actorUid);
+      setItemsOpen(false);
+    } catch (cause) {
+      setItemsError(cause instanceof Error ? cause.message : 'Confira os itens e tente novamente.');
+    } finally { setBusy(false); }
   }
   async function saveEstimate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -258,7 +304,7 @@ export default function OrderDetailPage() {
               <section className="rounded-[26px] bg-[#351924] p-5 text-white">
                 <h2 className="text-lg font-black">Atualizar status</h2>
                 <div className="mt-4 grid gap-2">
-                  {(['NEW', 'CONFIRMED'] as OrderStatus[]).includes(order.status) && <Button disabled={busy} onClick={() => setEditOpen(true)} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar dados do pedido</Button>}
+                  {(['NEW', 'CONFIRMED'] as OrderStatus[]).includes(order.status) && <><Button disabled={busy} onClick={() => setEditOpen(true)} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar dados do cliente</Button><Button disabled={busy} onClick={openItemsEditor} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar itens e total</Button></>}
                   {ORDER_TRANSITIONS[order.status]
                     .filter((status) => status !== 'CANCELLED')
                     .map((status) => (
@@ -363,6 +409,21 @@ export default function OrderDetailPage() {
           </form>
         </div>
       )}
+      {itemsOpen && order && (
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-4 backdrop-blur-sm">
+          <form onSubmit={saveItems} className="my-6 w-full max-w-3xl rounded-[28px] bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Editar itens do pedido</h2><p className="mt-1 text-sm text-[#826a75]">Altere produto, tamanho, adicionais, quantidade e observações. O total será recalculado.</p></div><button type="button" onClick={() => setItemsOpen(false)} aria-label="Fechar edição dos itens" className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]"><X className="size-4" /></button></div>
+            <div className="mt-5 space-y-4">
+              {itemDrafts.map((draft, index) => <EditableOrderItem key={draft.cartItemId} draft={draft} index={index} catalog={catalog} onProductChange={changeProduct} onChange={(update) => updateDraft(index, update)} onToggleModifier={toggleModifier} onRemove={() => setItemDrafts((old) => old.filter((_, itemIndex) => itemIndex !== index))} />)}
+              {!itemDrafts.length && <p className="rounded-2xl border border-dashed border-[#82204f]/20 p-5 text-center text-sm text-[#826a75]">Adicione pelo menos um item.</p>}
+              <button type="button" onClick={() => { const product = catalog.products[0]; const size = product?.sizes.find((candidate) => candidate.active); if (product && size) setItemDrafts((old) => [...old, { cartItemId: `edit-${Date.now()}`, productId: product.id, sizeId: size.id, quantity: 1, selections: [] }]); }} className="inline-flex h-11 items-center rounded-full border border-[#82204f]/20 px-4 text-sm font-black text-[#82204f]">+ Adicionar item</button>
+            </div>
+            {itemsError && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-sm font-bold text-red-700">{itemsError}</p>}
+            {itemDrafts.length > 0 && (() => { try { const preview = calculateCartPreview(itemDrafts, catalog); return <p className="mt-4 flex justify-between rounded-2xl bg-[#fff0f5] p-4 text-sm font-black"><span>Novo total</span><span className="text-[#82204f]">{formatBRL(preview.subtotalCents + order.pricing.deliveryFeeCents)}</span></p>; } catch { return null; } })()}
+            <div className="mt-5 flex gap-2"><Button type="button" variant="outline" onClick={() => setItemsOpen(false)} className="h-11 flex-1 rounded-full">Cancelar</Button><Button type="submit" disabled={busy || !itemDrafts.length} className="h-11 flex-1 rounded-full bg-[#82204f] font-black text-white">{busy ? <Loader2 className="animate-spin" /> : <Save />} Salvar pedido completo</Button></div>
+          </form>
+        </div>
+      )}
       {cancelOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-[#2b1722]/50 p-4 backdrop-blur-sm">
           <form
@@ -428,4 +489,20 @@ export default function OrderDetailPage() {
 
 function EditField({ label, value, onChange, required = false }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
   return <label className="block text-sm font-bold">{label}<input value={value} onChange={(event) => onChange(event.target.value)} required={required} maxLength={120} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal outline-none focus:border-[#82204f]" /></label>;
+}
+
+function EditableOrderItem({ draft, index, catalog, onProductChange, onChange, onToggleModifier, onRemove }: { draft: CartItemDraft; index: number; catalog: CatalogSnapshot; onProductChange: (index: number, productId: string) => void; onChange: (update: Partial<CartItemDraft>) => void; onToggleModifier: (index: number, groupId: string, modifierId: string, maximum: number) => void; onRemove: () => void }) {
+  const product = catalog.products.find((candidate) => candidate.id === draft.productId);
+  const size = product?.sizes.find((candidate) => candidate.id === draft.sizeId);
+  const groups = (product?.modifierGroupIds ?? []).map((groupId) => catalog.groups.find((group) => group.id === groupId)).filter((group): group is ModifierGroup => Boolean(group && group.active));
+  const selected = (groupId: string, modifierId: string) => draft.selections.find((group) => group.groupId === groupId)?.items.find((item) => item.modifierId === modifierId)?.quantity ?? 0;
+  let itemTotal = '';
+  try { itemTotal = formatBRL(calculateCartPreview([draft], catalog).items[0]?.totalPriceCents ?? 0); } catch { itemTotal = 'Confira os adicionais'; }
+  return <article className="rounded-2xl border border-[#82204f]/12 bg-[#fffaf5] p-4">
+    <div className="flex items-start justify-between gap-3"><strong className="text-sm">Item {index + 1}</strong><button type="button" onClick={onRemove} className="text-xs font-black text-red-600">Remover</button></div>
+    <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_180px_90px]"><label className="text-xs font-bold">Produto<select value={draft.productId} onChange={(event) => onProductChange(index, event.target.value)} className="mt-1 h-10 w-full rounded-xl border border-[#82204f]/15 bg-white px-2 text-sm font-normal">{catalog.products.filter((candidate) => candidate.active).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.name}</option>)}</select></label><label className="text-xs font-bold">Tamanho<select value={draft.sizeId} onChange={(event) => onChange({ sizeId: event.target.value, selections: [] })} className="mt-1 h-10 w-full rounded-xl border border-[#82204f]/15 bg-white px-2 text-sm font-normal">{(product?.sizes ?? []).filter((candidate) => candidate.active).map((candidate) => <option key={candidate.id} value={candidate.id}>{candidate.label}</option>)}</select></label><label className="text-xs font-bold">Quantidade<input type="number" min="1" max="20" value={draft.quantity} onChange={(event) => onChange({ quantity: Math.max(1, Math.min(20, Number(event.target.value) || 1)) })} className="mt-1 h-10 w-full rounded-xl border border-[#82204f]/15 bg-white px-2 text-sm font-normal" /></label></div>
+    {groups.map((group) => <div key={group.id} className="mt-3 rounded-xl bg-white p-3"><p className="text-xs font-black text-[#351924]">{group.name} <span className="font-normal text-[#826a75]">(toque para aumentar; ao atingir o limite, remove)</span></p><div className="mt-2 flex flex-wrap gap-2">{group.modifierIds.map((modifierId) => { const modifier = catalog.modifiers.find((candidate) => candidate.id === modifierId && candidate.active); if (!modifier) return null; const quantity = selected(group.id, modifier.id); const maximum = Math.min(group.maxPerModifier ?? 20, modifier.maxQuantity ?? 20); return <button key={modifier.id} type="button" onClick={() => onToggleModifier(index, group.id, modifier.id, maximum)} className={`rounded-full border px-3 py-1.5 text-xs font-bold ${quantity ? 'border-[#82204f] bg-[#fff0f5] text-[#82204f]' : 'border-[#e7dce1] text-[#6f5360]'}`}>{quantity ? `${quantity}x ` : ''}{modifier.name}</button>; })}</div></div>)}
+    <label className="mt-3 block text-xs font-bold">Observação do item<textarea value={draft.notes ?? ''} onChange={(event) => onChange({ notes: event.target.value.slice(0, 300) })} rows={2} maxLength={300} className="mt-1 w-full rounded-xl border border-[#82204f]/15 bg-white p-3 text-sm font-normal" /></label>
+    <p className="mt-2 text-right text-sm font-black text-[#82204f]">{size?.label ?? 'Tamanho'} · {itemTotal}</p>
+  </article>;
 }

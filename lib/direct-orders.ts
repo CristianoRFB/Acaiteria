@@ -17,6 +17,13 @@ interface DirectOrderPayload {
   estimatedMinutes?: number;
 }
 
+export interface DirectOrderDetailsUpdate {
+  customer: { name: string; whatsapp: string; address?: Record<string, string> };
+  notes: string;
+  items?: PricedItem[];
+  pricing?: { subtotalCents: number; deliveryFeeCents: number; totalCents: number; currency?: string };
+}
+
 export async function createDirectOrder(db: Firestore, input: DirectOrderPayload) {
   const orderRef = doc(db, 'orders', input.publicCode);
   const publicRef = doc(db, 'publicOrders', input.publicCode);
@@ -63,6 +70,19 @@ export async function updateOrderStatusDirect(db: Firestore, orderId: string, st
     const publicCode = String(snapshot.data().publicCode || orderId);
     transaction.update(orderRef, { status, updatedAt: serverTimestamp(), statusHistory: arrayUnion({ status, at: Timestamp.now(), actor: 'admin', ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: serverTimestamp(), cancellationReason: reason || '' } : {}) });
     transaction.set(doc(db, 'publicOrders', publicCode), { status, statusMessage: getCustomerOrderStatusMessage(status, reason), estimatedMinutes: snapshot.data().estimatedMinutes ?? 15, updatedAt: serverTimestamp() }, { merge: true });
+  });
+}
+
+export async function updateOrderDetailsDirect(db: Firestore, orderId: string, input: DirectOrderDetailsUpdate, actorUid: string) {
+  await runTransaction(db, async (transaction) => {
+    const orderRef = doc(db, 'orders', orderId);
+    const snapshot = await transaction.get(orderRef);
+    if (!snapshot.exists()) throw new Error('Pedido não encontrado.');
+    if (!['NEW', 'CONFIRMED'].includes(String(snapshot.data().status))) throw new Error('Este pedido não pode mais ser editado porque já entrou em preparo.');
+    const publicCode = String(snapshot.data().publicCode || orderId);
+    const update = { customer: input.customer, notes: input.notes.slice(0, 500), updatedAt: serverTimestamp(), lastEditedAt: serverTimestamp(), lastEditedBy: actorUid, ...(input.items ? { items: input.items } : {}), ...(input.pricing ? { pricing: { ...input.pricing, currency: 'BRL' } } : {}) };
+    transaction.update(orderRef, update);
+    transaction.set(doc(db, 'publicOrders', publicCode), { ...(input.items ? { items: input.items } : {}), ...(input.pricing ? { pricing: { totalCents: input.pricing.totalCents } } : {}), updatedAt: serverTimestamp() }, { merge: true });
   });
 }
 
