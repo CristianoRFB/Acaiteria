@@ -25,15 +25,16 @@ function formatUpdatedAt(value: unknown): string | null { try { const date = val
 
 export default function OrderPage() {
   const { publicCode } = useParams<{ publicCode: string }>(); const search = useSearchParams(); const { config } = useCatalog();
+  const routeCode = (() => { try { return decodeURIComponent(publicCode); } catch { return publicCode; } })();
   const [order, setOrder] = useState<PublicOrder | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [legacyMode, setLegacyMode] = useState(false); const [copied, setCopied] = useState(false); const [statusNotice, setStatusNotice] = useState(''); const previousStatus = useRef<OrderStatus | null>(null); const resolvedCodeRef = useRef(publicCode);
   const load = useCallback(async () => { if (!hasFirebaseConfig) { setError('Firebase não configurado.'); setLoading(false); return; } try { const { functions } = getFirebaseClient(); const lookup = httpsCallable<{ publicCode: string }, PublicOrder>(functions, 'getPublicOrder'); const response = await lookup({ publicCode: resolvedCodeRef.current }); setOrder(response.data); setError(''); } catch { setError('Pedido não encontrado ou temporariamente indisponível.'); } finally { setLoading(false); } }, []);
   useEffect(() => {
-    resolvedCodeRef.current = publicCode;
+    resolvedCodeRef.current = routeCode;
     if (!hasFirebaseConfig) { void load(); return undefined; }
     const { db } = getFirebaseClient(); let stop = () => {}; let cancelled = false;
     async function subscribe() {
-      let target = publicCode;
-      const normalized = publicCode.replace(/^#/, '').toUpperCase();
+      let target = routeCode;
+      const normalized = routeCode.replace(/^#/, '').toUpperCase();
       if (normalized.startsWith('A')) {
         try {
           const matches = await getDocs(query(collection(db, 'publicOrders'), where('orderNumber', '==', `#${normalized}`)));
@@ -48,7 +49,7 @@ export default function OrderPage() {
     }
     void subscribe();
     return () => { cancelled = true; stop(); };
-  }, [load, publicCode]);
+  }, [load, routeCode]);
   useEffect(() => { if (!legacyMode) return undefined; const timer = setInterval(() => void load(), 8000); return () => clearInterval(timer); }, [legacyMode, load]);
   useEffect(() => { if (!order) return; rememberOrder(resolvedCodeRef.current, order.orderNumber); if (previousStatus.current && previousStatus.current !== order.status) { setStatusNotice(`Atualização: ${order.statusMessage ?? getCustomerOrderStatusMessage(order.status)}`); const timer = window.setTimeout(() => setStatusNotice(''), 7000); previousStatus.current = order.status; return () => window.clearTimeout(timer); } previousStatus.current = order.status; return undefined; }, [order]);
   function whatsappUrl() { if (!order || !config.whatsappNumber) return '#'; const summary = order.items.map((item) => `${item.quantity}x ${item.productName} (${item.sizeLabel})`).join('\n'); const message = `Olá! Pedido ${order.orderNumber}\n${summary}\nTotal: ${formatBRL(order.pricing.totalCents)}\n${order.fulfillment.mode === 'PICKUP' ? 'Retirada' : 'Delivery'}`; return `https://wa.me/${config.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`; }
