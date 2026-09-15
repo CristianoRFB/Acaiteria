@@ -127,7 +127,30 @@ export default function OrderDetailPage() {
     setBusy(true);
     setError('');
     try {
-      await updateDoc(doc(getFirebaseClient().db, 'orders', order.id), { customer: { name: editFields.name, whatsapp: editFields.whatsapp, ...(order.fulfillment.mode === 'DELIVERY' ? { address: { street: editFields.street, number: editFields.number, complement: editFields.complement || undefined, neighborhood: editFields.neighborhood, reference: editFields.reference || undefined } } : {}) }, notes: editFields.notes.trim(), updatedAt: serverTimestamp(), lastEditedAt: serverTimestamp(), lastEditedBy: getFirebaseClient().auth.currentUser?.uid ?? '' });
+      const customer: FullOrder['customer'] = {
+        name: editFields.name.trim(),
+        whatsapp: editFields.whatsapp.trim(),
+      };
+      if (order.fulfillment.mode === 'DELIVERY') {
+        customer.address = {
+          street: editFields.street.trim(),
+          number: editFields.number.trim(),
+          neighborhood: editFields.neighborhood.trim(),
+          ...(editFields.complement.trim()
+            ? { complement: editFields.complement.trim() }
+            : {}),
+          ...(editFields.reference.trim()
+            ? { reference: editFields.reference.trim() }
+            : {}),
+        };
+      }
+      await updateDoc(doc(getFirebaseClient().db, 'orders', order.id), {
+        customer,
+        notes: editFields.notes.trim(),
+        updatedAt: serverTimestamp(),
+        lastEditedAt: serverTimestamp(),
+        lastEditedBy: getFirebaseClient().auth.currentUser?.uid ?? '',
+      });
       setEditOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
