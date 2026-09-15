@@ -76,6 +76,9 @@ export default function OrderDetailPage() {
   const [itemDrafts, setItemDrafts] = useState<CartItemDraft[]>([]);
   const [itemsError, setItemsError] = useState('');
   const [estimateMinutes, setEstimateMinutes] = useState('15');
+  const [editFulfillmentMode, setEditFulfillmentMode] = useState<'PICKUP' | 'DELIVERY'>('PICKUP');
+  const [editPaymentMethod, setEditPaymentMethod] = useState<'PIX' | 'CARD' | 'CASH'>('PIX');
+  const [editChangeFor, setEditChangeFor] = useState('');
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(
     () =>
@@ -94,6 +97,9 @@ export default function OrderDetailPage() {
   useEffect(() => {
     if (!order) return;
     setEditFields({ name: order.customer.name, whatsapp: order.customer.whatsapp, street: order.customer.address?.street ?? '', number: order.customer.address?.number ?? '', complement: order.customer.address?.complement ?? '', neighborhood: order.customer.address?.neighborhood ?? '', reference: order.customer.address?.reference ?? '', notes: order.notes ?? '' });
+    setEditFulfillmentMode(order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP');
+    setEditPaymentMethod(order.payment.method === 'CARD' || order.payment.method === 'CASH' ? order.payment.method : 'PIX');
+    setEditChangeFor(order.payment.changeForCents ? String(order.payment.changeForCents / 100).replace('.', ',') : '');
   }, [order]);
   useEffect(() => { if (order?.estimatedMinutes) setEstimateMinutes(String(order.estimatedMinutes)); }, [order?.estimatedMinutes]);
   async function update(status: OrderStatus, reason?: string) {
@@ -144,7 +150,7 @@ export default function OrderDetailPage() {
         name: editFields.name.trim(),
         whatsapp: editFields.whatsapp.trim(),
       };
-      if (order.fulfillment.mode === 'DELIVERY') {
+      if (editFulfillmentMode === 'DELIVERY') {
         customer.address = {
           street: editFields.street.trim(),
           number: editFields.number.trim(),
@@ -159,7 +165,9 @@ export default function OrderDetailPage() {
       }
       const actorUid = getFirebaseClient().auth.currentUser?.uid;
       if (!actorUid) throw new Error('Sessão administrativa expirada. Entre novamente.');
-      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer, notes: editFields.notes.trim() }, actorUid);
+      if (editFulfillmentMode === 'DELIVERY' && (!customer.address?.street || !customer.address.number || !customer.address.neighborhood)) throw new Error('Preencha o endereço para delivery.');
+      const changeForCents = editPaymentMethod === 'CASH' && editChangeFor.trim() ? parseCurrencyToCents(editChangeFor) : null;
+      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } }, actorUid);
       setEditOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
@@ -401,9 +409,11 @@ export default function OrderDetailPage() {
       {editOpen && order && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-4 backdrop-blur-sm">
           <form onSubmit={saveDetails} className="my-6 w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
-            <div className="flex items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Editar dados do pedido</h2><p className="mt-1 text-sm text-[#826a75]">Corrija os dados antes de iniciar o preparo.</p></div><button type="button" onClick={() => setEditOpen(false)} aria-label="Fechar edição" className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]"><X className="size-4" /></button></div>
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Editar pedido</h2><p className="mt-1 text-sm text-[#826a75]">Corrija cliente, recebimento, pagamento e endereço antes de iniciar o preparo.</p></div><button type="button" onClick={() => setEditOpen(false)} aria-label="Fechar edição" className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]"><X className="size-4" /></button></div>
             <div className="mt-5 grid gap-4 sm:grid-cols-2"><EditField label="Nome" value={editFields.name} onChange={(value) => setEditFields((old) => ({ ...old, name: value }))} required /><EditField label="WhatsApp" value={editFields.whatsapp} onChange={(value) => setEditFields((old) => ({ ...old, whatsapp: value }))} required /></div>
-            {order.fulfillment.mode === 'DELIVERY' && <><div className="mt-4 grid gap-4 sm:grid-cols-[1fr_120px]"><EditField label="Rua/Avenida" value={editFields.street} onChange={(value) => setEditFields((old) => ({ ...old, street: value }))} required /><EditField label="Número" value={editFields.number} onChange={(value) => setEditFields((old) => ({ ...old, number: value }))} required /></div><div className="mt-4 grid gap-4 sm:grid-cols-2"><EditField label="Complemento" value={editFields.complement} onChange={(value) => setEditFields((old) => ({ ...old, complement: value }))} /><EditField label="Bairro" value={editFields.neighborhood} onChange={(value) => setEditFields((old) => ({ ...old, neighborhood: value }))} required /></div><div className="mt-4"><EditField label="Referência" value={editFields.reference} onChange={(value) => setEditFields((old) => ({ ...old, reference: value }))} /></div></>}
+            <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Recebimento<select value={editFulfillmentMode} onChange={(event) => setEditFulfillmentMode(event.target.value as 'PICKUP' | 'DELIVERY')} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"><option value="PICKUP">Retirada na loja</option><option value="DELIVERY">Entrega</option></select></label><label className="block text-sm font-bold">Pagamento<select value={editPaymentMethod} onChange={(event) => setEditPaymentMethod(event.target.value as 'PIX' | 'CARD' | 'CASH')} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"><option value="PIX">Pix</option><option value="CARD">Cartão na entrega</option><option value="CASH">Dinheiro</option></select></label></div>
+            {editPaymentMethod === 'CASH' && <div className="mt-4 max-w-xs"><EditField label="Troco para quanto? (opcional)" value={editChangeFor} onChange={setEditChangeFor} /></div>}
+            {editFulfillmentMode === 'DELIVERY' && <><div className="mt-4 grid gap-4 sm:grid-cols-[1fr_120px]"><EditField label="Rua/Avenida" value={editFields.street} onChange={(value) => setEditFields((old) => ({ ...old, street: value }))} required /><EditField label="Número" value={editFields.number} onChange={(value) => setEditFields((old) => ({ ...old, number: value }))} required /></div><div className="mt-4 grid gap-4 sm:grid-cols-2"><EditField label="Complemento" value={editFields.complement} onChange={(value) => setEditFields((old) => ({ ...old, complement: value }))} /><EditField label="Bairro" value={editFields.neighborhood} onChange={(value) => setEditFields((old) => ({ ...old, neighborhood: value }))} required /></div><div className="mt-4"><EditField label="Referência" value={editFields.reference} onChange={(value) => setEditFields((old) => ({ ...old, reference: value }))} /></div></>}
             <label className="mt-4 block text-sm font-bold">Observação<textarea value={editFields.notes} onChange={(event) => setEditFields((old) => ({ ...old, notes: event.target.value }))} maxLength={500} rows={4} className="mt-2 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] p-3 font-normal" /></label>
             <div className="mt-5 flex gap-2"><Button type="button" variant="outline" onClick={() => setEditOpen(false)} className="h-11 flex-1 rounded-full">Cancelar</Button><Button type="submit" disabled={busy} className="h-11 flex-1 rounded-full bg-[#82204f] font-black text-white">{busy ? <Loader2 className="animate-spin" /> : <Save />} Salvar alterações</Button></div>
           </form>
@@ -505,4 +515,13 @@ function EditableOrderItem({ draft, index, catalog, onProductChange, onChange, o
     <label className="mt-3 block text-xs font-bold">Observação do item<textarea value={draft.notes ?? ''} onChange={(event) => onChange({ notes: event.target.value.slice(0, 300) })} rows={2} maxLength={300} className="mt-1 w-full rounded-xl border border-[#82204f]/15 bg-white p-3 text-sm font-normal" /></label>
     <p className="mt-2 text-right text-sm font-black text-[#82204f]">{size?.label ?? 'Tamanho'} · {itemTotal}</p>
   </article>;
+}
+
+function parseCurrencyToCents(value: string): number | null {
+  const normalized = value.trim().replace(/[^\d,.]/g, '');
+  if (!normalized) return null;
+  const amount = Number(normalized.includes(',') ? normalized.replace(/\./g, '').replace(',', '.') : normalized);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  const cents = Math.round(amount * 100);
+  return Number.isSafeInteger(cents) ? cents : null;
 }
