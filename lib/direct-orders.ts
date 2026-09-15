@@ -23,7 +23,10 @@ export async function createDirectOrder(db: Firestore, input: DirectOrderPayload
   const integration = { provider: 'disabled', status: 'DISABLED', attemptCount: 0 } as const;
   const items = input.items.map((item) => ({ ...item, ...(item.notes ? { notes: item.notes } : {}) }));
   await runTransaction(db, async (transaction) => {
-    const existing = await transaction.get(orderRef);
+    // A leitura preventiva usa o espelho público: o cliente ainda não tem
+    // permissão para ler um documento privado de pedido que não existe.
+    // O código público é aleatório e também é a chave de idempotência do fluxo.
+    const existing = await transaction.get(publicRef);
     if (existing.exists()) return;
     const order = {
       orderNumber: input.orderNumber,
