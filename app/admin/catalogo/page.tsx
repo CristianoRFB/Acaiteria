@@ -13,7 +13,7 @@ type SizeDraft = { id: string; label: string; price: string; active: boolean };
 const defaultSizes: SizeDraft[] = [{ id: 'unico', label: 'Tamanho único', price: '0,00', active: true }];
 
 function slugify(value: string) { return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, ''); }
-function priceToCents(value: string) { const normalized = value.trim().replace(/R\$\s?/gi, '').replace(/\./g, '').replace(',', '.'); const parsed = Number(normalized); if (!Number.isFinite(parsed) || parsed < 0) throw new Error('Confira os preços dos tamanhos.'); return Math.round(parsed * 100); }
+function priceToCents(value: string) { const raw = value.trim().replace(/R\$\s?/gi, ''); const normalized = raw.includes(',') ? raw.replace(/\./g, '').replace(',', '.') : raw; const parsed = Number(normalized); if (!Number.isFinite(parsed) || parsed < 0 || !Number.isSafeInteger(Math.round(parsed * 100))) throw new Error('Confira os preços dos tamanhos.'); return Math.round(parsed * 100); }
 function toDraftSizes(sizes: ProductSize[] | undefined): SizeDraft[] { if (!sizes?.length) return defaultSizes; return [...sizes].sort((a, b) => a.displayOrder - b.displayOrder).map((size) => ({ id: size.id, label: size.label, price: (size.basePriceCents / 100).toFixed(2).replace('.', ','), active: size.active })); }
 
 export default function CatalogPage() {
