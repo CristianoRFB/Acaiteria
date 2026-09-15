@@ -26,6 +26,22 @@ const accompanimentGroupIds = [
   'diversos',
 ];
 
+const modifierImage = (id) => {
+  const exact = {
+    'base-acai': 'acai', 'base-cupuacu': 'cupuacu', 'base-iogurte': 'iogurte', 'base-graviola': 'iogurte', 'base-pitaya': 'pitaya', 'base-acai-zero': 'acai',
+    'mousse-morango': 'mousse-morango', 'mousse-chocolate': 'mousse-chocolate', 'mousse-maracuja': 'mousse-maracuja', 'diverso-leite-condensado': 'leite-condensado',
+    'fruta-banana': 'banana', 'fruta-morango': 'morango', 'fruta-kiwi': 'kiwi', 'fruta-manga': 'manga', 'granola-tradicional': 'granola', 'chocolate-granulado': 'granulado', 'chocolate-oreo': 'oreo', 'diverso-creme-pistache': 'pistache',
+  }[id];
+  if (exact) return `/menu/ingredients/${exact}.jpg`;
+  if (id.startsWith('mousse-')) return '/menu/ingredients/mousse-morango.jpg';
+  if (id.startsWith('fruta-')) return '/menu/ingredients/morango.jpg';
+  if (id.startsWith('cobertura-')) return '/menu/ingredients/leite-condensado.jpg';
+  if (id.startsWith('sorvete-') || id.startsWith('bola-')) return '/menu/products/sorvete.jpg';
+  if (id.startsWith('milk-')) return '/menu/products/milk-shake.jpg';
+  if (id.startsWith('chocolate-')) return '/menu/ingredients/granulado.jpg';
+  return '/menu/ingredients/granola.jpg';
+};
+
 const combo = (id, name, description, prices, displayOrder, note) => ({
   id,
   name,
@@ -34,6 +50,7 @@ const combo = (id, name, description, prices, displayOrder, note) => ({
   active: true,
   categoryId: 'combinados',
   productType: 'CUSTOMIZABLE',
+  imageUrl: `/menu/products/combo-${id}.jpg`,
   displayOrder,
   sizes: fourSizes(prices),
   modifierGroupIds: [...accompanimentGroupIds, 'embalagem'],
@@ -47,6 +64,7 @@ const simple = (id, name, description, categoryId, label, price, displayOrder) =
   active: true,
   categoryId,
   productType: 'SIMPLE',
+  imageUrl: `/menu/products/${id === 'salada-de-frutas' ? id : id.startsWith('shake-acai') ? 'shake-acai' : 'bebida'}.jpg`,
   displayOrder,
   sizes: [{ id: 'unico', label, active: true, basePriceCents: price, displayOrder: 1 }],
   modifierGroupIds: [],
@@ -62,6 +80,7 @@ const modifier = (id, name, priceCents, displayOrder, options = {}) => ({
   maxQuantity: 3,
   allergenKeys: [],
   displayOrder,
+  imageUrl: modifierImage(id),
   ...options,
 });
 
@@ -130,7 +149,7 @@ export const menuCatalog = {
       active: true,
       categoryId: 'monte-seu-copo',
       productType: 'CUSTOMIZABLE',
-      imageUrl: '/development-acai-placeholder.png',
+      imageUrl: '/menu/products/acai-monte-seu.jpg',
       displayOrder: 1,
       sizes: fourSizes([1400, 1500, 1600, 1900]),
       modifierGroupIds: ['sabores-base', ...accompanimentGroupIds, 'embalagem'],
@@ -169,6 +188,7 @@ export const menuCatalog = {
       active: true,
       categoryId: 'milk-shakes',
       productType: 'CUSTOMIZABLE',
+      imageUrl: '/menu/products/milk-shake.jpg',
       displayOrder: 1,
       sizes: threeSizes([1350, 1450, 1550], 1),
       modifierGroupIds: ['sabores-milk-shake'],
@@ -181,6 +201,7 @@ export const menuCatalog = {
       active: true,
       categoryId: 'sorvetes',
       productType: 'CUSTOMIZABLE',
+      imageUrl: '/menu/products/sorvete.jpg',
       displayOrder: 1,
       sizes: threeSizes([1500, 1600, 1700], 2),
       modifierGroupIds: ['sabores-sorvete'],

@@ -7,10 +7,19 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { developmentCatalog, developmentStoreConfig } from '@/lib/development-seed';
 import { getFirebaseClient, hasFirebaseConfig, useDevelopmentSeed } from '@/lib/firebase/client';
 import type { CartItemDraft, CatalogSnapshot, Role, StorePublicConfig } from '@/shared/domain';
+import { resolveModifierImage, resolveProductImage } from '@/shared/catalog-images';
 import { normalizeStoreConfig } from '@/shared/store-config';
 
 interface CatalogState { catalog: CatalogSnapshot; config: StorePublicConfig; loading: boolean; error?: string; development: boolean }
 const CatalogContext = createContext<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, loading: true, development: true });
+
+function enrichCatalogImages(catalog: CatalogSnapshot): CatalogSnapshot {
+  return {
+    ...catalog,
+    products: catalog.products.map((product) => ({ ...product, imageUrl: resolveProductImage(product.id, product.imageUrl) })),
+    modifiers: catalog.modifiers.map((modifier) => ({ ...modifier, imageUrl: resolveModifierImage(modifier.id, modifier.imageUrl) })),
+  };
+}
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, loading: !useDevelopmentSeed, development: useDevelopmentSeed });
@@ -26,7 +35,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     }
     const stops: Array<() => void> = [];
     const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig };
-    const publish = () => setState({ ...next, catalog: { ...next.catalog }, loading: false, development: false });
+    const publish = () => setState({ ...next, catalog: enrichCatalogImages(next.catalog), loading: false, development: false });
     stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { next.config = normalizeStoreConfig(snap.exists() ? snap.data() : undefined); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
     const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => { (next.catalog[key] as T[]) = snap.docs.map((item) => ({ id: item.id, ...item.data() }) as T); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
     stops.push(subscribe('categories', 'categories'), subscribe('products', 'products'), subscribe('modifierGroups', 'groups'), subscribe('modifiers', 'modifiers'));
