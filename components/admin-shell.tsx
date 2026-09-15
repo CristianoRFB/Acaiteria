@@ -4,6 +4,7 @@ import {
   Boxes,
   LayoutDashboard,
   LogOut,
+  Megaphone,
   Settings,
   ShoppingBag,
   SlidersHorizontal,
@@ -25,6 +26,7 @@ const links = [
   { href: '/admin', label: 'Visão geral', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
   { href: '/admin/catalogo', label: 'Catálogo', icon: Boxes },
+  { href: '/admin/promocoes', label: 'Promoções', icon: Megaphone },
   { href: '/admin/adicionais', label: 'Adicionais', icon: SlidersHorizontal },
   { href: '/admin/configuracoes', label: 'Configurações', icon: Settings },
 ];

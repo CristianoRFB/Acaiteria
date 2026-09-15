@@ -101,6 +101,19 @@ export interface Modifier {
   imageUrl?: string;
   updatedAt?: unknown;
 }
+export interface Promotion {
+  id: string;
+  title: string;
+  description: string;
+  badge?: string;
+  priceLabel?: string;
+  imageUrl?: string;
+  productId?: string;
+  active: boolean;
+  displayOrder: number;
+  updatedAt?: unknown;
+}
+
 export interface ModifierSelection { modifierId: string; quantity: number }
 export interface GroupSelection { groupId: string; items: ModifierSelection[] }
 export interface CartItemDraft {

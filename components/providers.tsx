@@ -6,12 +6,12 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 
 import { developmentCatalog, developmentStoreConfig } from '@/lib/development-seed';
 import { getFirebaseClient, hasFirebaseConfig, useDevelopmentSeed } from '@/lib/firebase/client';
-import type { CartItemDraft, CatalogSnapshot, Role, StorePublicConfig } from '@/shared/domain';
+import type { CartItemDraft, CatalogSnapshot, Promotion, Role, StorePublicConfig } from '@/shared/domain';
 import { resolveModifierImage, resolveProductImage } from '@/shared/catalog-images';
 import { normalizeStoreConfig } from '@/shared/store-config';
 
-interface CatalogState { catalog: CatalogSnapshot; config: StorePublicConfig; loading: boolean; error?: string; development: boolean }
-const CatalogContext = createContext<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, loading: true, development: true });
+interface CatalogState { catalog: CatalogSnapshot; config: StorePublicConfig; promotions: Promotion[]; loading: boolean; error?: string; development: boolean }
+const CatalogContext = createContext<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: true, development: true });
 
 function enrichCatalogImages(catalog: CatalogSnapshot): CatalogSnapshot {
   return {
@@ -22,10 +22,10 @@ function enrichCatalogImages(catalog: CatalogSnapshot): CatalogSnapshot {
 }
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, loading: !useDevelopmentSeed, development: useDevelopmentSeed });
+  const [state, setState] = useState<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: !useDevelopmentSeed, development: useDevelopmentSeed });
   useEffect(() => {
     if (useDevelopmentSeed || !hasFirebaseConfig) {
-      setState({ catalog: developmentCatalog, config: developmentStoreConfig, loading: false, development: true });
+      setState({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: false, development: true });
       return;
     }
     let db;
@@ -34,11 +34,17 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       return;
     }
     const stops: Array<() => void> = [];
-    const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig };
+    const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig, promotions: [] as Promotion[] };
     const publish = () => setState({ ...next, catalog: enrichCatalogImages(next.catalog), loading: false, development: false });
     stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { next.config = normalizeStoreConfig(snap.exists() ? snap.data() : undefined); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
     const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => { (next.catalog[key] as T[]) = snap.docs.map((item) => ({ id: item.id, ...item.data() }) as T); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
     stops.push(subscribe('categories', 'categories'), subscribe('products', 'products'), subscribe('modifierGroups', 'groups'), subscribe('modifiers', 'modifiers'));
+    stops.push(onSnapshot(query(collection(db, 'promotions'), where('active', '==', true)), (snap) => {
+      next.promotions = snap.docs
+        .map((item) => ({ id: item.id, ...item.data() }) as Promotion)
+        .sort((a, b) => a.displayOrder - b.displayOrder);
+      publish();
+    }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
     const timeout = window.setTimeout(() => setState((old) => old.loading ? { ...old, loading: false, error: 'Não foi possível conectar ao Firebase. Verifique a configuração e tente novamente.' } : old), 10000);
     return () => { window.clearTimeout(timeout); stops.forEach((stop) => stop()); };
   }, []);

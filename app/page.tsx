@@ -7,10 +7,10 @@ import { PublicHeader } from '@/components/public-header';
 import { OrderLookup } from '@/components/order-lookup';
 import { useCatalog } from '@/components/providers';
 import { Button } from '@/components/ui/button';
-import { formatBRL, formatNextOpening, getStoreAvailability, type Product, type ProductCategory } from '@/shared/domain';
+import { formatBRL, formatNextOpening, getStoreAvailability, type Product, type ProductCategory, type Promotion } from '@/shared/domain';
 
 export default function Home() {
-  const { catalog, config, loading, error, development } = useCatalog();
+  const { catalog, config, promotions, loading, error, development } = useCatalog();
   const [now, setNow] = useState(() => new Date());
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
   const products = catalog.products.filter((product) => product.active).sort((a, b) => a.displayOrder - b.displayOrder);
@@ -48,6 +48,8 @@ export default function Home() {
     </section>
 
     <OrderLookup />
+
+    {promotions.length > 0 && <section aria-labelledby="promocoes" className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10"><div className="flex items-end justify-between gap-4"><div><p className="text-xs font-extrabold uppercase tracking-[.18em] text-[#a62c63]">Ofertas da loja</p><h2 id="promocoes" className="mt-2 text-3xl font-black tracking-[-.04em] text-[#351924]">Promoções especiais</h2></div><span className="rounded-full bg-[#d7f04a] px-3 py-1.5 text-xs font-black text-[#351924]">Por tempo limitado</span></div><div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">{promotions.map((promotion) => <PromotionCard key={promotion.id} promotion={promotion} products={catalog.products} />)}</div></section>}
 
     <section className="mx-auto max-w-6xl px-4 pt-8 sm:px-6 sm:pt-10">
       <div className="grid overflow-hidden rounded-[30px] bg-[#351924] text-white shadow-[0_20px_55px_rgba(53,25,36,.14)] lg:grid-cols-[1.25fr_.75fr]">
@@ -89,4 +91,11 @@ function ProductCard({ product, category }: { product: Product; category: Produc
     <div className="flex flex-col"><span className="text-xs font-bold text-[#a62c63]">{category.name}</span><h4 className="mt-2 text-xl font-black tracking-[-0.03em] text-[#351924]">{product.name}</h4><p className="mt-2 text-sm leading-relaxed text-[#826a75]">{product.description}</p><span className="mt-auto pt-5 text-sm font-extrabold text-[#82204f]">A partir de {formatBRL(starting)}</span></div>
     <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-[#74204c] via-[#a22862] to-[#d14e7e]">{product.imageUrl ? <img src={product.imageUrl} alt="" className="size-full object-cover opacity-85 transition group-hover:scale-105" /> : <div className="grid size-full place-items-center p-3 text-center text-sm font-black leading-tight text-white/90">Açaí<br /><span className="text-[#ffcf3d]">+ Sabor</span></div>}<span className="absolute bottom-3 right-3 grid size-9 place-items-center rounded-full bg-[#d7f04a] text-[#351924]"><ArrowRight className="size-4" /></span></div>
   </a>;
+}
+
+function PromotionCard({ promotion, products }: { promotion: Promotion; products: Product[] }) {
+  const product = products.find((candidate) => candidate.id === promotion.productId);
+  const href = promotion.productId ? `/montar/${promotion.productId}` : '#cardapio';
+  const image = promotion.imageUrl || product?.imageUrl;
+  return <a href={href} className="group overflow-hidden rounded-[26px] border border-[#82204f]/10 bg-white shadow-[0_12px_40px_rgba(88,32,58,.07)] transition hover:-translate-y-0.5 hover:shadow-[0_18px_45px_rgba(88,32,58,.12)]">{image && <img src={image} alt="" className="h-40 w-full object-cover transition group-hover:scale-[1.02]" />}<div className="p-5"><span className="text-xs font-black uppercase tracking-[.16em] text-[#a62c63]">{promotion.badge || 'Oferta especial'}</span><h3 className="mt-2 text-xl font-black text-[#351924]">{promotion.title}</h3><p className="mt-2 text-sm leading-relaxed text-[#826a75]">{promotion.description}</p>{promotion.priceLabel && <strong className="mt-4 block text-lg font-black text-[#82204f]">{promotion.priceLabel}</strong>}<span className="mt-4 inline-flex text-sm font-black text-[#82204f]">{product ? 'Montar este pedido →' : 'Ver cardápio →'}</span></div></a>;
 }
