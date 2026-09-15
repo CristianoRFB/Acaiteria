@@ -59,8 +59,8 @@ export default function SettingsPage() {
       if (!Array.isArray(holidayDates) || holidayDates.some((date) => typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date))) throw new Error('Feriados devem usar datas no formato AAAA-MM-DD.');
       if (!Array.isArray(holidayHours) || !holidayHours.length || holidayHours.some((window) => !timePattern.test(window.open) || !timePattern.test(window.close))) throw new Error('Janelas dos feriados inválidas. Use HH:mm.');
       const deliveryMode = String(data.get('deliveryMode')) as StorePublicConfig['deliveryConfig']['mode'];
-      const fixedFeeCents = Number(data.get('fixedFeeCents'));
-      if (deliveryMode === 'FIXED' && (!Number.isSafeInteger(fixedFeeCents) || fixedFeeCents < 0)) throw new Error('Taxa fixa inválida.');
+      const fixedFeeCents = parseCurrencyToCents(String(data.get('fixedFee') ?? ''));
+      if (deliveryMode === 'FIXED' && fixedFeeCents === null) throw new Error('Informe uma taxa válida em reais.');
       const orderEstimateMinutes = Number(data.get('orderEstimateMinutes'));
       if (!Number.isSafeInteger(orderEstimateMinutes) || orderEstimateMinutes < 5 || orderEstimateMinutes > 240) throw new Error('A previsão padrão deve ficar entre 5 e 240 minutos.');
 
@@ -83,7 +83,7 @@ export default function SettingsPage() {
         paymentMethods: [data.get('pix') === 'on' ? 'PIX' : null, data.get('card') === 'on' ? 'CARD' : null, data.get('cash') === 'on' ? 'CASH' : null].filter(Boolean) as StorePublicConfig['paymentMethods'],
         deliveryConfig: {
           mode: deliveryMode,
-          ...(deliveryMode === 'FIXED' ? { fixedFeeCents } : {}),
+          ...(deliveryMode === 'FIXED' && fixedFeeCents !== null ? { fixedFeeCents } : {}),
           ...(deliveryMode === 'ZONES' ? { zones } : {}),
         },
         orderInstructions: String(data.get('orderInstructions')).trim(),
@@ -126,7 +126,7 @@ export default function SettingsPage() {
       </SettingsSection>
 
       <SettingsSection title="Delivery">
-        <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Estratégia<select name="deliveryMode" defaultValue={config.deliveryConfig.mode} className="mt-2 h-11 w-full rounded-xl border bg-[#fffaf5] px-3 font-normal"><option value="NONE">Sem delivery</option><option value="CONFIRM">Taxa confirmada depois</option><option value="FIXED">Taxa fixa</option><option value="ZONES">Por bairro/zona</option></select></label><AdminField label="Taxa fixa (centavos)" name="fixedFeeCents" type="number" min="0" defaultValue={config.deliveryConfig.fixedFeeCents ?? 0} /></div>
+        <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Estratégia<select name="deliveryMode" defaultValue={config.deliveryConfig.mode} className="mt-2 h-11 w-full rounded-xl border bg-[#fffaf5] px-3 font-normal"><option value="NONE">Sem delivery</option><option value="CONFIRM">Taxa confirmada depois</option><option value="FIXED">Taxa fixa</option><option value="ZONES">Por bairro/zona</option></select></label><AdminField label="Taxa fixa (R$)" name="fixedFee" type="text" inputMode="decimal" placeholder="Ex.: 4,00" defaultValue={((config.deliveryConfig.fixedFeeCents ?? 0) / 100).toFixed(2).replace('.', ',')} /></div>
         <div className="mt-4"><AdminTextarea label="Zonas (JSON; usado no modo ZONES)" name="zones" defaultValue={JSON.stringify(config.deliveryConfig.zones ?? [], null, 2)} rows={7} /></div>
       </SettingsSection>
 
@@ -147,4 +147,14 @@ export default function SettingsPage() {
 
 function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
   return <section className="rounded-[26px] bg-white p-5 shadow-sm sm:p-6"><h2 className="mb-5 text-xl font-black">{title}</h2>{children}</section>;
+}
+
+function parseCurrencyToCents(value: string): number | null {
+  const normalized = value.trim().replace(/[^\d,.]/g, '');
+  if (!normalized) return null;
+  const decimal = normalized.includes(',') ? normalized.replace(/\./g, '').replace(',', '.') : normalized;
+  const amount = Number(decimal);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  const cents = Math.round(amount * 100);
+  return Number.isSafeInteger(cents) ? cents : null;
 }
