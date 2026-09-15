@@ -15,7 +15,7 @@ O catálogo de desenvolvimento foi transcrito das duas imagens fornecidas pela l
 - Rules deny-by-default; pedidos não aceitam leitura/escrita pública direta.
 - Emuladores de Auth, Firestore, Functions e Hosting para desenvolvimento.
 
-Coleções: `storePublicConfig`, `storePrivateConfig`, `categories`, `products`, `modifierGroups`, `modifiers`, `orders`, `orderRequests` (idempotência) e `users` (roles).
+Coleções: `storePublicConfig`, `storePrivateConfig`, `categories`, `products`, `modifierGroups`, `modifiers`, `orders`, `orderRequests` (idempotência), `financeEntries` (caixa administrativo) e `users` (roles).
 
 ## Fluxo
 
@@ -34,9 +34,10 @@ Versão publicada: https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site
 - `/admin/pedidos` — fila de pedidos
 - `/admin/catalogo` — produtos e preços
 - `/admin/adicionais` — grupos e complementos
+- `/admin/financas` — receitas, despesas, saldo e lançamentos pendentes em reais
 - `/admin/configuracoes` — loja, horários e WhatsApp
 
-As telas são responsivas e podem ser visualizadas diretamente no link de produção acima.
+As telas são responsivas e podem ser visualizadas diretamente no link de produção acima. A aba Finanças foi inspirada no exemplo de gestão fornecido, mas adaptada à rotina da açaíteria: vendas de açaí, delivery, insumos, embalagens, taxas e pró-labore. Os lançamentos ficam protegidos no Firestore e só administradores podem ler ou alterar os registros.
 
 ## Rodar localmente
 
