@@ -33,6 +33,9 @@ service cloud.firestore {
       allow read: if isStaff() || resource.data.active == true;
       allow create, update, delete: if isAdmin();
     }
+    match /financeEntries/{id} {
+      allow read, write: if isAdmin();
+    }
     match /orders/{id} {
       allow read: if isStaff() || (!signedIn() && resource.data.publicCode == id);
       allow create: if request.resource.data.publicCode == id

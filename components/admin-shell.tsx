@@ -8,6 +8,7 @@ import {
   Settings,
   ShoppingBag,
   SlidersHorizontal,
+  WalletCards,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { useEffect, type ReactNode } from 'react';
@@ -23,6 +24,7 @@ const links = [
     label: 'Integração Saipos',
     icon: SlidersHorizontal,
   },
+  { href: '/admin/financas', label: 'Finanças', icon: WalletCards },
   { href: '/admin', label: 'Visão geral', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
   { href: '/admin/catalogo', label: 'Catálogo', icon: Boxes },
