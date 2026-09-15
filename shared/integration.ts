@@ -1,5 +1,5 @@
 export type ProviderMode = 'disabled' | 'local' | 'saipos';
-export type IntegrationStatus = 'PENDING' | 'SENDING' | 'ACCEPTED' | 'ERROR' | 'UNKNOWN';
+export type IntegrationStatus = 'PENDING' | 'SENDING' | 'ACCEPTED' | 'ERROR' | 'UNKNOWN' | 'DISABLED' | 'SKIPPED';
 export interface IntegrationState {
   provider: ProviderMode;
   status: IntegrationStatus;

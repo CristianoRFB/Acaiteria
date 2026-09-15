@@ -15,6 +15,10 @@ export async function processIntegration(orderId: string): Promise<IntegrationSt
     const order = snap.data()!;
     const state = order.integration as IntegrationState | undefined;
     if (!state || state.status === 'ACCEPTED' || state.status === 'UNKNOWN' || order.status === 'CANCELLED') return null;
+    if (state.provider === 'disabled') {
+      tx.update(ref, { 'integration.status': 'DISABLED', 'integration.retryable': false, 'integration.message': 'Pedido salvo internamente. Integração externa desabilitada.', updatedAt: FieldValue.serverTimestamp() });
+      return null;
+    }
     if (state.status === 'SENDING') {
       if ((state.leaseUntilMs ?? 0) < Date.now()) {
         tx.update(ref, { 'integration.status': 'UNKNOWN', 'integration.retryable': false, 'integration.errorCode': 'LEASE_EXPIRED', 'integration.message': 'Tentativa interrompida. Reconcilie antes de reenviar.', updatedAt: FieldValue.serverTimestamp() });

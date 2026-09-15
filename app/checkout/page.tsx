@@ -115,10 +115,15 @@ export default function CheckoutPage() {
       sessionStorage.removeItem('acai-checkout-request-id');
       window.location.href = `/pedido/${response.data.publicCode}?novo=1`;
     } catch (cause: unknown) {
-      const message = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';
+      const rawMessage = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';
+      const errorCode = typeof cause === 'object' && cause && 'code' in cause ? String((cause as { code?: unknown }).code) : '';
+      const ambiguous = /deadline|timeout|unavailable|internal|network|failed-precondition/i.test(`${errorCode} ${rawMessage}`);
+      const message = ambiguous
+        ? 'Estamos confirmando se seu pedido chegou. Não envie outro pedido ainda. Aguarde alguns instantes e tente novamente.'
+        : rawMessage;
       setError(message);
       const number = config.whatsappNumber?.replace(/\D/g, '');
-      if (number) {
+      if (number && !ambiguous) {
         const lines = [
           'Olá! Quero fazer este pedido:',
           ...preview.items.map((item) => `- ${item.quantity}x ${item.productName} (${item.sizeLabel}) — ${formatBRL(item.totalPriceCents)}`),

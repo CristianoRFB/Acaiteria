@@ -22,7 +22,7 @@ Mesma clientRequestId retorna o mesmo pedido. Hash do conteúdo validado rejeita
 
 Em functions/.env.local (somente emulador): ORDER_PROVIDER=local e LOCAL_PROVIDER_SCENARIO=accept. Cenários: accept, reject, timeout, transient (falha na primeira tentativa), permanent. O ID fictício LOCAL-{internalId} é determinístico. Timeout é simulado de modo determinístico, não uma chamada HTTP real. Local é recusado fora de FUNCTIONS_EMULATOR=true + FIRESTORE_EMULATOR_HOST.
 
-ORDER_PROVIDER=disabled é o padrão explícito. O pedido é salvo e aguarda a loja, sem confirmação externa. ORDER_PROVIDER=saipos registra intenção de integração, verifica mappings e falha com CONTRACT_UNCONFIRMED. Não existe URL, autenticação ou POST inventado. Somente mudar a variável NÃO conecta o Saipos.
+ORDER_PROVIDER=disabled é o padrão explícito. O pedido é salvo e aguarda a loja, sem confirmação externa. O processamento marca a integração como `DISABLED` sem criar tentativa externa, retry ou erro falso. ORDER_PROVIDER=saipos registra intenção de integração, verifica mappings e falha com CONTRACT_UNCONFIRMED. Não existe URL, autenticação ou POST inventado. Somente mudar a variável NÃO conecta o Saipos.
 
 Comandos: npm run emulators e npm run dev. Para seed local: npm run seed:emulator. Não executar seed contra produção. O frontend de produção recusa configuração demo/emulador.
 
