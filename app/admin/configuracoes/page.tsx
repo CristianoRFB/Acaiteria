@@ -9,6 +9,7 @@ import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import type { StoreDayHours, StoreHoursWindow, StorePublicConfig } from '@/shared/domain';
+import { normalizeStoreConfig } from '@/shared/store-config';
 
 const fallbackHours: StoreDayHours[] = [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, closed: true, windows: [] }));
 const defaultHolidayHours: StoreHoursWindow[] = [{ open: '15:00', close: '21:50' }];
@@ -21,8 +22,8 @@ export default function SettingsPage() {
 
   useEffect(() => onSnapshot(
     doc(getFirebaseClient().db, 'storePublicConfig', 'main'),
-    (snapshot) => setConfig(snapshot.exists() ? snapshot.data() as StorePublicConfig : null),
-    (cause) => setError(cause.message),
+    (snapshot) => setConfig(normalizeStoreConfig(snapshot.exists() ? snapshot.data() : undefined)),
+    (_cause) => { setConfig(normalizeStoreConfig(undefined)); setError('Não foi possível carregar as configurações da loja. Os valores padrão estão disponíveis para revisão.'); },
   ), []);
 
   async function save(event: FormEvent<HTMLFormElement>) {
@@ -79,7 +80,7 @@ export default function SettingsPage() {
       await setDoc(doc(getFirebaseClient().db, 'storePublicConfig', 'main'), payload);
       setMessage('Configurações salvas e publicadas.');
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível salvar.');
+      setError(cause instanceof Error ? cause.message : 'Não foi possível salvar as configurações da loja. As alterações não foram aplicadas. Tente novamente.');
     }
   }
 

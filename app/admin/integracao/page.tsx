@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { httpsCallable } from 'firebase/functions';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
@@ -15,13 +15,18 @@ export default function IntegrationPage() {
   const [missingOnly, setMissingOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
-  async function load() {
+  const saiposEnabled = process.env.NEXT_PUBLIC_SAIPOS_ENABLED === 'true';
+  const load = useCallback(async () => {
+    if (!saiposEnabled) {
+      setMessage('Integração Saipos não configurada neste ambiente. O sistema de pedidos continua funcionando normalmente; a ativação exige credenciais e Functions no servidor.');
+      return;
+    }
     try { setData((await httpsCallable<unknown, Readiness>(getFirebaseClient().functions, 'getIntegrationReadiness')({})).data); }
-    catch { setMessage('Não foi possível consultar a integração. Confira a implantação das Functions.'); }
-  }
-  useEffect(() => { if (role === 'admin') void load(); }, [role]);
+    catch { setMessage('Não foi possível consultar a integração Saipos. O sistema de pedidos continua funcionando; verifique a implantação das Functions quando a integração for contratada.'); }
+  }, [saiposEnabled]);
+  useEffect(() => { if (role === 'admin') void load(); }, [role, load]);
   async function save() {
-    if (!data || !window.confirm('Salvar estes códigos de integração? Pedidos anteriores manterão seu histórico.')) return;
+    if (!data) return;
     setBusy(true); setMessage('');
     try { await httpsCallable(getFirebaseClient().functions, 'saveIntegrationMappings')({ mappings: data.mappings, revision: data.revision }); await load(); setMessage('Códigos salvos. Isso não habilita a conexão Saipos.'); }
     catch { setMessage('Não foi possível salvar. Recarregue para verificar alterações de outro administrador.'); }

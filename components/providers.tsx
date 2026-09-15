@@ -7,6 +7,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { developmentCatalog, developmentStoreConfig } from '@/lib/development-seed';
 import { getFirebaseClient, hasFirebaseConfig, useDevelopmentSeed } from '@/lib/firebase/client';
 import type { CartItemDraft, CatalogSnapshot, Role, StorePublicConfig } from '@/shared/domain';
+import { normalizeStoreConfig } from '@/shared/store-config';
 
 interface CatalogState { catalog: CatalogSnapshot; config: StorePublicConfig; loading: boolean; error?: string; development: boolean }
 const CatalogContext = createContext<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, loading: true, development: true });
@@ -26,7 +27,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     const stops: Array<() => void> = [];
     const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig };
     const publish = () => setState({ ...next, catalog: { ...next.catalog }, loading: false, development: false });
-    stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { if (snap.exists()) next.config = snap.data() as StorePublicConfig; publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
+    stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { next.config = normalizeStoreConfig(snap.exists() ? snap.data() : undefined); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
     const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => { (next.catalog[key] as T[]) = snap.docs.map((item) => ({ id: item.id, ...item.data() }) as T); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
     stops.push(subscribe('categories', 'categories'), subscribe('products', 'products'), subscribe('modifierGroups', 'groups'), subscribe('modifiers', 'modifiers'));
     const timeout = window.setTimeout(() => setState((old) => old.loading ? { ...old, loading: false, error: 'Não foi possível conectar ao Firebase. Verifique a configuração e tente novamente.' } : old), 10000);
@@ -38,6 +39,7 @@ export const useCatalog = () => useContext(CatalogContext);
 
 interface CartState {
   items: CartItemDraft[];
+  hydrated: boolean;
   add: (item: Omit<CartItemDraft, 'cartItemId'>) => string;
   update: (id: string, item: Omit<CartItemDraft, 'cartItemId'>) => void;
   remove: (id: string) => void;
@@ -50,6 +52,7 @@ const CART_KEY = 'acai-mais-sabor-cart-v2';
 
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItemDraft[]>([]);
+  const [hydrated, setHydrated] = useState(false);
   const itemsRef = useRef<CartItemDraft[]>([]);
   useEffect(() => {
     try {
@@ -57,10 +60,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
       const loaded = saved ? JSON.parse(saved) as CartItemDraft[] : [];
       itemsRef.current = Array.isArray(loaded) ? loaded : [];
       setItems(itemsRef.current);
+      setHydrated(true);
     } catch {
       localStorage.removeItem(CART_KEY);
       itemsRef.current = [];
       setItems([]);
+      setHydrated(true);
     }
   }, []);
   const commit = useCallback((updateItems: (current: CartItemDraft[]) => CartItemDraft[]) => {
@@ -75,7 +80,7 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const setQuantity = useCallback((id: string, quantity: number) => commit((old) => old.map((item) => item.cartItemId === id ? { ...item, quantity: Math.max(1, Math.min(20, quantity)) } : item)), [commit]);
   const duplicate = useCallback((id: string) => commit((old) => { const item = old.find((candidate) => candidate.cartItemId === id); return item ? [...old, { ...item, cartItemId: crypto.randomUUID() }] : old; }), [commit]);
   const clear = useCallback(() => commit(() => []), [commit]);
-  const value = useMemo(() => ({ items, add, update, remove, setQuantity, duplicate, clear }), [items, add, update, remove, setQuantity, duplicate, clear]);
+  const value = useMemo(() => ({ items, hydrated, add, update, remove, setQuantity, duplicate, clear }), [items, hydrated, add, update, remove, setQuantity, duplicate, clear]);
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }
 export function useCart() { const context = useContext(CartContext); if (!context) throw new Error('CartProvider ausente.'); return context; }

@@ -83,9 +83,11 @@ const extraGroup = (id, name, modifierIds, displayOrder, maxSelections = 12) => 
 export const storePublicConfigSeed = {
   storeName: 'Açaí + Sabor',
   instagramHandle: '@acaimaissabor.stafedosul',
-  address: 'Endereço pendente de confirmação',
+  address: 'Av. Navarro de Andrade, 246 - Centro, Santa Fé do Sul - SP, 15775-000, Brasil',
   city: 'Santa Fé do Sul/SP',
-  whatsappEnabled: false,
+  phoneDisplay: '+55 17 98165-2600',
+  whatsappNumber: '5517981652600',
+  whatsappEnabled: true,
   orderingEnabled: true,
   pauseMessage: 'No momento, estamos fora do horário de entrega.',
   enforceHours: true,
