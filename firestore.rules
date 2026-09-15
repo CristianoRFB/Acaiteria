@@ -32,6 +32,13 @@ service cloud.firestore {
     match /orders/{id} {
       allow read: if isStaff();
       allow create, update, delete: if false;
+      // A staff member may correct contact/address/notes while the order is still new.
+      // Status changes continue to go through the validated callable function.
+      allow update: if isStaff()
+        && resource.data.status in ['NEW', 'CONFIRMED']
+        && request.resource.data.status == resource.data.status
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customer', 'notes', 'updatedAt', 'lastEditedAt', 'lastEditedBy'])
+        && request.resource.data.lastEditedBy == request.auth.uid;
     }
     match /users/{uid} {
       allow read: if signedIn() && (request.auth.uid == uid || isAdmin());

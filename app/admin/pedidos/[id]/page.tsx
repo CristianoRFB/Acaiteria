@@ -1,11 +1,12 @@
 'use client';
 
-import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
+import { doc, onSnapshot, serverTimestamp, Timestamp, updateDoc } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import {
   ArrowLeft,
   CheckCircle2,
   Loader2,
+  Pencil,
   Save,
   X,
   XCircle,
@@ -61,6 +62,8 @@ export default function OrderDetailPage() {
   const [error, setError] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
+  const [editOpen, setEditOpen] = useState(false);
+  const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(
     () =>
       onSnapshot(
@@ -75,6 +78,10 @@ export default function OrderDetailPage() {
       ),
     [id],
   );
+  useEffect(() => {
+    if (!order) return;
+    setEditFields({ name: order.customer.name, whatsapp: order.customer.whatsapp, street: order.customer.address?.street ?? '', number: order.customer.address?.number ?? '', complement: order.customer.address?.complement ?? '', neighborhood: order.customer.address?.neighborhood ?? '', reference: order.customer.address?.reference ?? '', notes: order.notes ?? '' });
+  }, [order]);
   async function update(status: OrderStatus, reason?: string) {
     if (!order) return;
     if (status === 'CANCELLED' && !reason) {
@@ -107,6 +114,20 @@ export default function OrderDetailPage() {
       return;
     }
     await update('CANCELLED', reason);
+  }
+  async function saveDetails(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!order) return;
+    setBusy(true);
+    setError('');
+    try {
+      await updateDoc(doc(getFirebaseClient().db, 'orders', order.id), { customer: { name: editFields.name, whatsapp: editFields.whatsapp, ...(order.fulfillment.mode === 'DELIVERY' ? { address: { street: editFields.street, number: editFields.number, complement: editFields.complement || undefined, neighborhood: editFields.neighborhood, reference: editFields.reference || undefined } } : {}) }, notes: editFields.notes.trim(), updatedAt: serverTimestamp(), lastEditedAt: serverTimestamp(), lastEditedBy: getFirebaseClient().auth.currentUser?.uid ?? '' });
+      setEditOpen(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
+    } finally {
+      setBusy(false);
+    }
   }
   return (
     <AdminShell>
@@ -191,6 +212,7 @@ export default function OrderDetailPage() {
               <section className="rounded-[26px] bg-[#351924] p-5 text-white">
                 <h2 className="text-lg font-black">Atualizar status</h2>
                 <div className="mt-4 grid gap-2">
+                  {(['NEW', 'CONFIRMED'] as OrderStatus[]).includes(order.status) && <Button disabled={busy} onClick={() => setEditOpen(true)} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar dados do pedido</Button>}
                   {ORDER_TRANSITIONS[order.status]
                     .filter((status) => status !== 'CANCELLED')
                     .map((status) => (
@@ -276,6 +298,17 @@ export default function OrderDetailPage() {
           </div>
         </>
       )}
+      {editOpen && order && (
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-4 backdrop-blur-sm">
+          <form onSubmit={saveDetails} className="my-6 w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Editar dados do pedido</h2><p className="mt-1 text-sm text-[#826a75]">Corrija os dados antes de iniciar o preparo.</p></div><button type="button" onClick={() => setEditOpen(false)} aria-label="Fechar edição" className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]"><X className="size-4" /></button></div>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2"><EditField label="Nome" value={editFields.name} onChange={(value) => setEditFields((old) => ({ ...old, name: value }))} required /><EditField label="WhatsApp" value={editFields.whatsapp} onChange={(value) => setEditFields((old) => ({ ...old, whatsapp: value }))} required /></div>
+            {order.fulfillment.mode === 'DELIVERY' && <><div className="mt-4 grid gap-4 sm:grid-cols-[1fr_120px]"><EditField label="Rua/Avenida" value={editFields.street} onChange={(value) => setEditFields((old) => ({ ...old, street: value }))} required /><EditField label="Número" value={editFields.number} onChange={(value) => setEditFields((old) => ({ ...old, number: value }))} required /></div><div className="mt-4 grid gap-4 sm:grid-cols-2"><EditField label="Complemento" value={editFields.complement} onChange={(value) => setEditFields((old) => ({ ...old, complement: value }))} /><EditField label="Bairro" value={editFields.neighborhood} onChange={(value) => setEditFields((old) => ({ ...old, neighborhood: value }))} required /></div><div className="mt-4"><EditField label="Referência" value={editFields.reference} onChange={(value) => setEditFields((old) => ({ ...old, reference: value }))} /></div></>}
+            <label className="mt-4 block text-sm font-bold">Observação<textarea value={editFields.notes} onChange={(event) => setEditFields((old) => ({ ...old, notes: event.target.value }))} maxLength={500} rows={4} className="mt-2 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] p-3 font-normal" /></label>
+            <div className="mt-5 flex gap-2"><Button type="button" variant="outline" onClick={() => setEditOpen(false)} className="h-11 flex-1 rounded-full">Cancelar</Button><Button type="submit" disabled={busy} className="h-11 flex-1 rounded-full bg-[#82204f] font-black text-white">{busy ? <Loader2 className="animate-spin" /> : <Save />} Salvar alterações</Button></div>
+          </form>
+        </div>
+      )}
       {cancelOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-[#2b1722]/50 p-4 backdrop-blur-sm">
           <form
@@ -337,4 +370,8 @@ export default function OrderDetailPage() {
       )}
     </AdminShell>
   );
+}
+
+function EditField({ label, value, onChange, required = false }: { label: string; value: string; onChange: (value: string) => void; required?: boolean }) {
+  return <label className="block text-sm font-bold">{label}<input value={value} onChange={(event) => onChange(event.target.value)} required={required} maxLength={120} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal outline-none focus:border-[#82204f]" /></label>;
 }

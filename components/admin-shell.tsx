@@ -12,6 +12,7 @@ import { signOut } from 'firebase/auth';
 import { useEffect, type ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers';
+import { AdminNotifications } from '@/components/admin-notifications';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 
 const links = [
@@ -123,6 +124,7 @@ export function AdminShell({
         </header>
         <main className="p-4 sm:p-6 lg:p-8">{children}</main>
       </div>
+      <AdminNotifications />
     </div>
   );
 }

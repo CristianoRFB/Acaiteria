@@ -17,6 +17,7 @@ import {
   calculateDeliveryFee,
   formatNextOpening,
   getStoreAvailability,
+  getCustomerOrderStatusMessage,
   normalizePhone,
   ORDER_TRANSITIONS,
   type CatalogSnapshot,
@@ -160,7 +161,9 @@ export const getPublicOrder = onCall({ region, timeoutSeconds: 15, memory: '256M
   const snapshot = await db.collection('orders').where('publicCode', '==', parsed.data.publicCode).limit(1).get();
   if (snapshot.empty) throw new HttpsError('not-found', 'Pedido não encontrado.');
   const data = snapshot.docs[0].data();
-  return { orderNumber: data.orderNumber, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, integrationMessage: customerIntegrationMessage(data.integration) };
+  const history = Array.isArray(data.statusHistory) ? data.statusHistory as Array<{ status?: OrderStatus; reason?: string; at?: Timestamp }> : [];
+  const latest = history[history.length - 1];
+  return { orderNumber: data.orderNumber, createdAt: data.createdAt?.toDate?.().toISOString(), updatedAt: data.updatedAt?.toDate?.().toISOString(), items: data.items, fulfillment: { mode: data.fulfillment.mode }, pricing: data.pricing, status: data.status, statusMessage: getCustomerOrderStatusMessage(data.status as OrderStatus, latest?.reason), integrationMessage: customerIntegrationMessage(data.integration) };
 });
 
 async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Role> {
@@ -186,6 +189,34 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     transaction.update(orderRef, { status, updatedAt: FieldValue.serverTimestamp(), statusHistory: FieldValue.arrayUnion({ status, at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: FieldValue.serverTimestamp(), cancellationReason: reason || '' } : {}) });
   });
   logger.info('updateOrderStatus completed', { orderId, status, actorUid: request.auth?.uid });
+  return { ok: true };
+});
+
+const updateDetailsSchema = z.object({
+  orderId: z.string().min(1).max(128),
+  customer: z.object({
+    name: z.string().trim().min(2).max(80),
+    whatsapp: z.string().min(8).max(30),
+    address: z.object({ street: z.string().trim().min(2).max(120), number: z.string().trim().min(1).max(20), complement: z.string().trim().max(80).optional(), neighborhood: z.string().trim().min(2).max(80), reference: z.string().trim().max(120).optional() }).optional(),
+  }),
+  notes: z.string().trim().max(500).optional(),
+});
+export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = updateDetailsSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Dados do pedido inválidos.');
+  const input = parsed.data;
+  let whatsapp: string;
+  try { whatsapp = normalizePhone(input.customer.whatsapp); } catch (cause) { throw new HttpsError('invalid-argument', cause instanceof Error ? cause.message : 'WhatsApp inválido.'); }
+  const orderRef = db.doc(`orders/${input.orderId}`);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(orderRef);
+    if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    const current = snapshot.data()?.status as OrderStatus;
+    if (!['NEW', 'CONFIRMED'].includes(current)) throw new HttpsError('failed-precondition', 'Este pedido não pode mais ser editado porque já entrou em preparo.');
+    transaction.update(orderRef, { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid });
+  });
+  logger.info('updateOrderDetails completed', { orderId: input.orderId, actorUid: request.auth?.uid });
   return { ok: true };
 });
 

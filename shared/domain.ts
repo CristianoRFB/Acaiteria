@@ -147,6 +147,17 @@ export const ORDER_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   CANCELLED: [],
 };
 
+/** Mensagem simples e acionável exibida ao cliente no acompanhamento do pedido. */
+export function getCustomerOrderStatusMessage(status: OrderStatus, reason?: string): string {
+  if (status === 'NEW') return 'Pedido recebido. A loja vai conferir os itens e confirmar em instantes.';
+  if (status === 'CONFIRMED') return 'Pedido aceito pela loja! Já estamos organizando tudo para você.';
+  if (status === 'PREPARING') return 'Pedido em preparo. Estamos montando com carinho.';
+  if (status === 'READY') return 'Pedido pronto para retirada.';
+  if (status === 'OUT_FOR_DELIVERY') return 'Pedido saiu para entrega. Fique de olho no seu WhatsApp.';
+  if (status === 'COMPLETED') return 'Pedido concluído. Obrigado pela preferência!';
+  return reason ? `Pedido recusado pela loja: ${reason}` : 'Pedido recusado pela loja. Entre em contato para mais informações.';
+}
+
 export function formatBRL(cents: number): string {
   return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 }
