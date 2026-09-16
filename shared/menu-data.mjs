@@ -26,7 +26,32 @@ const accompanimentGroupIds = [
   'diversos',
 ];
 
+const generatedModifierImageIds = new Set([
+  'base-graviola', 'base-acai-zero', 'mousse-limao', 'mousse-morango', 'mousse-ninho',
+  'whey-protein', 'cobertura-caramelo', 'cobertura-chocolate', 'cobertura-frutas-vermelhas',
+  'cobertura-maracuja', 'cobertura-menta', 'cobertura-morango', 'cobertura-fini',
+  'sorvete-bombom-extra', 'sorvete-morango-extra', 'sorvete-ninho-trufado-extra',
+  'granola-tradicional', 'chocolate-alpino', 'chocolate-bis-branco', 'chocolate-bis-preto',
+  'chocolate-brigadeiro', 'chocolate-charge', 'chocolate-confete', 'chocolate-creme-avela',
+  'chocolate-creme-oreo', 'chocolate-creme-ovomaltine', 'chocolate-gotas', 'chocolate-granulado',
+  'chocolate-kinder-bueno-white', 'chocolate-kit-kat', 'chocolate-laka', 'chocolate-moranguete',
+  'chocolate-nescau-ball', 'chocolate-nutella', 'chocolate-ouro-branco', 'chocolate-ovomaltine',
+  'chocolate-power-ball-misto', 'chocolate-prestigio', 'chocolate-raspas', 'chocolate-sonho-de-valsa',
+  'diverso-amendoim', 'diverso-beijinho', 'diverso-castanha-caju', 'diverso-chantilly',
+  'diverso-creme-ninho', 'diverso-doce-leite', 'diverso-leite-condensado', 'diverso-leite-po',
+  'diverso-mel', 'diverso-neston', 'diverso-pacoca', 'diverso-raspa-coco', 'diverso-sucrilhos',
+  'diverso-xarope-guarana', 'embalagem-viagem', 'milk-acai', 'milk-beijinho', 'milk-brigadeiro',
+  'milk-capuccino', 'milk-chocolate', 'milk-creme', 'milk-creme-avela', 'milk-cupuacu',
+  'milk-doce-leite', 'milk-ferrero-rocher', 'milk-kinder-ovo', 'milk-maracuja', 'milk-morango',
+  'milk-ninho', 'milk-ovomaltine', 'milk-pacoca', 'milk-prestigio', 'milk-sensacao', 'milk-pistache',
+  'bola-maracuja', 'bola-milho', 'bola-cafe-chocolate', 'bola-chocolate-belga', 'bola-pistache',
+  'bola-morango', 'bola-flocos', 'bola-unicornio', 'bola-nutellissimo', 'bola-ninho-trufado',
+  'bola-iogurte-amarena', 'bola-prestigio', 'bola-bombom', 'refri-coca-cola', 'refri-guarana',
+  'refri-fanta', 'refri-sprite', 'refri-pepsi', 'refri-sukita',
+]);
+
 const modifierImage = (id) => {
+  if (generatedModifierImageIds.has(id)) return `/menu/generated/${id}.png`;
   const exact = {
     'base-acai': 'acai', 'base-cupuacu': 'cupuacu', 'base-iogurte': 'iogurte', 'base-graviola': 'iogurte', 'base-pitaya': 'pitaya', 'base-acai-zero': 'acai',
     'mousse-morango': 'mousse-morango', 'mousse-chocolate': 'mousse-chocolate', 'mousse-maracuja': 'mousse-maracuja', 'diverso-leite-condensado': 'leite-condensado',
@@ -56,6 +81,11 @@ const combo = (id, name, description, prices, displayOrder, note) => ({
   modifierGroupIds: [...accompanimentGroupIds, 'embalagem'],
 });
 
+const generatedProductImageIds = new Set([
+  'shake-acai-banana-whey', 'shake-acai-morango', 'shake-acai-banana',
+  'agua-sem-gas', 'agua-com-gas', 'refrigerante',
+]);
+
 const simple = (id, name, description, categoryId, label, price, displayOrder) => ({
   id,
   name,
@@ -64,7 +94,9 @@ const simple = (id, name, description, categoryId, label, price, displayOrder) =
   active: true,
   categoryId,
   productType: 'SIMPLE',
-  imageUrl: `/menu/products/${id === 'salada-de-frutas' ? id : id.startsWith('shake-acai') ? 'shake-acai' : 'bebida'}.jpg`,
+  imageUrl: generatedProductImageIds.has(id)
+    ? `/menu/generated/${id}.png`
+    : `/menu/products/${id === 'salada-de-frutas' ? id : id.startsWith('shake-acai') ? 'shake-acai' : 'bebida'}.jpg`,
   displayOrder,
   sizes: [{ id: 'unico', label, active: true, basePriceCents: price, displayOrder: 1 }],
   modifierGroupIds: [],
@@ -78,7 +110,7 @@ const refrigerante = {
   active: true,
   categoryId: 'bebidas',
   productType: 'CUSTOMIZABLE',
-  imageUrl: '/menu/products/bebida.jpg',
+  imageUrl: '/menu/generated/refrigerante.png',
   displayOrder: 3,
   sizes: [
     { id: '350ml', label: '350 ml', active: true, basePriceCents: 500, displayOrder: 1 },
@@ -383,6 +415,6 @@ export const menuCatalog = {
     ...['Açaí', 'Beijinho', 'Brigadeiro', 'Capuccino', 'Chocolate', 'Creme', 'Creme de avelã', 'Cupuaçu', 'Doce de leite', 'Ferrero Rocher', 'Kinder Ovo', 'Maracujá', 'Morango', 'Ninho', 'Ovomaltine', 'Paçoca', 'Prestígio', 'Sensação'].map((name, index) => modifier(`milk-${['acai', 'beijinho', 'brigadeiro', 'capuccino', 'chocolate', 'creme', 'creme-avela', 'cupuacu', 'doce-leite', 'ferrero-rocher', 'kinder-ovo', 'maracuja', 'morango', 'ninho', 'ovomaltine', 'pacoca', 'prestigio', 'sensacao'][index]}`, name, 250, index + 1, { maxQuantity: 1 })),
     modifier('milk-pistache', 'Pistache', 200, 19, { premium: true, maxQuantity: 1 }),
     ...['Maracujá', 'Milho', 'Café com chocolate', 'Chocolate belga', 'Pistache', 'Morango', 'Flocos', 'Unicórnio', 'Nutellíssimo', 'Ninho trufado', 'Iogurte com amarena', 'Prestígio', 'Bombom'].map((name, index) => modifier(`bola-${['maracuja', 'milho', 'cafe-chocolate', 'chocolate-belga', 'pistache', 'morango', 'flocos', 'unicornio', 'nutellissimo', 'ninho-trufado', 'iogurte-amarena', 'prestigio', 'bombom'][index]}`, name, 0, index + 1, { maxQuantity: 1 })),
-    ...['Coca-Cola', 'Guaraná', 'Fanta Laranja', 'Sprite', 'Pepsi', 'Sukita Laranja'].map((name, index) => modifier(`refri-${['coca-cola', 'guarana', 'fanta', 'sprite', 'pepsi', 'sukita'][index]}`, name, 0, index + 1, { maxQuantity: 1, imageUrl: '/menu/products/bebida.jpg' })),
+    ...['Coca-Cola', 'Guaraná', 'Fanta Laranja', 'Sprite', 'Pepsi', 'Sukita Laranja'].map((name, index) => modifier(`refri-${['coca-cola', 'guarana', 'fanta', 'sprite', 'pepsi', 'sukita'][index]}`, name, 0, index + 1, { maxQuantity: 1 })),
   ],
 };

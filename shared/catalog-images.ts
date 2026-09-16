@@ -2,13 +2,13 @@ const productImages: Record<string, string> = {
   'acai-monte-seu': '/menu/products/acai-monte-seu.jpg',
   'milk-shake': '/menu/products/milk-shake.jpg',
   sorvete: '/menu/products/sorvete.jpg',
-  'shake-acai-banana-whey': '/menu/products/shake-acai.jpg',
-  'shake-acai-morango': '/menu/products/shake-acai.jpg',
-  'shake-acai-banana': '/menu/products/shake-acai.jpg',
+  'shake-acai-banana-whey': '/menu/generated/shake-acai-banana-whey.png',
+  'shake-acai-morango': '/menu/generated/shake-acai-morango.png',
+  'shake-acai-banana': '/menu/generated/shake-acai-banana.png',
   'salada-de-frutas': '/menu/products/salada-de-frutas.jpg',
-  'agua-sem-gas': '/menu/products/bebida.jpg',
-  'agua-com-gas': '/menu/products/bebida.jpg',
-  refrigerante: '/menu/products/bebida.jpg',
+  'agua-sem-gas': '/menu/generated/agua-sem-gas.png',
+  'agua-com-gas': '/menu/generated/agua-com-gas.png',
+  refrigerante: '/menu/generated/refrigerante.png',
 };
 
 const comboIds = ['barbie', 'banana-ball', 'beijinho', 'bem-casado', 'chocomaster', 'dos-sonhos', 'favorito', 'power', 'raspas', 'saboroso', 'jade', 'pistache-berry', 'yogo-top', 'joaninha', 'kids-1', 'kids-2', 'mais-sabor', 'manila', 'moranguete', 'prestigio', 'supreme', 'tropical', '220-volts', 'santa-fe', 'explosao-de-oreo', 'nuvem'];
@@ -40,11 +40,36 @@ const modifierImages: Record<string, string> = {
   'diverso-creme-pistache': '/menu/ingredients/pistache.jpg',
 };
 
+const generatedModifierImageIds = new Set([
+  'base-graviola', 'base-acai-zero', 'mousse-limao', 'mousse-morango', 'mousse-ninho',
+  'whey-protein', 'cobertura-caramelo', 'cobertura-chocolate', 'cobertura-frutas-vermelhas',
+  'cobertura-maracuja', 'cobertura-menta', 'cobertura-morango', 'cobertura-fini',
+  'sorvete-bombom-extra', 'sorvete-morango-extra', 'sorvete-ninho-trufado-extra',
+  'granola-tradicional', 'chocolate-alpino', 'chocolate-bis-branco', 'chocolate-bis-preto',
+  'chocolate-brigadeiro', 'chocolate-charge', 'chocolate-confete', 'chocolate-creme-avela',
+  'chocolate-creme-oreo', 'chocolate-creme-ovomaltine', 'chocolate-gotas', 'chocolate-granulado',
+  'chocolate-kinder-bueno-white', 'chocolate-kit-kat', 'chocolate-laka', 'chocolate-moranguete',
+  'chocolate-nescau-ball', 'chocolate-nutella', 'chocolate-ouro-branco', 'chocolate-ovomaltine',
+  'chocolate-power-ball-misto', 'chocolate-prestigio', 'chocolate-raspas', 'chocolate-sonho-de-valsa',
+  'diverso-amendoim', 'diverso-beijinho', 'diverso-castanha-caju', 'diverso-chantilly',
+  'diverso-creme-ninho', 'diverso-doce-leite', 'diverso-leite-condensado', 'diverso-leite-po',
+  'diverso-mel', 'diverso-neston', 'diverso-pacoca', 'diverso-raspa-coco', 'diverso-sucrilhos',
+  'diverso-xarope-guarana', 'embalagem-viagem', 'milk-acai', 'milk-beijinho', 'milk-brigadeiro',
+  'milk-capuccino', 'milk-chocolate', 'milk-creme', 'milk-creme-avela', 'milk-cupuacu',
+  'milk-doce-leite', 'milk-ferrero-rocher', 'milk-kinder-ovo', 'milk-maracuja', 'milk-morango',
+  'milk-ninho', 'milk-ovomaltine', 'milk-pacoca', 'milk-prestigio', 'milk-sensacao', 'milk-pistache',
+  'bola-maracuja', 'bola-milho', 'bola-cafe-chocolate', 'bola-chocolate-belga', 'bola-pistache',
+  'bola-morango', 'bola-flocos', 'bola-unicornio', 'bola-nutellissimo', 'bola-ninho-trufado',
+  'bola-iogurte-amarena', 'bola-prestigio', 'bola-bombom', 'refri-coca-cola', 'refri-guarana',
+  'refri-fanta', 'refri-sprite', 'refri-pepsi', 'refri-sukita',
+]);
+
 export function resolveProductImage(id: string, current?: string): string {
-  return current || productImages[id] || '/menu/products/acai-monte-seu.jpg';
+  return productImages[id] || current || '/menu/products/acai-monte-seu.jpg';
 }
 
 export function resolveModifierImage(id: string, current?: string): string {
+  if (generatedModifierImageIds.has(id)) return `/menu/generated/${id}.png`;
   if (modifierImages[id] && (!current || current === '/menu/ingredients/morango.jpg')) return modifierImages[id];
   if (current) return current;
   if (modifierImages[id]) return modifierImages[id];
