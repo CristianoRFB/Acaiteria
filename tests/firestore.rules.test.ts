@@ -10,7 +10,7 @@ beforeAll(async () => {
   env = await initializeTestEnvironment({ projectId: 'demo-acai-mais-sabor', firestore: { host, port: Number(port), rules: readFileSync(resolve('firestore.rules'), 'utf8') } });
   await env.withSecurityRulesDisabled(async (context) => {
     const db = context.firestore();
-    await setDoc(doc(db, 'products', 'active'), { active: true, displayOrder: 1 });
+    await setDoc(doc(db, 'products', 'active'), { name: 'Produto ativo', slug: 'produto-ativo', description: 'Descrição', active: true, categoryId: 'acai', productType: 'SIMPLE', displayOrder: 1, sizes: [], modifierGroupIds: [] });
     await setDoc(doc(db, 'orders', 'secret'), { status: 'NEW' });
     await setDoc(doc(db, 'users', 'admin-uid'), { role: 'admin' });
     await setDoc(doc(db, 'users', 'staff-uid'), { role: 'staff' });
@@ -42,7 +42,7 @@ describe('Firestore Rules deny by default', () => {
   });
   it('admin gerencia catálogo e configuração, mas não escreve pedido direto', async () => {
     const db = env.authenticatedContext('admin-uid').firestore();
-    await assertSucceeds(setDoc(doc(db, 'products', 'new'), { active: true, displayOrder: 2 }));
+    await assertSucceeds(setDoc(doc(db, 'products', 'new'), { name: 'Produto novo', slug: 'produto-novo', description: 'Descrição', active: true, categoryId: 'acai', productType: 'SIMPLE', displayOrder: 2, sizes: [], modifierGroupIds: [] }));
     await assertSucceeds(setDoc(doc(db, 'storePublicConfig', 'main'), { orderingEnabled: true }));
     await assertFails(setDoc(doc(db, 'orders', 'bypass'), { status: 'COMPLETED' }));
     await assertFails(setDoc(doc(db, 'financeEntries', 'manual'), { kind: 'EXPENSE', category: 'Insumos', description: 'Frutas', amountCents: 1200, date: '2026-09-16', status: 'PAID', orderNumber: null, notes: null, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));

@@ -8,6 +8,7 @@ import { developmentCatalog, developmentStoreConfig } from '@/lib/development-se
 import { getFirebaseClient, hasFirebaseConfig, useDevelopmentSeed } from '@/lib/firebase/client';
 import type { CartItemDraft, CatalogSnapshot, Promotion, Role, StorePublicConfig } from '@/shared/domain';
 import { resolveModifierImage, resolveProductImage } from '@/shared/catalog-images';
+import { isOrderableCatalogProduct, normalizeCatalogProduct } from '@/shared/catalog-normalization';
 import { normalizeStoreConfig } from '@/shared/store-config';
 import { withBeverageOptions } from '@/shared/beverage-options';
 
@@ -38,7 +39,13 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig, promotions: [] as Promotion[] };
     const publish = () => setState({ ...next, catalog: enrichCatalogImages(withBeverageOptions(next.catalog)), loading: false, development: false });
     stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { next.config = normalizeStoreConfig(snap.exists() ? snap.data() : undefined); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
-    const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => { (next.catalog[key] as T[]) = snap.docs.map((item) => ({ id: item.id, ...item.data() }) as T); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
+    const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => {
+      const values = snap.docs.map((item) => ({ id: item.id, ...item.data() }));
+      (next.catalog[key] as T[]) = key === 'products'
+        ? values.map((value) => normalizeCatalogProduct(value)).filter(isOrderableCatalogProduct) as T[]
+        : values as T[];
+      publish();
+    }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
     stops.push(subscribe('categories', 'categories'), subscribe('products', 'products'), subscribe('modifierGroups', 'groups'), subscribe('modifiers', 'modifiers'));
     stops.push(onSnapshot(query(collection(db, 'promotions'), where('active', '==', true)), (snap) => {
       next.promotions = snap.docs

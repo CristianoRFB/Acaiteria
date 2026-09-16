@@ -25,6 +25,7 @@ import {
   type ProductCategory,
   type ProductSize,
 } from '@/shared/domain';
+import { normalizeCatalogProduct } from '@/shared/catalog-normalization';
 
 type SizeDraft = { id: string; label: string; price: string; active: boolean };
 const defaultSizes: SizeDraft[] = [
@@ -83,27 +84,20 @@ export default function CatalogPage() {
     const productsUnsubscribe = onSnapshot(
       query(collection(db, 'products'), orderBy('displayOrder')),
       (snap) =>
-        setProducts(
-          snap.docs.map((item) => ({ id: item.id, ...item.data() }) as Product),
-        ),
+        setProducts(snap.docs.map((item) => normalizeCatalogProduct({ id: item.id, ...item.data() }))),
+      (cause) => setError(`Não foi possível carregar os produtos: ${cause.message}`),
     );
     const categoriesUnsubscribe = onSnapshot(
       query(collection(db, 'categories'), orderBy('displayOrder')),
       (snap) =>
-        setCategories(
-          snap.docs.map(
-            (item) => ({ id: item.id, ...item.data() }) as ProductCategory,
-          ),
-        ),
+          setCategories(snap.docs.map((item) => ({ id: item.id, ...item.data() }) as ProductCategory)),
+        (cause) => setError(`Não foi possível carregar as categorias: ${cause.message}`),
     );
     const groupsUnsubscribe = onSnapshot(
       query(collection(db, 'modifierGroups'), orderBy('displayOrder')),
       (snap) =>
-        setGroups(
-          snap.docs.map(
-            (item) => ({ id: item.id, ...item.data() }) as ModifierGroup,
-          ),
-        ),
+        setGroups(snap.docs.map((item) => ({ id: item.id, ...item.data() }) as ModifierGroup)),
+        (cause) => setError(`Não foi possível carregar os adicionais: ${cause.message}`),
     );
     return () => {
       productsUnsubscribe();
@@ -278,6 +272,11 @@ export default function CatalogPage() {
                   {size.label} • {formatBRL(size.basePriceCents)}
                 </span>
               ))}
+              {!product.sizes.length && (
+                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800">
+                  Precisa de revisão: adicione tamanho e preço
+                </span>
+              )}
             </div>
             <button
               type="button"

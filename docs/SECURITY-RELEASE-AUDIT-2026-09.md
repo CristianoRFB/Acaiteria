@@ -10,6 +10,8 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 - Edição e mudança de situação do Financeiro passaram para funções autenticadas. Lançamentos automáticos vinculados a pedido ou venda local não podem ser editados nem apagados pelo painel.
 - O registro de venda local continua transacional: Caixa e Financeiro são gravados juntos, com idempotência e efeito correto por forma de pagamento.
 - A consulta de pedidos concluídos usada pela visão comercial ganhou índice por `status` e `updatedAt`.
+- O catálogo passou a normalizar documentos antigos sem `sizes`, sinalizar esses produtos no painel e ocultá-los do cardápio público até revisão.
+- As Rules agora exigem os campos mínimos de produto, incluindo `sizes` e `modifierGroupIds`, para impedir novos registros incompletos.
 
 ## Auditoria por área
 
@@ -22,6 +24,7 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 | Cliente e acompanhamento | Passou | Leitura pública fica limitada ao espelho/código; resposta de edição aceita somente decisão pendente. |
 | Banco e consultas | Passou | Consultas críticas têm limite/filtros; a visão comercial usa consulta mensal indexada. |
 | Interface comercial | Passou | Visão comercial separada dentro do Financeiro, com estados vazios e dados reais do mês. |
+| Catálogo | Passou | Produto legado sem tamanhos não derruba o painel nem fica disponível para compra. |
 
 ## Verificações executadas
 
@@ -31,10 +34,13 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 - `npm run test:functions`
 - `npm run test:rules` com Java 21
 - `npm run build`
+- `npm run check:production` — bloqueado corretamente pela ausência da chave real do App Check.
 - Operação real no localhost: Financeiro → Inteligência de vendas, gráficos, mix de pagamentos, ranking e canais.
 
 ## Risco residual antes de produção
 
-- O ambiente de produção ainda precisa de `.env.local`, projeto Firebase correto, App Check e credenciais de integração configuradas.
+- O projeto Firebase de produção `food-5fb44` e o alvo `.firebaserc` foram configurados; `.env.production.local` foi preparado com a configuração pública do app, mas ainda falta a chave reCAPTCHA v3 do App Check.
+- O Firebase CLI desta máquina não possui conta autenticada; por isso Rules, índices, Functions e Hosting ainda não foram publicados.
+- A integração Saipos permanece desativada até existir contrato oficial de pedidos, credencial de homologação, mapeamentos reais e adapter homologado.
 - O ranking de produtos considera itens detalhados dos pedidos online; vendas locais entram no faturamento, ticket e canais, mas precisam de itemização própria para aparecerem como produto.
 - Antes de cobrar clientes reais, executar um pedido sandbox ponta a ponta com o provedor escolhido e confirmar os índices no projeto Firebase de produção.

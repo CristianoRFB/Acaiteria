@@ -5,6 +5,17 @@ service cloud.firestore {
     function userRole() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
     function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
     function isAdmin() { return userRole() == 'admin'; }
+    function validProduct(data) {
+      return data.name is string
+        && data.slug is string
+        && data.description is string
+        && data.active is bool
+        && data.categoryId is string
+        && data.productType in ['CUSTOMIZABLE', 'SIMPLE']
+        && data.displayOrder is int
+        && data.sizes is list
+        && data.modifierGroupIds is list;
+    }
     match /storePublicConfig/{id} {
       allow read: if true;
       allow create, update, delete: if isAdmin();
@@ -18,7 +29,8 @@ service cloud.firestore {
     }
     match /products/{id} {
       allow read: if isStaff() || resource.data.active == true;
-      allow create, update, delete: if isAdmin();
+      allow create, update: if isAdmin() && validProduct(request.resource.data);
+      allow delete: if isAdmin();
     }
     match /modifierGroups/{id} {
       allow read: if isStaff() || resource.data.active == true;

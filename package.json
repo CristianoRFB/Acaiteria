@@ -9,6 +9,8 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "build:firebase": "npm run build && npm --prefix functions run build && node scripts/prepare-firebase-build.mjs",
+    "check:production": "node scripts/check-production-env.mjs",
+    "deploy:firebase": "npm run check:production && npx firebase deploy --only hosting,functions,firestore:rules,firestore:indexes",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint app components/providers.tsx components/public-header.tsx components/admin-shell.tsx components/admin-form.tsx lib shared tests functions/src scripts vitest.config.ts vite.config.ts",
     "format": "oxfmt",

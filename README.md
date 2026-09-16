@@ -96,3 +96,7 @@ npm run build
 ```
 
 Antes de atender clientes reais, revise telefone/WhatsApp, endereço, horários, taxa de entrega, meios de pagamento, disponibilidade e regras do Firestore. O painel deve ser acessado somente por contas da equipe cadastradas no Firebase Authentication.
+
+## Publicação Firebase
+
+O projeto de produção configurado é `food-5fb44`. Antes da primeira publicação, copie `.env.production.example` para `.env.production.local`, preencha a chave reCAPTCHA v3 do App Check e configure `functions/.env` com `ENFORCE_APP_CHECK=true` somente após cadastrar o domínio. Faça login no Firebase CLI e execute `npm run deploy:firebase`; o comando publica Hosting, Functions, Rules e índices juntos e falha se o ambiente ainda estiver usando emulador ou seed de desenvolvimento.
