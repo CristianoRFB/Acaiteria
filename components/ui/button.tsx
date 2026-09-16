@@ -1,5 +1,6 @@
 import { Button as ButtonPrimitive } from '@base-ui/react/button';
 import { cva, type VariantProps } from 'class-variance-authority';
+import { isValidElement } from 'react';
 
 import { cn } from '@/lib/utils';
 
@@ -46,11 +47,18 @@ function Button({
   size = 'default',
   ...props
 }: ButtonPrimitive.Props & VariantProps<typeof buttonVariants>) {
+  const rendersAnchor =
+    isValidElement(props.render) && props.render.type === 'a';
   return (
     <ButtonPrimitive
       data-slot="button"
       className={cn(buttonVariants({ variant, size, className }))}
       {...props}
+      // A composição com `render` pode trocar o elemento por um link. Nesse
+      // caso, desabilite a exigência de <button> nativo para preservar a
+      // semântica real do elemento renderizado.
+      nativeButton={props.render ? false : undefined}
+      role={rendersAnchor ? 'link' : undefined}
     />
   );
 }

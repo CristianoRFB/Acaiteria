@@ -15,8 +15,9 @@ import { Plus, Save, Trash2, X } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 import { AdminShell } from '@/components/admin-shell';
 import { AdminField, AdminTextarea } from '@/components/admin-form';
+import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
-import { getFirebaseClient } from '@/lib/firebase/client';
+import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import {
   formatBRL,
   type ModifierGroup,
@@ -65,6 +66,7 @@ function toDraftSizes(sizes: ProductSize[] | undefined): SizeDraft[] {
 }
 
 export default function CatalogPage() {
+  const { role } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [groups, setGroups] = useState<ModifierGroup[]>([]);
@@ -76,6 +78,7 @@ export default function CatalogPage() {
   const [categoryError, setCategoryError] = useState('');
   const [sizes, setSizes] = useState<SizeDraft[]>(defaultSizes);
   useEffect(() => {
+    if (!hasFirebaseConfig || role !== 'admin') return;
     const db = getFirebaseClient().db;
     const productsUnsubscribe = onSnapshot(
       query(collection(db, 'products'), orderBy('displayOrder')),
@@ -107,7 +110,7 @@ export default function CatalogPage() {
       categoriesUnsubscribe();
       groupsUnsubscribe();
     };
-  }, []);
+  }, [role]);
   function openNew() {
     setEditing(null);
     setSizes(defaultSizes);

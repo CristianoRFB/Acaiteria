@@ -55,6 +55,8 @@ Sistema de pedidos da Açaí + Sabor, em Santa Fé do Sul. O cliente pode escolh
 | Adicionais | [`/admin/adicionais`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/adicionais) | Grupos, limites, opções e adicionais premium. |
 | Promoções | [`/admin/promocoes`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/promocoes) | Criação, vigência e ativação de ofertas. |
 | Finanças | [`/admin/financas`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/financas) | Vendas, despesas, saldo e lançamentos em reais. |
+| Caixa | `/admin/caixa` | Abertura, vendas do turno, sangria, suprimento, fechamento e histórico. |
+| Central de ajuda | `/admin/ajuda` | Orientações para pedidos, pagamentos, Caixa e Finanças. |
 | Configurações | [`/admin/configuracoes`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/configuracoes) | Dados da loja, entrega, horários, feriados e privacidade. |
 | Integração Saipos | [`/admin/integracao`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/integracao) | Configuração e diagnóstico da integração, sem remover a operação própria. |
 

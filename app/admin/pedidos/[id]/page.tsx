@@ -32,7 +32,7 @@ import {
   type OrderStatus,
   type PricedItem,
 } from '@/shared/domain';
-import { createCompletedOrderIncome } from '@/shared/finance';
+import { refundCompletedOrder } from '@/lib/cash-register';
 
 interface FullOrder {
   integration?: IntegrationState;
@@ -66,10 +66,6 @@ const labels: Record<OrderStatus, string> = {
   OUT_FOR_DELIVERY: 'Saiu para entrega',
   COMPLETED: 'Concluído',
   CANCELLED: 'Cancelado',
-};
-const todayKey = () => {
-  const now = new Date();
-  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
 };
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -130,38 +126,31 @@ export default function OrderDetailPage() {
       setCancelOpen(true);
       return false;
     }
+    const completedCancellation = status === 'CANCELLED' && order.status === 'COMPLETED';
+    if (!completedCancellation && !ORDER_TRANSITIONS[order.status].includes(status)) {
+      setError(`Transição ${order.status} → ${status} não permitida.`);
+      return false;
+    }
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      if (needsFinalize) {
+      if (completedCancellation) {
+        await refundCompletedOrder(getFirebaseClient().functions, { orderId: order.id, reason: reason! });
+        setNotice('Pedido estornado e cancelado. O financeiro e o Caixa foram atualizados juntos.');
+      } else if (needsFinalize) {
         // A resposta pública já foi dada: registra o aceite privado antes da transição.
         await finalizeOrderEditDirect(getFirebaseClient().db, order.id, 'ACCEPTED');
-      }
-      const callable = httpsCallable(
-        getFirebaseClient().functions,
-        'updateOrderStatus',
-      );
-      try {
-        await callable({ orderId: order.id, status, reason });
-      } catch (cause) {
-        if (!isFunctionsUnavailable(cause)) throw cause;
-        await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
-      }
-      if (status === 'COMPLETED') {
-        const db = getFirebaseClient().db;
-        try {
-          await setDoc(
-            doc(db, 'financeEntries', `order-${order.id}`),
-            { ...createCompletedOrderIncome({ orderId: order.id, orderNumber: order.orderNumber, totalCents: order.pricing.totalCents, date: todayKey() }), createdAt: serverTimestamp(), updatedAt: serverTimestamp() },
-            { merge: true },
-          );
-          setNotice('Pedido concluído e receita registrada automaticamente em Finanças.');
-        } catch {
-          setNotice('Pedido concluído. A receita não pôde ser lançada automaticamente; confira Finanças com uma conta administradora.');
-        }
       } else {
-        setNotice(status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
+        const callable = httpsCallable(getFirebaseClient().functions, 'updateOrderStatus');
+        try {
+          await callable({ orderId: order.id, status, ...(reason ? { reason } : {}) });
+        } catch (cause) {
+          if (!isFunctionsUnavailable(cause)) throw cause;
+          if (status === 'COMPLETED') throw new Error('O backend financeiro precisa estar disponível para concluir o pedido.');
+          await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
+        }
+        setNotice(status === 'COMPLETED' ? 'Pedido concluído e registrado em Finanças e no Caixa.' : status === 'CANCELLED' ? 'Pedido cancelado.' : status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
       }
       setCancelOpen(false);
       setCancelReason('');
@@ -403,7 +392,7 @@ export default function OrderDetailPage() {
                       )
                     ))}
                   {order.customerEditApproval?.status === 'PENDING' && order.status === 'NEW' && <p className="rounded-xl bg-[#fffde8] p-3 text-xs font-bold leading-relaxed text-[#856b12]">{publicEditProposal?.status === 'ACCEPTED' ? 'O cliente aceitou. Marcar como confirmado vai aplicar o aceite e liberar o pedido.' : 'Confirmação bloqueada até o cliente responder à proposta de alteração.'}</p>}
-                  {ORDER_TRANSITIONS[order.status].includes('CANCELLED') && (
+                  {(ORDER_TRANSITIONS[order.status].includes('CANCELLED') || order.status === 'COMPLETED') && (
                     <Button
                       disabled={
                         busy || order.integration?.provider === 'saipos'
@@ -411,7 +400,7 @@ export default function OrderDetailPage() {
                       onClick={() => update('CANCELLED')}
                       className="h-11 justify-start rounded-xl bg-red-500/15 px-4 text-red-100 hover:bg-red-500/25"
                     >
-                      <XCircle /> Cancelar pedido
+                      <XCircle /> {order.status === 'COMPLETED' ? 'Estornar e cancelar pedido' : 'Cancelar pedido'}
                     </Button>
                   )}
                   {!ORDER_TRANSITIONS[order.status].length && (

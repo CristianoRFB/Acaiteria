@@ -14,6 +14,8 @@ beforeAll(async () => {
     await setDoc(doc(db, 'orders', 'secret'), { status: 'NEW' });
     await setDoc(doc(db, 'users', 'admin-uid'), { role: 'admin' });
     await setDoc(doc(db, 'users', 'staff-uid'), { role: 'staff' });
+    await setDoc(doc(db, 'cashRegisters', 'open'), { status: 'OPEN', expectedCashCents: 1000 });
+    await setDoc(doc(db, 'cashMovements', 'movement'), { registerId: 'open', type: 'SUPPLY', direction: 'IN', amountCents: 100, cashAmountCents: 100 });
   });
 });
 afterAll(() => env.cleanup());
@@ -34,6 +36,9 @@ describe('Firestore Rules deny by default', () => {
     await assertSucceeds(getDoc(doc(db, 'orders', 'secret')));
     await assertFails(setDoc(doc(db, 'products', 'blocked'), { active: true }));
     await assertFails(setDoc(doc(db, 'users', 'staff-uid'), { role: 'admin' }));
+    await assertFails(setDoc(doc(db, 'cashRegisters', 'open'), { expectedCashCents: 999999 }, { merge: true }));
+    await assertFails(setDoc(doc(db, 'cashMovements', 'forged'), { registerId: 'open', type: 'SALE', direction: 'IN', amountCents: 100, cashAmountCents: 100 }));
+    await assertFails(setDoc(doc(db, 'financeEntries', 'order-forged'), { kind: 'INCOME', status: 'PAID', sourceOrderId: 'secret', amountCents: 100 }));
   });
   it('admin gerencia catálogo e configuração, mas não escreve pedido direto', async () => {
     const db = env.authenticatedContext('admin-uid').firestore();

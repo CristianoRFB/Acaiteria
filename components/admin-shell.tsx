@@ -9,12 +9,15 @@ import {
   ShoppingBag,
   SlidersHorizontal,
   WalletCards,
+  CircleDollarSign,
+  CircleHelp,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { useEffect, type ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers';
 import { AdminNotifications } from '@/components/admin-notifications';
+import { AdminTutorial } from '@/components/admin-tutorial';
 import { BrandLogo } from '@/components/brand-logo';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 
@@ -25,6 +28,8 @@ const links = [
     icon: SlidersHorizontal,
   },
   { href: '/admin/financas', label: 'Finanças', icon: WalletCards },
+  { href: '/admin/caixa', label: 'Caixa', icon: CircleDollarSign },
+  { href: '/admin/ajuda', label: 'Central de ajuda', icon: CircleHelp },
   { href: '/admin', label: 'Visão geral', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
   { href: '/admin/catalogo', label: 'Catálogo', icon: Boxes },
@@ -41,6 +46,7 @@ export function AdminShell({
 }) {
   const { user, role, loading } = useAuth();
   useEffect(() => {
+    if (!hasFirebaseConfig) return;
     if (!loading && (!user || !role)) window.location.href = '/admin/login';
   }, [loading, user, role]);
   if (!hasFirebaseConfig)
@@ -99,10 +105,17 @@ export function AdminShell({
       </aside>
       <div className="min-w-0 lg:pl-64">
         <header className="sticky top-0 z-20 flex h-16 min-w-0 items-center gap-2 border-b bg-white/90 px-3 backdrop-blur sm:px-4 lg:px-8">
-          <a href="/admin" className="shrink-0 font-black lg:hidden" aria-label="Açaí + Sabor, painel">
+          <a
+            href="/admin"
+            className="shrink-0 font-black lg:hidden"
+            aria-label="Açaí + Sabor, painel"
+          >
             <BrandLogo compact />
           </a>
-          <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain py-1 lg:hidden" aria-label="Navegação do painel">
+          <nav
+            className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain py-1 lg:hidden"
+            aria-label="Navegação do painel"
+          >
             {links.map(({ href, label, icon: Icon }) => (
               <a
                 key={href}
@@ -125,6 +138,7 @@ export function AdminShell({
         <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8">{children}</main>
       </div>
       <AdminNotifications />
+      <AdminTutorial />
     </div>
   );
 }

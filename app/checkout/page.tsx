@@ -91,22 +91,24 @@ export default function CheckoutPage() {
       customer: {
         name: fields.name,
         whatsapp: fields.whatsapp,
-        address: fulfillment === 'DELIVERY' ? {
-          street: fields.street,
-          number: fields.number,
-          complement: fields.complement || undefined,
-          neighborhood: fields.neighborhood,
-          reference: fields.reference || undefined,
-        } : undefined,
+        ...(fulfillment === 'DELIVERY' ? {
+          address: {
+            street: fields.street,
+            number: fields.number,
+            ...(fields.complement ? { complement: fields.complement } : {}),
+            neighborhood: fields.neighborhood,
+            ...(fields.reference ? { reference: fields.reference } : {}),
+          },
+        } : {}),
       },
-      items: cart.items.map(({ productId, sizeId, selections, quantity, notes }) => ({ productId, sizeId, selections, quantity, notes })),
-      fulfillment: { mode: fulfillment, zoneId: zoneId || undefined },
+      items: cart.items.map(({ productId, sizeId, selections, quantity, notes }) => ({ productId, sizeId, selections, quantity, ...(notes ? { notes } : {}) })),
+      fulfillment: { mode: fulfillment, ...(zoneId ? { zoneId } : {}) },
       payment: {
         method: paymentMethod,
         needsChange: paymentMethod === 'CASH' ? Boolean(needsChange) : false,
         ...(paymentMethod === 'CASH' && needsChange ? { changeForCents } : {}),
       },
-      notes: fields.orderNotes || undefined,
+      ...(fields.orderNotes ? { notes: fields.orderNotes } : {}),
       clientPreviewTotalCents: totalCents,
     };
 

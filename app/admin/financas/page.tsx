@@ -5,8 +5,11 @@ import {
   collection,
   doc,
   onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Pencil, Plus, Save, WalletCards, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
@@ -17,6 +20,7 @@ import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import { formatBRL } from '@/shared/domain';
+import { paymentMethodLabel } from '@/shared/cash-register';
 import {
   FINANCE_CATEGORIES,
   formatDateKey,
@@ -31,6 +35,13 @@ const todayKey = () => {
   return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
 };
 const currentMonth = () => todayKey().slice(0, 7);
+
+function nextMonthStart(value: string) {
+  const [year, month] = value.split('-').map(Number);
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+  return `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+}
 
 function moneyInputValue(cents?: number) {
   return cents === undefined ? '' : (cents / 100).toFixed(2).replace('.', ',');
@@ -48,8 +59,15 @@ export default function FinancesPage() {
 
   useEffect(() => {
     if (role !== 'admin') return undefined;
+    const start = `${month}-01`;
+    const end = nextMonthStart(month);
     return onSnapshot(
-      collection(getFirebaseClient().db, 'financeEntries'),
+      query(
+        collection(getFirebaseClient().db, 'financeEntries'),
+        where('date', '>=', start),
+        where('date', '<', end),
+        orderBy('date', 'desc'),
+      ),
       (snapshot) => {
         const next = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as FinanceEntry);
         next.sort((a, b) => `${b.date}-${b.id}`.localeCompare(`${a.date}-${a.id}`));
@@ -57,7 +75,7 @@ export default function FinancesPage() {
       },
       () => setError('Não foi possível carregar o caixa. Confira sua conexão e tente novamente.'),
     );
-  }, [role]);
+  }, [month, role]);
 
   const visibleEntries = useMemo(
     () => entries.filter((entry) => entry.date.startsWith(month) && (kind === 'ALL' || entry.kind === kind)),
@@ -69,7 +87,8 @@ export default function FinancesPage() {
     const pending = visibleEntries.filter((entry) => entry.kind === 'INCOME' && entry.status === 'PENDING').reduce((total, entry) => total + entry.amountCents, 0);
     const paidIncome = visibleEntries.filter((entry) => entry.kind === 'INCOME' && entry.status === 'PAID').reduce((total, entry) => total + entry.amountCents, 0);
     const paidExpense = visibleEntries.filter((entry) => entry.kind === 'EXPENSE' && entry.status === 'PAID').reduce((total, entry) => total + entry.amountCents, 0);
-    return { income, expense, balance: paidIncome - paidExpense, pending };
+    const payments = (['CASH', 'PIX', 'CARD', 'OTHER'] as const).map((paymentMethod) => ({ paymentMethod, amountCents: visibleEntries.filter((entry) => entry.kind === 'INCOME' && entry.status === 'PAID' && (entry.paymentMethod ?? 'OTHER') === paymentMethod).reduce((total, entry) => total + entry.amountCents, 0) }));
+    return { income, expense, balance: paidIncome - paidExpense, pending, payments };
   }, [visibleEntries]);
 
   function openNew() {
@@ -155,6 +174,7 @@ export default function FinancesPage() {
         <SummaryCard label="Saldo já pago" value={formatBRL(summary.balance)} icon={<WalletCards />} tone={summary.balance >= 0 ? 'text-[#82204f] bg-[#fff0f5]' : 'text-red-700 bg-red-50'} />
         <SummaryCard label="A receber" value={formatBRL(summary.pending)} icon={<CalendarDays />} tone="text-amber-700 bg-amber-50" />
       </section>
+      <section className="mt-5 rounded-[26px] bg-white p-5 shadow-sm sm:p-7"><div className="flex items-center gap-3"><WalletCards className="size-5 text-[#82204f]" /><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Resumo das vendas</p><h2 className="mt-1 text-xl font-black">Receitas por forma de pagamento</h2></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{summary.payments.map(({ paymentMethod, amountCents }) => <div key={paymentMethod} className="rounded-2xl bg-[#fffaf5] p-4"><span className="text-xs font-bold text-[#826a75]">{paymentMethodLabel(paymentMethod)}</span><strong className="mt-1 block text-lg font-black text-[#82204f]">{formatBRL(amountCents)}</strong></div>)}</div><p className="mt-4 text-xs text-[#826a75]">Valores de pedidos concluídos, sem dados sensíveis de cartão. Use o Caixa para conferir o dinheiro contado.</p></section>
 
       {formOpen && <section className="mt-7 rounded-[26px] bg-white p-5 shadow-sm sm:p-7">
         <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Caixa</p><h2 className="mt-1 text-2xl font-black">{editing ? 'Editar lançamento' : 'Adicionar ao caixa'}</h2></div><button type="button" onClick={() => setFormOpen(false)} className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]" aria-label="Fechar formulário"><X className="size-4" /></button></div>

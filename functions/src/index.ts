@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
-import { FieldValue, getFirestore, Timestamp } from 'firebase-admin/firestore';
+import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { onRequest } from 'firebase-functions/v2/https';
@@ -176,6 +176,87 @@ async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Ro
   if (!role || !allowed.includes(role)) throw new HttpsError('permission-denied', 'Usuário sem permissão.');
   return role;
 }
+
+const cashOperationSchema = z.discriminatedUnion('operation', [
+  z.object({ operation: z.literal('OPEN'), clientRequestId: z.uuid(), initialBalanceCents: z.number().int().min(0).max(100_000_000), openingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), note: z.string().trim().max(300).optional() }),
+  z.object({ operation: z.literal('MOVEMENT'), clientRequestId: z.uuid(), registerId: z.string().min(1).max(128), type: z.enum(['WITHDRAWAL', 'SUPPLY']), amountCents: z.number().int().positive().max(100_000_000), note: z.string().trim().min(1).max(300) }),
+  z.object({ operation: z.literal('CLOSE'), registerId: z.string().min(1).max(128), countedCashCents: z.number().int().min(0).max(100_000_000), note: z.string().trim().max(300).optional() }),
+]);
+
+export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = cashOperationSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Operação de caixa inválida.');
+  const input = parsed.data;
+  const uid = request.auth!.uid;
+  const email = typeof request.auth?.token.email === 'string' ? request.auth.token.email : null;
+
+  if (input.operation === 'OPEN') {
+    const registerRef = db.doc(`cashRegisters/${input.clientRequestId}`);
+    const openingRef = db.doc(`cashMovements/opening-${input.clientRequestId}`);
+    const controlRef = db.doc('cashControl/main');
+    await db.runTransaction(async (transaction) => {
+      const existing = await transaction.get(registerRef);
+      if (existing.exists) {
+        if (existing.data()?.openingRequestId === input.clientRequestId && existing.data()?.operatorUid === uid) return;
+        throw new HttpsError('already-exists', 'Esta tentativa de abertura já foi utilizada.');
+      }
+      const control = await transaction.get(controlRef);
+      const openId = String(control.data()?.openRegisterId ?? '');
+      if (openId) {
+        const openRegister = await transaction.get(db.doc(`cashRegisters/${openId}`));
+        if (openRegister.exists && openRegister.data()?.status === 'OPEN') throw new HttpsError('failed-precondition', 'Já existe um caixa aberto.');
+      }
+      const now = FieldValue.serverTimestamp();
+      transaction.create(registerRef, { status: 'OPEN', operatorUid: uid, operatorEmail: email, openingRequestId: input.clientRequestId, openingDate: input.openingDate, initialBalanceCents: input.initialBalanceCents, expectedCashCents: input.initialBalanceCents, note: input.note?.trim() || null, openedAt: now, updatedAt: now });
+      transaction.create(openingRef, { registerId: registerRef.id, type: 'OPENING', direction: 'IN', amountCents: input.initialBalanceCents, cashAmountCents: input.initialBalanceCents, operatorUid: uid, operatorEmail: email, note: input.note?.trim() || 'Saldo inicial do caixa.', createdAt: now });
+      transaction.set(controlRef, { openRegisterId: registerRef.id, updatedAt: now }, { merge: true });
+    });
+    return { registerId: registerRef.id, idempotent: false };
+  }
+
+  if (input.operation === 'MOVEMENT') {
+    const registerRef = db.doc(`cashRegisters/${input.registerId}`);
+    const movementRef = db.doc(`cashMovements/manual-${input.clientRequestId}`);
+    const controlRef = db.doc('cashControl/main');
+    await db.runTransaction(async (transaction) => {
+      const existingMovement = await transaction.get(movementRef);
+      if (existingMovement.exists) return;
+      const register = await transaction.get(registerRef);
+      if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Este caixa não está aberto para novas movimentações.');
+      const control = await transaction.get(controlRef);
+      if (String(control.data()?.openRegisterId ?? '') !== input.registerId) throw new HttpsError('failed-precondition', 'Este não é o caixa aberto atual.');
+      const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+      if (!Number.isSafeInteger(expected) || (input.type === 'WITHDRAWAL' && input.amountCents > expected)) throw new HttpsError('failed-precondition', 'A sangria não pode ser maior que o dinheiro esperado no caixa.');
+      const now = FieldValue.serverTimestamp();
+      transaction.create(movementRef, { registerId: input.registerId, type: input.type, direction: input.type === 'SUPPLY' ? 'IN' : 'OUT', amountCents: input.amountCents, cashAmountCents: input.amountCents, operatorUid: uid, operatorEmail: email, note: input.note.trim(), createdAt: now });
+      transaction.update(registerRef, { expectedCashCents: expected + (input.type === 'SUPPLY' ? input.amountCents : -input.amountCents), lastMovementAt: now, updatedAt: now });
+    });
+    return { movementId: movementRef.id };
+  }
+
+  const registerRef = db.doc(`cashRegisters/${input.registerId}`);
+  const closingRef = db.doc(`cashMovements/closing-${input.registerId}`);
+  const controlRef = db.doc('cashControl/main');
+  let differenceCents = 0;
+  await db.runTransaction(async (transaction) => {
+    const register = await transaction.get(registerRef);
+    const closing = await transaction.get(closingRef);
+    if (closing.exists && register.exists && register.data()?.status === 'CLOSED') return;
+    if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Este caixa já está fechado ou não foi encontrado.');
+    const control = await transaction.get(controlRef);
+    if (String(control.data()?.openRegisterId ?? '') !== input.registerId) throw new HttpsError('failed-precondition', 'Este não é o caixa aberto atual.');
+    const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+    differenceCents = input.countedCashCents - expected;
+    if (differenceCents !== 0 && !input.note?.trim()) throw new HttpsError('invalid-argument', 'Explique a diferença antes de confirmar o fechamento.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(registerRef, { status: 'CLOSED', closedAt: now, countedCashCents: input.countedCashCents, differenceCents, closingNote: input.note?.trim() || null, updatedAt: now });
+    transaction.create(closingRef, { registerId: input.registerId, type: 'CLOSING', direction: 'OUT', amountCents: 0, cashAmountCents: 0, operatorUid: uid, operatorEmail: email, note: input.note?.trim() || 'Fechamento conferido.', createdAt: now });
+    transaction.set(controlRef, { openRegisterId: null, updatedAt: now }, { merge: true });
+  });
+  return { differenceCents };
+});
+
 const updateStatusSchema = z.object({ orderId: z.string().min(1).max(128), status: z.enum(['NEW', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED']), reason: z.string().trim().max(300).optional() });
 export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   const role = await requireRole(request.auth?.uid, ['admin', 'staff']);
@@ -190,11 +271,82 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     const current = snapshot.data()?.status as OrderStatus;
     if (snapshot.data()?.customerEditApproval?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Aguardando a aprovação do cliente para continuar este pedido.');
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
+    let completionRegister: DocumentSnapshot | null = null;
+    let completionFinance: DocumentSnapshot | null = null;
+    let completionSale: DocumentSnapshot | null = null;
+    if (status === 'COMPLETED') {
+      const totalCents = Number(snapshot.data()?.pricing?.totalCents ?? 0);
+      if (!Number.isSafeInteger(totalCents) || totalCents <= 0) throw new HttpsError('failed-precondition', 'O pedido precisa ter um total válido para ser concluído.');
+      const control = await transaction.get(db.doc('cashControl/main'));
+      const registerId = String(control.data()?.openRegisterId ?? '');
+      if (!registerId) throw new HttpsError('failed-precondition', 'Abra o Caixa antes de concluir o pedido.');
+      completionRegister = await transaction.get(db.doc(`cashRegisters/${registerId}`));
+      if (!completionRegister.exists || completionRegister.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Abra o Caixa antes de concluir o pedido.');
+      completionFinance = await transaction.get(db.doc(`financeEntries/order-${orderId}`));
+      completionSale = await transaction.get(db.doc(`cashMovements/order-${orderId}`));
+    }
     transaction.update(orderRef, { status, updatedAt: FieldValue.serverTimestamp(), statusHistory: FieldValue.arrayUnion({ status, at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: FieldValue.serverTimestamp(), cancellationReason: reason || '' } : {}) });
     const publicCode = String(snapshot.data()?.publicCode || orderId);
     transaction.set(db.doc(`publicOrders/${publicCode}`), { status, statusMessage: getCustomerOrderStatusMessage(status, reason), estimatedMinutes: snapshot.data()?.estimatedMinutes ?? 15, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    if (status === 'COMPLETED' && completionRegister && completionFinance && completionSale) {
+      const data = snapshot.data()!;
+      const totalCents = Number(data.pricing.totalCents);
+      const paymentMethod = data.payment?.method === 'PIX' || data.payment?.method === 'CARD' || data.payment?.method === 'CASH' ? data.payment.method : 'OTHER';
+      const now = FieldValue.serverTimestamp();
+      if (!completionFinance.exists) transaction.create(db.doc(`financeEntries/order-${orderId}`), { kind: 'INCOME', category: 'Vendas de açaí', description: `Pedido ${data.orderNumber}`, amountCents: totalCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: data.orderNumber, sourceOrderId: orderId, paymentMethod, notes: 'Lançamento criado automaticamente ao concluir o pedido.', createdAt: now, updatedAt: now });
+      if (!completionSale.exists) {
+        const cashAmountCents = paymentMethod === 'CASH' ? totalCents : 0;
+        const expected = Number(completionRegister.data()?.expectedCashCents ?? completionRegister.data()?.initialBalanceCents ?? 0);
+        transaction.create(db.doc(`cashMovements/order-${orderId}`), { registerId: completionRegister.id, type: 'SALE', direction: 'IN', amountCents: totalCents, cashAmountCents, paymentMethod, orderNumber: data.orderNumber, sourceOrderId: orderId, operatorUid: request.auth!.uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: 'Venda registrada atomicamente ao concluir o pedido.', createdAt: now });
+        transaction.update(completionRegister.ref, { expectedCashCents: expected + cashAmountCents, lastMovementAt: now, updatedAt: now });
+      }
+    }
   });
   logger.info('updateOrderStatus completed', { orderId, status, actorUid: request.auth?.uid });
+  return { ok: true };
+});
+
+const refundOrderSchema = z.object({ orderId: z.string().min(1).max(128), reason: z.string().trim().min(1).max(300) });
+export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  const role = await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = refundOrderSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Motivo de estorno inválido.');
+  const { orderId, reason } = parsed.data;
+  await db.runTransaction(async (transaction) => {
+    const orderRef = db.doc(`orders/${orderId}`);
+    const saleRef = db.doc(`cashMovements/order-${orderId}`);
+    const refundRef = db.doc(`cashMovements/refund-${orderId}`);
+    const financeRef = db.doc(`financeEntries/refund-${orderId}`);
+    const controlRef = db.doc('cashControl/main');
+    const snapshot = await transaction.get(orderRef);
+    const sale = await transaction.get(saleRef);
+    const refund = await transaction.get(refundRef);
+    const finance = await transaction.get(financeRef);
+    if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    if (snapshot.data()?.status !== 'COMPLETED') throw new HttpsError('failed-precondition', 'Somente pedidos concluídos podem receber estorno.');
+    if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Este pedido deve ser estornado no Saipos.');
+    if (!sale.exists) throw new HttpsError('failed-precondition', 'A venda deste pedido não está registrada no Caixa.');
+    if (refund.exists) return;
+    const control = await transaction.get(controlRef);
+    const registerId = String(control.data()?.openRegisterId ?? '');
+    if (!registerId) throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar o estorno.');
+    const register = await transaction.get(db.doc(`cashRegisters/${registerId}`));
+    if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar o estorno.');
+    const data = snapshot.data()!;
+    const saleData = sale.data()!;
+    const amountCents = Number(saleData.amountCents ?? data.pricing?.totalCents ?? 0);
+    const cashAmountCents = Number(saleData.cashAmountCents ?? 0);
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || !Number.isSafeInteger(cashAmountCents) || cashAmountCents < 0) throw new HttpsError('failed-precondition', 'A venda possui valores inválidos para estorno.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(orderRef, { status: 'CANCELLED', cancelledAt: now, cancellationReason: reason, updatedAt: now, statusHistory: FieldValue.arrayUnion({ status: 'CANCELLED', at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, reason }) });
+    transaction.set(db.doc(`publicOrders/${String(data.publicCode || orderId)}`), { status: 'CANCELLED', statusMessage: getCustomerOrderStatusMessage('CANCELLED', reason), updatedAt: now }, { merge: true });
+    transaction.create(refundRef, { registerId, type: 'REFUND', direction: 'OUT', amountCents, cashAmountCents, paymentMethod: saleData.paymentMethod ?? 'OTHER', orderNumber: data.orderNumber, sourceOrderId: orderId, operatorUid: request.auth!.uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: `Estorno: ${reason}`, createdAt: now });
+    if (!finance.exists) transaction.create(financeRef, { kind: 'EXPENSE', category: 'Estornos', description: `Estorno do pedido ${data.orderNumber}`, amountCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: data.orderNumber, sourceOrderId: orderId, paymentMethod: saleData.paymentMethod ?? 'OTHER', notes: reason, createdAt: now, updatedAt: now });
+    const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+    if (cashAmountCents > expected) throw new HttpsError('failed-precondition', 'O estorno em dinheiro supera o saldo esperado do caixa.');
+    transaction.update(register.ref, { expectedCashCents: expected - cashAmountCents, lastMovementAt: now, updatedAt: now });
+  });
+  logger.info('refundCompletedOrder completed', { orderId, actorUid: request.auth?.uid });
   return { ok: true };
 });
 

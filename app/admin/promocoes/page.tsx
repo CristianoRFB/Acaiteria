@@ -6,12 +6,13 @@ import { useEffect, useState, type FormEvent } from 'react';
 
 import { AdminShell } from '@/components/admin-shell';
 import { AdminField, AdminTextarea } from '@/components/admin-form';
-import { useCatalog } from '@/components/providers';
+import { useAuth, useCatalog } from '@/components/providers';
 import { Button } from '@/components/ui/button';
-import { getFirebaseClient } from '@/lib/firebase/client';
+import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import type { Promotion } from '@/shared/domain';
 
 export default function PromotionsPage() {
+  const { role } = useAuth();
   const { catalog } = useCatalog();
   const [promotions, setPromotions] = useState<Promotion[]>([]);
   const [editing, setEditing] = useState<Promotion | null>(null);
@@ -19,13 +20,14 @@ export default function PromotionsPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (!hasFirebaseConfig || role !== 'admin') return;
     const unsubscribe = onSnapshot(
       collection(getFirebaseClient().db, 'promotions'),
       (snap) => setPromotions(snap.docs.map((item) => ({ id: item.id, ...item.data() }) as Promotion).sort((a, b) => a.displayOrder - b.displayOrder)),
       () => setError('Não foi possível carregar as promoções. Recarregue a página para tentar novamente.'),
     );
     return unsubscribe;
-  }, []);
+  }, [role]);
 
   function openNew() {
     setEditing(null);

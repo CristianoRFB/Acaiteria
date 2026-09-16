@@ -12,6 +12,7 @@ export interface FinanceEntry {
   orderNumber?: string;
   notes?: string;
   sourceOrderId?: string;
+  paymentMethod?: 'PIX' | 'CARD' | 'CASH' | 'OTHER' | string;
   createdAt?: unknown;
   updatedAt?: unknown;
 }
@@ -21,6 +22,7 @@ export interface CompletedOrderIncomeInput {
   orderNumber: string;
   totalCents: number;
   date: string;
+  paymentMethod?: string;
 }
 
 export function createCompletedOrderIncome(input: CompletedOrderIncomeInput) {
@@ -43,6 +45,7 @@ export const FINANCE_CATEGORIES = [
   'Insumos',
   'Embalagens',
   'Taxas',
+  'Estornos',
   'Pró-labore',
   'Outros',
 ] as const;

@@ -34,7 +34,21 @@ service cloud.firestore {
       allow create, update, delete: if isAdmin();
     }
     match /financeEntries/{id} {
-      allow read, write: if isAdmin();
+      allow read: if isStaff();
+      allow create: if isAdmin();
+      allow update, delete: if isAdmin();
+    }
+    match /cashControl/{id} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+    match /cashRegisters/{id} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+    match /cashMovements/{id} {
+      allow read: if isStaff();
+      allow write: if false;
     }
     match /orders/{id} {
       allow read: if isStaff() || (!signedIn() && resource.data.publicCode == id);
@@ -58,6 +72,7 @@ service cloud.firestore {
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customer', 'notes', 'items', 'pricing', 'fulfillment', 'payment', 'updatedAt', 'lastEditedAt', 'lastEditedBy', 'customerEditApproval', 'estimatedMinutes', 'estimatedUpdatedAt']);
       allow update: if isStaff()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'statusHistory', 'updatedAt', 'cancelledAt', 'cancellationReason', 'estimatedMinutes', 'estimatedUpdatedAt'])
+        && request.resource.data.status != 'COMPLETED'
         && (
           (resource.data.status == 'NEW' && request.resource.data.status in ['CONFIRMED', 'CANCELLED']) ||
           (resource.data.status == 'CONFIRMED' && request.resource.data.status in ['PREPARING', 'CANCELLED']) ||
@@ -74,7 +89,16 @@ service cloud.firestore {
         && request.resource.data.items is list
         && request.resource.data.items.size() > 0
         && request.resource.data.pricing.totalCents is int;
-      allow update: if isStaff();
+      allow update: if isStaff()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'statusMessage', 'estimatedMinutes', 'estimatedUpdatedAt', 'updatedAt', 'editProposal'])
+        && (
+          request.resource.data.status == resource.data.status
+          || (resource.data.status == 'NEW' && request.resource.data.status in ['CONFIRMED', 'CANCELLED'])
+          || (resource.data.status == 'CONFIRMED' && request.resource.data.status in ['PREPARING', 'CANCELLED'])
+          || (resource.data.status == 'PREPARING' && request.resource.data.status in ['READY', 'CANCELLED'])
+          || (resource.data.status == 'READY' && request.resource.data.status in ['OUT_FOR_DELIVERY', 'CANCELLED'])
+          || (resource.data.status == 'OUT_FOR_DELIVERY' && request.resource.data.status == 'CANCELLED')
+        );
       // O cliente pode apenas responder a uma proposta pendente; itens, preços e status continuam protegidos.
       allow update: if !signedIn()
         && resource.data.publicCode == id
