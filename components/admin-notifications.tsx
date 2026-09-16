@@ -63,9 +63,9 @@ export function AdminNotifications() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex flex-col items-end gap-3">
+    <div className="fixed bottom-[calc(1rem+env(safe-area-inset-bottom))] right-4 z-40 flex max-w-[calc(100vw-2rem)] flex-col items-end gap-3 sm:bottom-5 sm:right-5">
       {open && (
-        <section className="w-[min(92vw,380px)] overflow-hidden rounded-3xl border border-[#82204f]/10 bg-white shadow-2xl" aria-label="Pedidos novos">
+        <section className="w-[min(100%,380px)] overflow-hidden rounded-3xl border border-[#82204f]/10 bg-white shadow-2xl" aria-label="Pedidos novos">
           <div className="flex items-center justify-between bg-[#351924] px-5 py-4 text-white">
             <div><p className="text-xs font-bold uppercase tracking-widest text-[#ffcf3d]">Atenção</p><h2 className="text-lg font-black">Pedidos novos</h2></div>
             <button type="button" onClick={() => setOpen(false)} aria-label="Fechar notificações" className="grid size-9 place-items-center rounded-full bg-white/10 hover:bg-white/20"><X className="size-4" /></button>

@@ -48,17 +48,24 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+html,
+body {
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
+}
+
 body {
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
-  max-width: 100%;
-  overflow-x: hidden;
 }
 
 img, svg, video, canvas { max-width: 100%; }
+input, select, textarea { min-width: 0; }
 
 @media (max-width: 639px) {
   h1 { overflow-wrap: anywhere; }
   button, a { max-width: 100%; }
+  input, select, textarea { font-size: 16px; }
 }
 
 :root {

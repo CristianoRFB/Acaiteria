@@ -97,19 +97,19 @@ export function AdminShell({
           </button>
         </div>
       </aside>
-      <div className="lg:pl-64">
-        <header className="sticky top-0 z-20 flex h-16 items-center justify-between border-b bg-white/90 px-4 backdrop-blur lg:px-8">
-          <a href="/admin" className="font-black lg:hidden" aria-label="Açaí + Sabor, painel">
+      <div className="min-w-0 lg:pl-64">
+        <header className="sticky top-0 z-20 flex h-16 min-w-0 items-center gap-2 border-b bg-white/90 px-3 backdrop-blur sm:px-4 lg:px-8">
+          <a href="/admin" className="shrink-0 font-black lg:hidden" aria-label="Açaí + Sabor, painel">
             <BrandLogo compact />
           </a>
-          <nav className="flex gap-1 overflow-x-auto lg:hidden">
-            {links.slice(1).map(({ href, label, icon: Icon }) => (
+          <nav className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain py-1 lg:hidden" aria-label="Navegação do painel">
+            {links.map(({ href, label, icon: Icon }) => (
               <a
                 key={href}
                 href={href}
                 aria-label={label}
                 title={label}
-                className="grid size-10 shrink-0 place-items-center rounded-full hover:bg-[#fff0f5]"
+                className="grid size-10 shrink-0 place-items-center rounded-full hover:bg-[#fff0f5] focus:bg-[#fff0f5]"
               >
                 <Icon className="size-4" />
               </a>
@@ -118,11 +118,11 @@ export function AdminShell({
           <span className="hidden text-sm text-[#826a75] lg:block">
             Operação em tempo real
           </span>
-          <span className="rounded-full bg-[#eaf8ef] px-3 py-1 text-xs font-bold text-emerald-700">
+          <span className="hidden shrink-0 rounded-full bg-[#eaf8ef] px-3 py-1 text-xs font-bold text-emerald-700 min-[430px]:block">
             Online
           </span>
         </header>
-        <main className="p-4 sm:p-6 lg:p-8">{children}</main>
+        <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8">{children}</main>
       </div>
       <AdminNotifications />
     </div>

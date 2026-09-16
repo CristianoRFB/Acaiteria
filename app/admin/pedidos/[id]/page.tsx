@@ -434,7 +434,7 @@ export default function OrderDetailPage() {
       )}
       {editOpen && order && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-4 backdrop-blur-sm">
-          <form onSubmit={saveDetails} className="my-6 w-full max-w-2xl rounded-[28px] bg-white p-6 shadow-2xl">
+          <form onSubmit={saveDetails} className="my-3 w-full max-w-2xl rounded-[28px] bg-white p-4 shadow-2xl sm:my-6 sm:p-6">
             <div className="flex items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Editar pedido</h2><p className="mt-1 text-sm text-[#826a75]">Corrija cliente, recebimento, pagamento e endereço antes de iniciar o preparo.</p></div><button type="button" onClick={() => setEditOpen(false)} aria-label="Fechar edição" className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]"><X className="size-4" /></button></div>
             <div className="mt-5 grid gap-4 sm:grid-cols-2"><EditField label="Nome" value={editFields.name} onChange={(value) => setEditFields((old) => ({ ...old, name: value }))} required /><EditField label="WhatsApp" value={editFields.whatsapp} onChange={(value) => setEditFields((old) => ({ ...old, whatsapp: value }))} required /></div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Recebimento<select value={editFulfillmentMode} onChange={(event) => setEditFulfillmentMode(event.target.value as 'PICKUP' | 'DELIVERY')} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"><option value="PICKUP">Retirada na loja</option><option value="DELIVERY">Entrega</option></select></label><label className="block text-sm font-bold">Pagamento<select value={editPaymentMethod} onChange={(event) => setEditPaymentMethod(event.target.value as 'PIX' | 'CARD' | 'CASH')} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"><option value="PIX">Pix</option><option value="CARD">Cartão na entrega</option><option value="CASH">Dinheiro</option></select></label></div>
@@ -447,7 +447,7 @@ export default function OrderDetailPage() {
       )}
       {itemsOpen && order && (
         <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-4 backdrop-blur-sm">
-          <form onSubmit={saveItems} className="my-6 w-full max-w-3xl rounded-[28px] bg-white p-6 shadow-2xl">
+          <form onSubmit={saveItems} className="my-3 w-full max-w-3xl rounded-[28px] bg-white p-4 shadow-2xl sm:my-6 sm:p-6">
             <div className="flex items-start justify-between gap-4"><div><h2 className="text-2xl font-black">Editar itens do pedido</h2><p className="mt-1 text-sm text-[#826a75]">Altere produto, tamanho, adicionais, quantidade e observações. O total será recalculado.</p></div><button type="button" onClick={() => setItemsOpen(false)} aria-label="Fechar edição dos itens" className="grid size-9 place-items-center rounded-full bg-[#f8f1f4]"><X className="size-4" /></button></div>
             <div className="mt-5 space-y-4">
               {itemDrafts.map((draft, index) => <EditableOrderItem key={draft.cartItemId} draft={draft} index={index} catalog={catalog} onProductChange={changeProduct} onChange={(update) => updateDraft(index, update)} onToggleModifier={toggleModifier} onRemove={() => setItemDrafts((old) => old.filter((_, itemIndex) => itemIndex !== index))} />)}
@@ -461,10 +461,10 @@ export default function OrderDetailPage() {
         </div>
       )}
       {cancelOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-[#2b1722]/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-3 backdrop-blur-sm sm:p-4">
           <form
             onSubmit={confirmCancel}
-            className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl"
+            className="my-3 w-full max-w-md rounded-[28px] bg-white p-4 shadow-2xl sm:my-6 sm:p-6"
           >
             <div className="flex items-start justify-between gap-4">
               <div>

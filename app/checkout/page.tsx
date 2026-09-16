@@ -165,10 +165,10 @@ export default function CheckoutPage() {
 
   if (!cart.items.length) return <main className="min-h-screen bg-[#fffaf5]"><PublicHeader /><div className="mx-auto max-w-lg px-6 py-24 text-center"><h1 className="text-3xl font-black">Carrinho vazio</h1><p className="mt-2 text-sm text-[#826a75]">Adicione um produto antes de ir ao checkout.</p><Button className="mt-6 rounded-full bg-[#82204f] text-white" render={<a href="/" />}>Ver cardápio</Button></div></main>;
 
-  return <main className="min-h-screen bg-[#fffaf5] pb-12 text-[#2b1722]">
+  return <main className="min-h-screen min-w-0 bg-[#fffaf5] pb-12 text-[#2b1722]">
     <PublicHeader />
-    <form onSubmit={submit} className="mx-auto grid max-w-6xl gap-8 px-4 py-8 sm:px-6 lg:grid-cols-[1fr_380px]">
-      <div>
+    <form onSubmit={submit} className="mx-auto grid max-w-6xl gap-6 px-4 py-6 sm:gap-8 sm:px-6 sm:py-8 lg:grid-cols-[minmax(0,1fr)_380px]">
+      <div className="min-w-0">
         <a href="/carrinho" className="inline-flex items-center gap-2 text-sm font-bold text-[#82204f]"><ArrowLeft className="size-4" /> Voltar ao carrinho</a>
         <h1 className="mt-5 text-4xl font-black tracking-[-.05em]">Revisar e finalizar</h1>
         <p className="mt-2 text-sm text-[#826a75]">Informe onde receber, a forma de pagamento e o troco, se precisar.</p>
@@ -207,7 +207,7 @@ export default function CheckoutPage() {
         {error && <div role="alert" aria-live="assertive" className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm font-bold text-red-800"><p>{error}</p><span className="mt-1 block font-normal">Seu carrinho e os dados preenchidos foram preservados.</span>{whatsappFallbackUrl && <a href={whatsappFallbackUrl} target="_blank" rel="noreferrer" className="mt-3 inline-flex rounded-full bg-[#1f9d55] px-4 py-2 font-bold text-white">Enviar pedido pelo WhatsApp</a>}</div>}
       </div>
 
-      <aside><div className="sticky top-26 rounded-[28px] bg-[#351924] p-6 text-white shadow-[0_22px_50px_rgba(53,25,36,.16)]">
+      <aside className="min-w-0"><div className="sticky top-26 rounded-[28px] bg-[#351924] p-5 text-white shadow-[0_22px_50px_rgba(53,25,36,.16)] sm:p-6">
         <h2 className="text-xl font-black">Resumo final</h2>
         <div className="mt-5 space-y-4 border-b border-white/10 pb-5">{preview.items.map((item, index) => <div key={`${item.productId}-${index}`} className="text-sm"><div className="flex justify-between gap-3"><span className="text-white/75">{item.quantity}x {item.productName}<small className="block text-white/45">{item.sizeLabel}</small></span><strong>{formatBRL(item.totalPriceCents)}</strong></div>{item.modifierSelections.filter((group) => group.items.length).map((group) => <p key={group.groupId} className="mt-1 text-[11px] leading-relaxed text-white/45"><strong className="text-white/60">{group.groupName}:</strong> {group.items.map((modifier) => `${modifier.quantity > 1 ? `${modifier.quantity}x ` : ''}${modifier.name}`).join(', ')}</p>)}{item.notes && <p className="mt-1 text-[11px] italic text-white/45">“{item.notes}”</p>}</div>)}</div>
         <dl className="mt-5 space-y-3 text-sm"><SummaryLine label="Recebimento" value={fulfillment === 'DELIVERY' ? 'Entrega' : 'Retirada'} />{fulfillment === 'DELIVERY' && <SummaryLine label="Endereço" value={fields.street ? `${fields.street}, ${fields.number || 's/n'}${fields.neighborhood ? ` · ${fields.neighborhood}` : ''}` : 'Preencha o endereço'} />}<SummaryLine label="Pagamento" value={paymentLabels[paymentMethod]} />{paymentMethod === 'CASH' && <SummaryLine label="Troco" value={needsChange === null ? 'Informe se precisa' : needsChange ? changeForCents === null ? 'Informe o valor' : `Para ${formatBRL(changeForCents)}` : 'Não precisa'} />}<SummaryLine label="Estimativa" value={availability.estimate.label} /></dl>

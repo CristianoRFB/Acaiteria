@@ -287,10 +287,10 @@ export default function CatalogPage() {
         ))}
       </div>
       {showForm && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#2b1722]/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#2b1722]/50 p-3 backdrop-blur-sm sm:p-4">
           <form
             onSubmit={save}
-            className="mx-auto my-4 max-w-2xl rounded-[28px] bg-white p-5 shadow-2xl sm:p-7"
+            className="mx-auto my-3 w-full max-w-2xl rounded-[28px] bg-white p-4 shadow-2xl sm:my-4 sm:p-7"
           >
             <div className="flex items-center justify-between">
               <div>
@@ -550,10 +550,10 @@ export default function CatalogPage() {
         </div>
       )}
       {showCategoryForm && (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-[#2b1722]/50 p-4 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[60] grid place-items-center overflow-y-auto bg-[#2b1722]/50 p-3 backdrop-blur-sm sm:p-4">
           <form
             onSubmit={saveCategory}
-            className="w-full max-w-md rounded-[28px] bg-white p-6 shadow-2xl sm:p-7"
+            className="my-3 w-full max-w-md rounded-[28px] bg-white p-4 shadow-2xl sm:my-4 sm:p-7"
           >
             <div className="flex items-start justify-between gap-4">
               <div>
