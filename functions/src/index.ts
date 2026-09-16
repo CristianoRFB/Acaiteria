@@ -180,6 +180,7 @@ async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Ro
 const cashOperationSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('OPEN'), clientRequestId: z.uuid(), initialBalanceCents: z.number().int().min(0).max(100_000_000), openingDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/), note: z.string().trim().max(300).optional() }),
   z.object({ operation: z.literal('MOVEMENT'), clientRequestId: z.uuid(), registerId: z.string().min(1).max(128), type: z.enum(['WITHDRAWAL', 'SUPPLY']), amountCents: z.number().int().positive().max(100_000_000), note: z.string().trim().min(1).max(300) }),
+  z.object({ operation: z.literal('LOCAL_SALE'), clientRequestId: z.uuid(), registerId: z.string().min(1).max(128), amountCents: z.number().int().positive().max(100_000_000), paymentMethod: z.enum(['PIX', 'CARD', 'CASH', 'OTHER']), description: z.string().trim().min(1).max(120), orderNumber: z.string().trim().max(40).optional(), note: z.string().trim().max(300).optional() }),
   z.object({ operation: z.literal('CLOSE'), registerId: z.string().min(1).max(128), countedCashCents: z.number().int().min(0).max(100_000_000), note: z.string().trim().max(300).optional() }),
 ]);
 
@@ -233,6 +234,79 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
       transaction.update(registerRef, { expectedCashCents: expected + (input.type === 'SUPPLY' ? input.amountCents : -input.amountCents), lastMovementAt: now, updatedAt: now });
     });
     return { movementId: movementRef.id };
+  }
+
+  if (input.operation === 'LOCAL_SALE') {
+    const saleRef = db.doc(`cashMovements/local-${input.clientRequestId}`);
+    const financeRef = db.doc(`financeEntries/local-${input.clientRequestId}`);
+    const registerRef = db.doc(`cashRegisters/${input.registerId}`);
+    const controlRef = db.doc('cashControl/main');
+    let idempotent = false;
+    await db.runTransaction(async (transaction) => {
+      const existingSale = await transaction.get(saleRef);
+      const existingFinance = await transaction.get(financeRef);
+      if (existingSale.exists) {
+        idempotent = true;
+        if (!existingFinance.exists) {
+          const saleData = existingSale.data()!;
+          const amountCents = Number(saleData.amountCents ?? 0);
+          transaction.create(financeRef, {
+            kind: 'INCOME',
+            category: 'Vendas locais',
+            description: String(saleData.note || 'Venda local'),
+            amountCents,
+            date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()),
+            status: 'PAID',
+            orderNumber: saleData.orderNumber ?? null,
+            sourceLocalSaleId: input.clientRequestId,
+            paymentMethod: saleData.paymentMethod ?? 'OTHER',
+            notes: 'Lançamento recuperado automaticamente.',
+            createdAt: FieldValue.serverTimestamp(),
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+        return;
+      }
+      const register = await transaction.get(registerRef);
+      if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar uma venda local.');
+      const control = await transaction.get(controlRef);
+      if (String(control.data()?.openRegisterId ?? '') !== input.registerId) throw new HttpsError('failed-precondition', 'Este não é o Caixa aberto atual.');
+      const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+      const cashAmountCents = input.paymentMethod === 'CASH' ? input.amountCents : 0;
+      if (!Number.isSafeInteger(expected) || !Number.isSafeInteger(cashAmountCents)) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa é inválido.');
+      const now = FieldValue.serverTimestamp();
+      transaction.create(saleRef, {
+        registerId: input.registerId,
+        type: 'SALE',
+        direction: 'IN',
+        amountCents: input.amountCents,
+        cashAmountCents,
+        paymentMethod: input.paymentMethod,
+        orderNumber: input.orderNumber?.trim() || null,
+        sourceLocalSaleId: input.clientRequestId,
+        operatorUid: uid,
+        operatorEmail: email,
+        note: input.description.trim(),
+        details: input.note?.trim() || null,
+        createdAt: now,
+      });
+      transaction.create(financeRef, {
+        kind: 'INCOME',
+        category: 'Vendas locais',
+        description: input.description.trim(),
+        amountCents: input.amountCents,
+        date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()),
+        status: 'PAID',
+        orderNumber: input.orderNumber?.trim() || null,
+        sourceLocalSaleId: input.clientRequestId,
+        paymentMethod: input.paymentMethod,
+        notes: input.note?.trim() || 'Venda registrada manualmente no Caixa.',
+        createdAt: now,
+        updatedAt: now,
+      });
+      transaction.update(registerRef, { expectedCashCents: expected + cashAmountCents, lastMovementAt: now, updatedAt: now });
+    });
+    return { movementId: saleRef.id, idempotent };
   }
 
   const registerRef = db.doc(`cashRegisters/${input.registerId}`);

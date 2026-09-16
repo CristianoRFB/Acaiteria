@@ -32,6 +32,7 @@ import { Button } from '@/components/ui/button';
 import {
   openCashRegister,
   closeCashRegister,
+  recordLocalSale,
   recordCashMovement,
 } from '@/lib/cash-register';
 import { getFirebaseClient } from '@/lib/firebase/client';
@@ -42,6 +43,7 @@ import {
   paymentMethodLabel,
   summarizeCashMovements,
   type CashMovement,
+  type CashPaymentMethod,
   type CashRegister,
 } from '@/shared/cash-register';
 
@@ -89,7 +91,7 @@ export default function CashRegisterPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [action, setAction] = useState<'OPEN' | 'WITHDRAWAL' | 'SUPPLY' | null>(
+  const [action, setAction] = useState<'OPEN' | 'LOCAL_SALE' | 'WITHDRAWAL' | 'SUPPLY' | null>(
     null,
   );
   const [closeOpen, setCloseOpen] = useState(false);
@@ -97,6 +99,11 @@ export default function CashRegisterPage() {
   const [openingNote, setOpeningNote] = useState('');
   const [movementAmount, setMovementAmount] = useState('');
   const [movementNote, setMovementNote] = useState('');
+  const [localSaleAmount, setLocalSaleAmount] = useState('');
+  const [localSalePaymentMethod, setLocalSalePaymentMethod] = useState<CashPaymentMethod>('CASH');
+  const [localSaleDescription, setLocalSaleDescription] = useState('');
+  const [localSaleOrderNumber, setLocalSaleOrderNumber] = useState('');
+  const [localSaleNote, setLocalSaleNote] = useState('');
   const [countedCash, setCountedCash] = useState('');
   const [closingNote, setClosingNote] = useState('');
   const [historyDate, setHistoryDate] = useState('');
@@ -222,7 +229,7 @@ export default function CashRegisterPage() {
   }
   async function handleMovement(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!current || !action || action === 'OPEN') return;
+    if (!current || !action || action === 'OPEN' || action === 'LOCAL_SALE') return;
     resetFeedback();
     setBusy(true);
     try {
@@ -248,6 +255,36 @@ export default function CashRegisterPage() {
         cause instanceof Error
           ? cause.message
           : 'Não foi possível salvar a movimentação.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function handleLocalSale(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!current) return;
+    resetFeedback();
+    setBusy(true);
+    try {
+      await recordLocalSale(getFirebaseClient().functions, {
+        registerId: current.id,
+        amountCents: parseRequiredMoney(localSaleAmount, 'a venda'),
+        paymentMethod: localSalePaymentMethod,
+        description: localSaleDescription,
+        orderNumber: localSaleOrderNumber,
+        note: localSaleNote,
+      });
+      setAction(null);
+      setLocalSaleAmount('');
+      setLocalSaleDescription('');
+      setLocalSaleOrderNumber('');
+      setLocalSaleNote('');
+      setNotice('Venda local registrada no Caixa e no Financeiro.');
+    } catch (cause) {
+      setError(
+        cause instanceof Error
+          ? cause.message
+          : 'Não foi possível registrar a venda local.',
       );
     } finally {
       setBusy(false);
@@ -398,6 +435,16 @@ export default function CashRegisterPage() {
               type="button"
               onClick={() => {
                 resetFeedback();
+                setAction('LOCAL_SALE');
+              }}
+              className="h-11 rounded-full bg-[#d7f04a] font-black text-[#351924] hover:bg-[#c4dd36]"
+            >
+              <ReceiptText /> Registrar venda local
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                resetFeedback();
                 setAction('WITHDRAWAL');
               }}
               variant="outline"
@@ -468,7 +515,7 @@ export default function CashRegisterPage() {
           </div>
         </FormCard>
       )}
-      {action && action !== 'OPEN' && current && (
+      {action && action !== 'OPEN' && action !== 'LOCAL_SALE' && current && (
         <FormCard
           title={
             action === 'WITHDRAWAL'
@@ -507,6 +554,69 @@ export default function CashRegisterPage() {
               }
             />
           </div>
+        </FormCard>
+      )}
+      {action === 'LOCAL_SALE' && current && (
+        <FormCard
+          title="Registrar venda local"
+          description="Use para vendas feitas no balcão ou fora do fluxo de pedido online. O registro entra no Caixa e no Financeiro ao mesmo tempo."
+          onSubmit={handleLocalSale}
+          onCancel={() => setAction(null)}
+          busy={busy}
+          submitLabel="Registrar venda"
+        >
+          <div className="grid gap-4 sm:grid-cols-2">
+            <AdminField
+              label="Valor da venda (R$)"
+              name="localSaleAmount"
+              value={localSaleAmount}
+              onChange={(event) => setLocalSaleAmount(event.target.value)}
+              inputMode="decimal"
+              required
+              placeholder="Ex.: 25,00"
+            />
+            <label className="block text-sm font-bold">
+              Forma de pagamento
+              <select
+                name="localSalePaymentMethod"
+                value={localSalePaymentMethod}
+                onChange={(event) => setLocalSalePaymentMethod(event.target.value as CashPaymentMethod)}
+                className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"
+              >
+                <option value="CASH">Dinheiro</option>
+                <option value="PIX">Pix</option>
+                <option value="CARD">Cartão</option>
+                <option value="OTHER">Outra forma</option>
+              </select>
+            </label>
+            <AdminField
+              label="Descrição"
+              name="localSaleDescription"
+              value={localSaleDescription}
+              onChange={(event) => setLocalSaleDescription(event.target.value)}
+              required
+              placeholder="Ex.: 1 copo de açaí 500 ml"
+            />
+            <AdminField
+              label="Pedido ou comanda (opcional)"
+              name="localSaleOrderNumber"
+              value={localSaleOrderNumber}
+              onChange={(event) => setLocalSaleOrderNumber(event.target.value)}
+              placeholder="Ex.: balcão 12"
+            />
+            <div className="sm:col-span-2">
+              <AdminTextarea
+                label="Observação (opcional)"
+                name="localSaleNote"
+                value={localSaleNote}
+                onChange={(event) => setLocalSaleNote(event.target.value)}
+                placeholder="Ex.: pagamento conferido no balcão."
+              />
+            </div>
+          </div>
+          <p className="mt-4 rounded-2xl bg-[#fffaf5] p-3 text-xs leading-relaxed text-[#826a75]">
+            Dinheiro aumenta o valor esperado no caixa. Pix e cartão entram nas vendas, mas não alteram o dinheiro físico.
+          </p>
         </FormCard>
       )}
       {closeOpen && current && (
@@ -852,6 +962,7 @@ function FormCard({
   onSubmit,
   onCancel,
   busy,
+  submitLabel = 'Salvar movimentação',
   children,
 }: {
   title: string;
@@ -859,6 +970,7 @@ function FormCard({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onCancel: () => void;
   busy: boolean;
+  submitLabel?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -882,7 +994,7 @@ function FormCard({
             className="h-11 flex-1 rounded-full bg-[#82204f] font-black text-white"
           >
             {busy ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}{' '}
-            Salvar movimentação
+            {submitLabel}
           </Button>
         </div>
       </form>

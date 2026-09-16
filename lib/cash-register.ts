@@ -1,4 +1,5 @@
 import { httpsCallable, type Functions } from 'firebase/functions';
+import type { CashPaymentMethod } from '@/shared/cash-register';
 
 type CashOperationResult = {
   registerId?: string;
@@ -51,6 +52,26 @@ export async function recordCashMovement(
     ...input,
   });
   if (!result.movementId) throw new Error('Movimentação sem identificador.');
+  return result.movementId;
+}
+
+export async function recordLocalSale(
+  functions: Functions,
+  input: {
+    registerId: string;
+    amountCents: number;
+    paymentMethod: CashPaymentMethod;
+    description: string;
+    orderNumber?: string;
+    note?: string;
+  },
+) {
+  const result = await operateCashRegister(functions, {
+    operation: 'LOCAL_SALE',
+    clientRequestId: requestId(),
+    ...input,
+  });
+  if (!result.movementId) throw new Error('Venda sem identificador.');
   return result.movementId;
 }
 
