@@ -150,3 +150,33 @@ input, select, textarea { min-width: 0; }
   }
   button, a { -webkit-tap-highlight-color: transparent; }
 }
+
+.kitchen-ticket { display: none; }
+
+@media print {
+  @page { size: 80mm auto; margin: 0; }
+  body * { visibility: hidden !important; }
+  #kitchen-ticket, #kitchen-ticket * { visibility: visible !important; }
+  #kitchen-ticket {
+    display: block !important;
+    position: fixed;
+    inset: 0 auto auto 0;
+    width: 80mm;
+    box-sizing: border-box;
+    padding: 7mm 6mm;
+    color: #000;
+    background: #fff;
+    font-family: Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.35;
+  }
+  .kitchen-ticket__header p { margin: 0; font-size: 9pt; font-weight: 700; text-transform: uppercase; }
+  .kitchen-ticket__header h1 { margin: 3mm 0 1mm; font-size: 21pt; letter-spacing: .04em; }
+  .kitchen-ticket__divider { border-top: 1px dashed #000; margin: 4mm 0; }
+  .kitchen-ticket__items { margin: 0; padding: 0; list-style: none; }
+  .kitchen-ticket__items li { margin: 0 0 4mm; page-break-inside: avoid; }
+  .kitchen-ticket__item-title { display: flex; justify-content: space-between; gap: 3mm; font-size: 12pt; }
+  .kitchen-ticket__items p { margin: 1mm 0 0; font-size: 9pt; }
+  .kitchen-ticket__note, .kitchen-ticket__global-note { margin-top: 2mm !important; padding: 2mm; border: 1px solid #000; font-weight: 700; }
+  .kitchen-ticket footer { display: flex; justify-content: space-between; gap: 3mm; margin-top: 5mm; padding-top: 3mm; border-top: 1px dashed #000; font-size: 9pt; }
+}

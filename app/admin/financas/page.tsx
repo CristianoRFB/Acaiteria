@@ -67,7 +67,9 @@ export default function FinancesPage() {
     const income = visibleEntries.filter((entry) => entry.kind === 'INCOME').reduce((total, entry) => total + entry.amountCents, 0);
     const expense = visibleEntries.filter((entry) => entry.kind === 'EXPENSE').reduce((total, entry) => total + entry.amountCents, 0);
     const pending = visibleEntries.filter((entry) => entry.kind === 'INCOME' && entry.status === 'PENDING').reduce((total, entry) => total + entry.amountCents, 0);
-    return { income, expense, balance: income - expense, pending };
+    const paidIncome = visibleEntries.filter((entry) => entry.kind === 'INCOME' && entry.status === 'PAID').reduce((total, entry) => total + entry.amountCents, 0);
+    const paidExpense = visibleEntries.filter((entry) => entry.kind === 'EXPENSE' && entry.status === 'PAID').reduce((total, entry) => total + entry.amountCents, 0);
+    return { income, expense, balance: paidIncome - paidExpense, pending };
   }, [visibleEntries]);
 
   function openNew() {
@@ -148,9 +150,9 @@ export default function FinancesPage() {
       {notice && <p role="status" className="mt-5 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-700">{notice}</p>}
 
       <section className="mt-7 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <SummaryCard label="Receitas no mês" value={formatBRL(summary.income)} icon={<ArrowUpRight />} tone="text-emerald-700 bg-emerald-50" />
-        <SummaryCard label="Despesas no mês" value={formatBRL(summary.expense)} icon={<ArrowDownLeft />} tone="text-red-700 bg-red-50" />
-        <SummaryCard label="Saldo operacional" value={formatBRL(summary.balance)} icon={<WalletCards />} tone={summary.balance >= 0 ? 'text-[#82204f] bg-[#fff0f5]' : 'text-red-700 bg-red-50'} />
+        <SummaryCard label="Receitas lançadas" value={formatBRL(summary.income)} icon={<ArrowUpRight />} tone="text-emerald-700 bg-emerald-50" />
+        <SummaryCard label="Despesas lançadas" value={formatBRL(summary.expense)} icon={<ArrowDownLeft />} tone="text-red-700 bg-red-50" />
+        <SummaryCard label="Saldo já pago" value={formatBRL(summary.balance)} icon={<WalletCards />} tone={summary.balance >= 0 ? 'text-[#82204f] bg-[#fff0f5]' : 'text-red-700 bg-red-50'} />
         <SummaryCard label="A receber" value={formatBRL(summary.pending)} icon={<CalendarDays />} tone="text-amber-700 bg-amber-50" />
       </section>
 

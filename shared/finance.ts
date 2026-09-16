@@ -11,8 +11,30 @@ export interface FinanceEntry {
   status: FinanceEntryStatus;
   orderNumber?: string;
   notes?: string;
+  sourceOrderId?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
+}
+
+export interface CompletedOrderIncomeInput {
+  orderId: string;
+  orderNumber: string;
+  totalCents: number;
+  date: string;
+}
+
+export function createCompletedOrderIncome(input: CompletedOrderIncomeInput) {
+  return {
+    kind: 'INCOME' as const,
+    category: 'Vendas de açaí',
+    description: `Pedido ${input.orderNumber}`,
+    amountCents: input.totalCents,
+    date: input.date,
+    status: 'PAID' as const,
+    orderNumber: input.orderNumber,
+    sourceOrderId: input.orderId,
+    notes: 'Lançamento criado automaticamente ao concluir o pedido.',
+  };
 }
 
 export const FINANCE_CATEGORIES = [

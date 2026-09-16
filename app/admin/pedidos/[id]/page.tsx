@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Loader2,
   Pencil,
+  Printer,
   Save,
   X,
   XCircle,
@@ -14,6 +15,7 @@ import {
 import { useParams } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { IntegrationOrderPanel } from '@/components/integration-order-panel';
+import { KitchenTicket } from '@/components/kitchen-ticket';
 import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
@@ -30,6 +32,7 @@ import {
   type OrderStatus,
   type PricedItem,
 } from '@/shared/domain';
+import { createCompletedOrderIncome } from '@/shared/finance';
 
 interface FullOrder {
   integration?: IntegrationState;
@@ -64,12 +67,17 @@ const labels: Record<OrderStatus, string> = {
   COMPLETED: 'Concluído',
   CANCELLED: 'Cancelado',
 };
+const todayKey = () => {
+  const now = new Date();
+  return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
+};
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { catalog } = useCatalog();
   const [order, setOrder] = useState<FullOrder | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [editOpen, setEditOpen] = useState(false);
@@ -81,6 +89,7 @@ export default function OrderDetailPage() {
   const [editPaymentMethod, setEditPaymentMethod] = useState<'PIX' | 'CARD' | 'CASH'>('PIX');
   const [editChangeFor, setEditChangeFor] = useState('');
   const [publicEditProposal, setPublicEditProposal] = useState<PublicOrderEditProposal | null>(null);
+  const [kitchenOpen, setKitchenOpen] = useState(false);
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(
     () =>
@@ -108,21 +117,22 @@ export default function OrderDetailPage() {
     if (!order?.publicCode) { setPublicEditProposal(null); return undefined; }
     return onSnapshot(doc(getFirebaseClient().db, 'publicOrders', order.publicCode), (snapshot) => setPublicEditProposal((snapshot.data()?.editProposal as PublicOrderEditProposal | undefined) ?? null), () => setPublicEditProposal(null));
   }, [order?.publicCode]);
-  async function update(status: OrderStatus, reason?: string) {
-    if (!order) return;
+  async function update(status: OrderStatus, reason?: string): Promise<boolean> {
+    if (!order) return false;
     const needsFinalize = status === 'CONFIRMED' && order.customerEditApproval?.status === 'PENDING';
     if (needsFinalize) {
       if (publicEditProposal?.status !== 'ACCEPTED') {
         setError('O cliente precisa aceitar as alterações antes de confirmar o pedido.');
-        return;
+        return false;
       }
     }
     if (status === 'CANCELLED' && !reason) {
       setCancelOpen(true);
-      return;
+      return false;
     }
     setBusy(true);
     setError('');
+    setNotice('');
     try {
       if (needsFinalize) {
         // A resposta pública já foi dada: registra o aceite privado antes da transição.
@@ -138,12 +148,29 @@ export default function OrderDetailPage() {
         if (!isFunctionsUnavailable(cause)) throw cause;
         await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
       }
+      if (status === 'COMPLETED') {
+        const db = getFirebaseClient().db;
+        try {
+          await setDoc(
+            doc(db, 'financeEntries', `order-${order.id}`),
+            { ...createCompletedOrderIncome({ orderId: order.id, orderNumber: order.orderNumber, totalCents: order.pricing.totalCents, date: todayKey() }), createdAt: serverTimestamp(), updatedAt: serverTimestamp() },
+            { merge: true },
+          );
+          setNotice('Pedido concluído e receita registrada automaticamente em Finanças.');
+        } catch {
+          setNotice('Pedido concluído. A receita não pôde ser lançada automaticamente; confira Finanças com uma conta administradora.');
+        }
+      } else {
+        setNotice(status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
+      }
       setCancelOpen(false);
       setCancelReason('');
+      return true;
     } catch (cause) {
       setError(
         cause instanceof Error ? cause.message : 'Não foi possível atualizar.',
       );
+      return false;
     } finally {
       setBusy(false);
     }
@@ -156,6 +183,12 @@ export default function OrderDetailPage() {
       return;
     }
     await update('CANCELLED', reason);
+  }
+  async function dispatchToKitchen(printTicket: boolean) {
+    const updated = await update('PREPARING');
+    if (!updated) return;
+    setKitchenOpen(false);
+    if (printTicket) window.setTimeout(() => window.print(), 150);
   }
   async function saveDetails(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -289,6 +322,7 @@ export default function OrderDetailPage() {
               {error}
             </p>
           )}
+          {notice && <p role="status" className="mt-5 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{notice}</p>}
           <IntegrationOrderPanel orderId={order.id} state={order.integration} />
           {order.customerEditApproval?.status === 'PENDING' && <section className="mt-5 rounded-[26px] border-2 border-[#d7f04a] bg-[#fffde8] p-5 shadow-sm sm:p-6"><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Aprovação do cliente</p><h2 className="mt-1 text-xl font-black">Alteração enviada para confirmação</h2><p className="mt-2 text-sm leading-relaxed text-[#6f5360]">O pedido foi editado e não pode avançar para preparo até o cliente responder no link de acompanhamento.</p>{publicEditProposal?.status === 'ACCEPTED' && <><p className="mt-3 rounded-xl bg-[#d7f04a]/50 p-3 text-sm font-black text-[#351924]">O cliente concordou com as alterações.</p><Button disabled={busy} onClick={() => void finalizeEdit('ACCEPTED')} className="mt-3 rounded-full bg-[#82204f] text-white">Registrar aceite e liberar pedido</Button></>}{publicEditProposal?.status === 'REJECTED' && <><p className="mt-3 rounded-xl bg-red-100 p-3 text-sm font-black text-red-800">O cliente recusou as alterações.</p><Button disabled={busy} onClick={() => void finalizeEdit('REJECTED')} className="mt-3 rounded-full bg-[#82204f] text-white">Reverter para a versão anterior</Button></>}{(!publicEditProposal || publicEditProposal.status === 'PENDING') && <p className="mt-3 text-sm font-bold text-[#826a75]">Aguardando a resposta do cliente no acompanhamento público.</p>}</section>}
           <div className="mt-7 grid gap-5 xl:grid-cols-[1fr_360px]">
@@ -341,6 +375,16 @@ export default function OrderDetailPage() {
                   {ORDER_TRANSITIONS[order.status]
                     .filter((status) => status !== 'CANCELLED')
                     .map((status) => (
+                      status === 'PREPARING' ? (
+                        <Button
+                          key={status}
+                          disabled={busy || order.integration?.provider === 'saipos'}
+                          onClick={() => setKitchenOpen(true)}
+                          className="h-11 justify-start rounded-xl bg-[#d7f04a] px-4 font-black text-[#351924] hover:bg-[#c4dd36]"
+                        >
+                          <Printer /> Mandar para cozinha
+                        </Button>
+                      ) : (
                       <Button
                         key={status}
                         disabled={
@@ -356,6 +400,7 @@ export default function OrderDetailPage() {
                         )}{' '}
                         Marcar: {labels[status]}
                       </Button>
+                      )
                     ))}
                   {order.customerEditApproval?.status === 'PENDING' && order.status === 'NEW' && <p className="rounded-xl bg-[#fffde8] p-3 text-xs font-bold leading-relaxed text-[#856b12]">{publicEditProposal?.status === 'ACCEPTED' ? 'O cliente aceitou. Marcar como confirmado vai aplicar o aceite e liberar o pedido.' : 'Confirmação bloqueada até o cliente responder à proposta de alteração.'}</p>}
                   {ORDER_TRANSITIONS[order.status].includes('CANCELLED') && (
@@ -372,6 +417,7 @@ export default function OrderDetailPage() {
                   {!ORDER_TRANSITIONS[order.status].length && (
                     <p className="text-sm text-white/55">Fluxo encerrado.</p>
                   )}
+                  {(['PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED'] as OrderStatus[]).includes(order.status) && <Button disabled={busy} onClick={() => window.print()} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Printer /> Reimprimir ficha de cozinha</Button>}
                 </div>
               </section>
               <section className="rounded-[26px] bg-white p-5 shadow-sm">
@@ -519,6 +565,17 @@ export default function OrderDetailPage() {
           </form>
         </div>
       )}
+      {kitchenOpen && order && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-[#2b1722]/50 p-4 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="kitchen-title" className="w-full max-w-md rounded-[28px] bg-white p-5 shadow-2xl sm:p-6">
+            <div className="flex items-start gap-4"><span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#d7f04a] text-[#351924]"><Printer className="size-5" /></span><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Próxima etapa</p><h2 id="kitchen-title" className="mt-1 text-2xl font-black">Mandar para cozinha</h2><p className="mt-2 text-sm leading-relaxed text-[#826a75]">O pedido será marcado como <b>em preparo</b>. Você pode imprimir uma ficha com itens, adicionais e observações para a equipe.</p></div></div>
+            <div className="mt-5 rounded-2xl bg-[#fffaf5] p-4 text-sm"><strong>{order.orderNumber}</strong><p className="mt-1 text-[#826a75]">{order.items.reduce((total, item) => total + item.quantity, 0)} item(ns) • {order.fulfillment.mode === 'DELIVERY' ? 'Entrega' : 'Retirada'}</p></div>
+            <div className="mt-5 grid gap-2 sm:grid-cols-2"><Button type="button" variant="outline" disabled={busy} onClick={() => void dispatchToKitchen(false)} className="h-11 rounded-full">Mandar sem imprimir</Button><Button type="button" disabled={busy} onClick={() => void dispatchToKitchen(true)} className="h-11 rounded-full bg-[#82204f] font-black text-white">{busy ? <Loader2 className="animate-spin" /> : <Printer />} Mandar e imprimir</Button></div>
+            <button type="button" disabled={busy} onClick={() => setKitchenOpen(false)} className="mt-4 w-full text-sm font-bold text-[#826a75] hover:text-[#82204f]">Cancelar</button>
+          </section>
+        </div>
+      )}
+      {order && <KitchenTicket orderNumber={order.orderNumber} customerName={order.customer.name} fulfillmentMode={order.fulfillment.mode} items={order.items} notes={order.notes} paymentMethod={order.payment.method} totalCents={order.pricing.totalCents} />}
     </AdminShell>
   );
 }
