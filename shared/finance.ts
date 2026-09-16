@@ -12,6 +12,11 @@ export interface FinanceEntry {
   orderNumber?: string;
   notes?: string;
   sourceOrderId?: string;
+  sourceLocalSaleId?: string;
+  clientRequestId?: string;
+  createdByUid?: string;
+  updatedByUid?: string;
+  updatedByEmail?: string;
   paymentMethod?: 'PIX' | 'CARD' | 'CASH' | 'OTHER' | string;
   createdAt?: unknown;
   updatedAt?: unknown;

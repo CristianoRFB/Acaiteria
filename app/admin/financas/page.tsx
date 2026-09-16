@@ -1,14 +1,12 @@
 'use client';
 
 import {
-  addDoc,
   collection,
-  doc,
+  limit,
   onSnapshot,
   orderBy,
   query,
-  serverTimestamp,
-  updateDoc,
+  Timestamp,
   where,
 } from 'firebase/firestore';
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Pencil, Plus, Save, WalletCards, X } from 'lucide-react';
@@ -18,6 +16,7 @@ import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
+import { FinanceInsights, type FinanceInsightOrder } from '@/components/finance-insights';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import { formatBRL } from '@/shared/domain';
 import { paymentMethodLabel } from '@/shared/cash-register';
@@ -29,6 +28,7 @@ import {
   type FinanceEntryKind,
   type FinanceEntryStatus,
 } from '@/shared/finance';
+import { httpsCallable } from 'firebase/functions';
 
 const todayKey = () => {
   const now = new Date();
@@ -54,6 +54,12 @@ export default function FinancesPage() {
   const [kind, setKind] = useState<'ALL' | FinanceEntryKind>('ALL');
   const [editing, setEditing] = useState<FinanceEntry | null>(null);
   const [formOpen, setFormOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [financeRequestId, setFinanceRequestId] = useState<string | null>(null);
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
+  const [view, setView] = useState<'LEDGER' | 'INSIGHTS'>('LEDGER');
+  const [insightOrders, setInsightOrders] = useState<FinanceInsightOrder[]>([]);
+  const [insightLoading, setInsightLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
@@ -77,6 +83,38 @@ export default function FinancesPage() {
     );
   }, [month, role]);
 
+  useEffect(() => {
+    if (role !== 'admin' || view !== 'INSIGHTS') {
+      setInsightOrders([]);
+      setInsightLoading(false);
+      return undefined;
+    }
+    setInsightLoading(true);
+    const [year, monthNumber] = month.split('-').map(Number);
+    const start = Timestamp.fromDate(new Date(Date.UTC(year, monthNumber - 1, 1, 3)));
+    const endMonth = monthNumber === 12 ? 1 : monthNumber + 1;
+    const endYear = monthNumber === 12 ? year + 1 : year;
+    const end = Timestamp.fromDate(new Date(Date.UTC(endYear, endMonth - 1, 1, 3)));
+    return onSnapshot(
+      query(
+        collection(getFirebaseClient().db, 'orders'),
+        where('status', '==', 'COMPLETED'),
+        where('updatedAt', '>=', start),
+        where('updatedAt', '<', end),
+        orderBy('updatedAt', 'desc'),
+        limit(500),
+      ),
+      (snapshot) => {
+        setInsightOrders(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as FinanceInsightOrder));
+        setInsightLoading(false);
+      },
+      () => {
+        setInsightLoading(false);
+        setError('Não foi possível carregar os pedidos para a visão comercial.');
+      },
+    );
+  }, [month, role, view]);
+
   const visibleEntries = useMemo(
     () => entries.filter((entry) => entry.date.startsWith(month) && (kind === 'ALL' || entry.kind === kind)),
     [entries, kind, month],
@@ -93,6 +131,7 @@ export default function FinancesPage() {
 
   function openNew() {
     setEditing(null);
+    setFinanceRequestId(null);
     setError('');
     setNotice('');
     setFormOpen(true);
@@ -100,6 +139,7 @@ export default function FinancesPage() {
 
   function openEdit(entry: FinanceEntry) {
     setEditing(entry);
+    setFinanceRequestId(null);
     setError('');
     setNotice('');
     setFormOpen(true);
@@ -118,39 +158,43 @@ export default function FinancesPage() {
       setError('Preencha descrição, categoria, data e um valor em reais maior que zero.');
       return;
     }
+    const clientRequestId = financeRequestId ?? crypto.randomUUID();
+    setFinanceRequestId(clientRequestId);
+    setSaving(true);
     const payload = {
+      clientRequestId,
       kind: String(data.get('kind') ?? 'INCOME') as FinanceEntryKind,
       category,
       description,
       date,
       amountCents,
       status: String(data.get('status') ?? 'PAID') as FinanceEntryStatus,
-      orderNumber: String(data.get('orderNumber') ?? '').trim() || null,
-      notes: String(data.get('notes') ?? '').trim() || null,
-      updatedAt: serverTimestamp(),
+      ...(String(data.get('orderNumber') ?? '').trim() ? { orderNumber: String(data.get('orderNumber') ?? '').trim() } : {}),
+      ...(String(data.get('notes') ?? '').trim() ? { notes: String(data.get('notes') ?? '').trim() } : {}),
     };
     try {
-      const db = getFirebaseClient().db;
-      if (editing) await updateDoc(doc(db, 'financeEntries', editing.id), payload);
-      else await addDoc(collection(db, 'financeEntries'), { ...payload, createdAt: serverTimestamp() });
+      await httpsCallable(getFirebaseClient().functions, 'saveFinanceEntry')({ ...(editing ? { id: editing.id } : {}), ...payload });
       setFormOpen(false);
       setEditing(null);
+      setFinanceRequestId(null);
       setNotice(editing ? 'Lançamento atualizado.' : 'Lançamento adicionado ao caixa.');
     } catch {
       setError('Não foi possível salvar o lançamento. Confira sua conexão e tente novamente.');
+    } finally {
+      setSaving(false);
     }
   }
 
   async function toggleStatus(entry: FinanceEntry) {
     setError('');
+    setStatusBusyId(entry.id);
     try {
-      await updateDoc(doc(getFirebaseClient().db, 'financeEntries', entry.id), {
-        status: entry.status === 'PAID' ? 'PENDING' : 'PAID',
-        updatedAt: serverTimestamp(),
-      });
+      await httpsCallable(getFirebaseClient().functions, 'updateFinanceStatus')({ id: entry.id, status: entry.status === 'PAID' ? 'PENDING' : 'PAID' });
       setNotice(entry.status === 'PAID' ? 'Lançamento marcado como pendente.' : 'Lançamento marcado como pago.');
     } catch {
       setError('Não foi possível atualizar o status do lançamento.');
+    } finally {
+      setStatusBusyId(null);
     }
   }
 
@@ -174,6 +218,12 @@ export default function FinancesPage() {
         <SummaryCard label="Saldo já pago" value={formatBRL(summary.balance)} icon={<WalletCards />} tone={summary.balance >= 0 ? 'text-[#82204f] bg-[#fff0f5]' : 'text-red-700 bg-red-50'} />
         <SummaryCard label="A receber" value={formatBRL(summary.pending)} icon={<CalendarDays />} tone="text-amber-700 bg-amber-50" />
       </section>
+      <div className="mt-5 flex flex-wrap gap-2 rounded-2xl bg-[#f8f1f4] p-1" role="tablist" aria-label="Seções do Financeiro">
+        <button type="button" role="tab" aria-selected={view === 'LEDGER'} onClick={() => setView('LEDGER')} className={`rounded-xl px-4 py-2.5 text-sm font-black ${view === 'LEDGER' ? 'bg-white text-[#82204f] shadow-sm' : 'text-[#826a75]'}`}>Lançamentos</button>
+        <button type="button" role="tab" aria-selected={view === 'INSIGHTS'} onClick={() => setView('INSIGHTS')} className={`rounded-xl px-4 py-2.5 text-sm font-black ${view === 'INSIGHTS' ? 'bg-white text-[#82204f] shadow-sm' : 'text-[#826a75]'}`}>Inteligência de vendas</button>
+      </div>
+
+      {view === 'INSIGHTS' ? (insightLoading ? <div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Carregando os dados de vendas…</div> : <FinanceInsights entries={visibleEntries} orders={insightOrders} />) : <>
       <section className="mt-5 rounded-[26px] bg-white p-5 shadow-sm sm:p-7"><div className="flex items-center gap-3"><WalletCards className="size-5 text-[#82204f]" /><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Resumo das vendas</p><h2 className="mt-1 text-xl font-black">Receitas por forma de pagamento</h2></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{summary.payments.map(({ paymentMethod, amountCents }) => <div key={paymentMethod} className="rounded-2xl bg-[#fffaf5] p-4"><span className="text-xs font-bold text-[#826a75]">{paymentMethodLabel(paymentMethod)}</span><strong className="mt-1 block text-lg font-black text-[#82204f]">{formatBRL(amountCents)}</strong></div>)}</div><p className="mt-4 text-xs text-[#826a75]">Valores de pedidos concluídos, sem dados sensíveis de cartão. Use o Caixa para conferir o dinheiro contado.</p></section>
 
       {formOpen && <section className="mt-7 rounded-[26px] bg-white p-5 shadow-sm sm:p-7">
@@ -187,14 +237,15 @@ export default function FinancesPage() {
           </div>
           <div className="mt-4 grid gap-4 sm:grid-cols-2"><AdminField label="Descrição" name="description" required defaultValue={editing?.description} placeholder="Ex.: Venda de 2 copos 500 ml" /><AdminField label="Pedido relacionado (opcional)" name="orderNumber" defaultValue={editing?.orderNumber} placeholder="Ex.: #A150926EA7C" /></div>
           <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Situação<select name="status" defaultValue={editing?.status ?? 'PAID'} className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"><option value="PAID">Pago / recebido</option><option value="PENDING">Pendente</option></select></label><AdminTextarea label="Observação (opcional)" name="notes" defaultValue={editing?.notes} placeholder="Ex.: pagamento em dinheiro, fornecedor ou conferência pendente." /></div>
-          <Button type="submit" className="mt-5 h-11 rounded-full bg-[#82204f] font-black text-white"><Save /> Salvar lançamento</Button>
+          <Button type="submit" disabled={saving} className="mt-5 h-11 rounded-full bg-[#82204f] font-black text-white">{saving ? 'Salvando…' : <><Save /> Salvar lançamento</>}</Button>
         </form>
       </section>}
 
       <section className="mt-7 rounded-[26px] bg-white p-5 shadow-sm sm:p-7">
         <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Movimentações</p><h2 className="mt-1 text-2xl font-black">Caixa da açaíteria</h2><p className="mt-1 text-sm text-[#826a75]">Use os filtros para conferir um mês ou separar receitas e despesas.</p></div><div className="flex flex-col gap-2 sm:flex-row"><label className="text-xs font-bold text-[#826a75]">Mês<input type="month" value={month} onChange={(event) => setMonth(event.target.value)} className="mt-1 h-10 rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 text-sm font-bold" /></label><label className="text-xs font-bold text-[#826a75]">Exibir<select value={kind} onChange={(event) => setKind(event.target.value as 'ALL' | FinanceEntryKind)} className="mt-1 h-10 rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 text-sm font-bold"><option value="ALL">Tudo</option><option value="INCOME">Receitas</option><option value="EXPENSE">Despesas</option></select></label></div></div>
-        <div className="mt-6 overflow-hidden rounded-2xl border border-[#82204f]/10"><div className="hidden grid-cols-[110px_1fr_150px_130px_110px] gap-4 bg-[#fffaf5] px-4 py-3 text-[10px] font-black uppercase tracking-wider text-[#826a75] md:grid"><span>Data</span><span>Lançamento</span><span>Categoria</span><span>Situação</span><span className="text-right">Valor</span></div>{visibleEntries.map((entry) => <article key={entry.id} className="grid gap-3 border-b border-[#82204f]/8 px-4 py-4 last:border-0 md:grid-cols-[110px_1fr_150px_130px_110px] md:items-center md:gap-4"><span className="text-xs font-bold text-[#826a75]">{formatDateKey(entry.date)}</span><span><strong className="block text-sm">{entry.description}</strong><small className="mt-1 block text-xs text-[#826a75]">{entry.orderNumber ? `Pedido ${entry.orderNumber}` : entry.notes || 'Sem observações'}</small></span><span className="w-fit rounded-full bg-[#fff0f5] px-2.5 py-1 text-[11px] font-bold text-[#82204f]">{entry.category}</span><button type="button" onClick={() => void toggleStatus(entry)} className={`w-fit rounded-full px-2.5 py-1 text-[11px] font-black ${entry.status === 'PAID' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{entry.status === 'PAID' ? 'Pago / recebido' : 'Pendente'}</button><div className="flex items-center justify-between gap-3 md:justify-end"><strong className={entry.kind === 'INCOME' ? 'text-emerald-700' : 'text-red-700'}>{entry.kind === 'INCOME' ? '+' : '-'} {formatBRL(entry.amountCents)}</strong><button type="button" onClick={() => openEdit(entry)} className="grid size-8 place-items-center rounded-full bg-[#f8f1f4] text-[#82204f]" aria-label={`Editar ${entry.description}`}><Pencil className="size-3.5" /></button></div></article>)}{!visibleEntries.length && <div className="p-10 text-center"><WalletCards className="mx-auto size-8 text-[#a62c63]" /><h3 className="mt-3 font-black">Nenhum lançamento neste filtro</h3><p className="mt-1 text-sm text-[#826a75]">Adicione vendas, despesas ou altere o mês selecionado.</p></div>}</div>
+        <div className="mt-6 overflow-hidden rounded-2xl border border-[#82204f]/10"><div className="hidden grid-cols-[110px_1fr_150px_130px_110px] gap-4 bg-[#fffaf5] px-4 py-3 text-[10px] font-black uppercase tracking-wider text-[#826a75] md:grid"><span>Data</span><span>Lançamento</span><span>Categoria</span><span>Situação</span><span className="text-right">Valor</span></div>{visibleEntries.map((entry) => { const automatic = Boolean(entry.sourceOrderId || entry.sourceLocalSaleId); return <article key={entry.id} className="grid gap-3 border-b border-[#82204f]/8 px-4 py-4 last:border-0 md:grid-cols-[110px_1fr_150px_130px_110px] md:items-center md:gap-4"><span className="text-xs font-bold text-[#826a75]">{formatDateKey(entry.date)}</span><span><strong className="block text-sm">{entry.description}</strong><small className="mt-1 block text-xs text-[#826a75]">{entry.orderNumber ? `Pedido ${entry.orderNumber}` : entry.notes || 'Sem observações'}</small></span><span className="w-fit rounded-full bg-[#fff0f5] px-2.5 py-1 text-[11px] font-bold text-[#82204f]">{entry.category}</span>{automatic ? <span className="w-fit rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-black text-slate-600">Automático</span> : <button type="button" disabled={statusBusyId === entry.id} onClick={() => void toggleStatus(entry)} className={`w-fit rounded-full px-2.5 py-1 text-[11px] font-black ${entry.status === 'PAID' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>{entry.status === 'PAID' ? 'Pago / recebido' : 'Pendente'}</button>}<div className="flex items-center justify-between gap-3 md:justify-end"><strong className={entry.kind === 'INCOME' ? 'text-emerald-700' : 'text-red-700'}>{entry.kind === 'INCOME' ? '+' : '-'} {formatBRL(entry.amountCents)}</strong>{automatic ? <span className="text-[11px] font-bold text-[#826a75]">Protegido</span> : <button type="button" onClick={() => openEdit(entry)} className="grid size-8 place-items-center rounded-full bg-[#f8f1f4] text-[#82204f]" aria-label={`Editar ${entry.description}`}><Pencil className="size-3.5" /></button>}</div></article>; })}{!visibleEntries.length && <div className="p-10 text-center"><WalletCards className="mx-auto size-8 text-[#a62c63]" /><h3 className="mt-3 font-black">Nenhum lançamento neste filtro</h3><p className="mt-1 text-sm text-[#826a75]">Adicione vendas, despesas ou altere o mês selecionado.</p></div>}</div>
       </section>
+      </>}
     </AdminShell>
   );
 }

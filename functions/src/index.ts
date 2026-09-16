@@ -23,6 +23,7 @@ import {
   ORDER_TRANSITIONS,
   type CatalogSnapshot,
   type OrderStatus,
+  type PricedItem,
   type Role,
   type StorePublicConfig,
 } from '../../shared/domain.js';
@@ -183,6 +184,59 @@ const cashOperationSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('LOCAL_SALE'), clientRequestId: z.uuid(), registerId: z.string().min(1).max(128), amountCents: z.number().int().positive().max(100_000_000), paymentMethod: z.enum(['PIX', 'CARD', 'CASH', 'OTHER']), description: z.string().trim().min(1).max(120), orderNumber: z.string().trim().max(40).optional(), note: z.string().trim().max(300).optional() }),
   z.object({ operation: z.literal('CLOSE'), registerId: z.string().min(1).max(128), countedCashCents: z.number().int().min(0).max(100_000_000), note: z.string().trim().max(300).optional() }),
 ]);
+
+const financeEntrySchema = z.object({
+  id: z.string().min(1).max(128).optional(),
+  clientRequestId: z.uuid(),
+  kind: z.enum(['INCOME', 'EXPENSE']),
+  category: z.enum(['Vendas de açaí', 'Delivery', 'Insumos', 'Embalagens', 'Taxas', 'Estornos', 'Pró-labore', 'Outros']),
+  description: z.string().trim().min(1).max(120),
+  amountCents: z.number().int().positive().max(100_000_000),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  status: z.enum(['PAID', 'PENDING']),
+  orderNumber: z.string().trim().max(40).optional(),
+  notes: z.string().trim().max(300).optional(),
+});
+
+export const saveFinanceEntry = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin']);
+  const parsed = financeEntrySchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Lançamento financeiro inválido.');
+  const input = parsed.data;
+  const entryRef = input.id ? db.doc(`financeEntries/${input.id}`) : db.doc(`financeEntries/manual-${input.clientRequestId}`);
+  let idempotent = false;
+  await db.runTransaction(async (transaction) => {
+    const existing = await transaction.get(entryRef);
+    if (input.id && !existing.exists) throw new HttpsError('not-found', 'Lançamento não encontrado.');
+    if (!input.id && existing.exists) {
+      if (existing.data()?.clientRequestId === input.clientRequestId) { idempotent = true; return; }
+      throw new HttpsError('already-exists', 'Esta tentativa de lançamento já foi utilizada.');
+    }
+    if (existing.exists && (existing.data()?.sourceOrderId || existing.data()?.sourceLocalSaleId)) throw new HttpsError('failed-precondition', 'Lançamentos automáticos não podem ser editados manualmente.');
+    const now = FieldValue.serverTimestamp();
+    const updatedByUid = request.auth!.uid;
+    const updatedByEmail = typeof request.auth?.token.email === 'string' ? request.auth.token.email : null;
+    const entry = { kind: input.kind, category: input.category, description: input.description, amountCents: input.amountCents, date: input.date, status: input.status, orderNumber: input.orderNumber || null, notes: input.notes || null, clientRequestId: input.clientRequestId, updatedByUid, updatedByEmail, updatedAt: now };
+    if (existing.exists) transaction.update(entryRef, entry);
+    else transaction.create(entryRef, { ...entry, createdByUid: updatedByUid, createdAt: now });
+  });
+  return { entryId: entryRef.id, updated: Boolean(input.id), idempotent };
+});
+
+const financeStatusSchema = z.object({ id: z.string().min(1).max(128), status: z.enum(['PAID', 'PENDING']) });
+export const updateFinanceStatus = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin']);
+  const parsed = financeStatusSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Situação financeira inválida.');
+  const entryRef = db.doc(`financeEntries/${parsed.data.id}`);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(entryRef);
+    if (!snapshot.exists) throw new HttpsError('not-found', 'Lançamento não encontrado.');
+    if (snapshot.data()?.sourceOrderId || snapshot.data()?.sourceLocalSaleId) throw new HttpsError('failed-precondition', 'Lançamentos automáticos não podem ser alterados manualmente.');
+    transaction.update(entryRef, { status: parsed.data.status, updatedByUid: request.auth!.uid, updatedByEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, updatedAt: FieldValue.serverTimestamp() });
+  });
+  return { ok: true };
+});
 
 export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   await requireRole(request.auth?.uid, ['admin', 'staff']);
@@ -432,6 +486,9 @@ const updateDetailsSchema = z.object({
     address: z.object({ street: z.string().trim().min(2).max(120), number: z.string().trim().min(1).max(20), complement: z.string().trim().max(80).optional(), neighborhood: z.string().trim().min(2).max(80), reference: z.string().trim().max(120).optional() }).optional(),
   }),
   notes: z.string().trim().max(500).optional(),
+  items: z.array(itemSchema).min(1).max(30).optional(),
+  fulfillment: z.object({ mode: z.enum(['PICKUP', 'DELIVERY']), zoneId: z.string().max(100).optional() }).optional(),
+  payment: z.object({ method: z.enum(['PIX', 'CARD', 'CASH']), needsChange: z.boolean(), changeForCents: z.number().int().min(0).max(1_000_000).optional() }).optional(),
 });
 export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   await requireRole(request.auth?.uid, ['admin', 'staff']);
@@ -441,6 +498,7 @@ export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '
   let whatsapp: string;
   try { whatsapp = normalizePhone(input.customer.whatsapp); } catch (cause) { throw new HttpsError('invalid-argument', cause instanceof Error ? cause.message : 'WhatsApp inválido.'); }
   const orderRef = db.doc(`orders/${input.orderId}`);
+  const catalogData = input.items || input.fulfillment ? await loadCatalog() : null;
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(orderRef);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
@@ -448,11 +506,83 @@ export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '
     if (!['NEW', 'CONFIRMED'].includes(current)) throw new HttpsError('failed-precondition', 'Este pedido não pode mais ser editado porque já entrou em preparo.');
     const data = snapshot.data()!;
     const previous = { customer: data.customer, notes: data.notes ?? '', items: data.items ?? [], pricing: data.pricing, fulfillment: data.fulfillment, payment: data.payment };
-    const proposal = { status: 'PENDING', summary: 'A loja ajustou os dados do pedido. Confira e escolha se concorda.', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, before: { items: previous.items, pricing: { totalCents: previous.pricing.totalCents }, fulfillment: { mode: previous.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } } };
-    transaction.update(orderRef, { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', customerEditApproval: { status: 'PENDING', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, previous }, updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid });
-    transaction.set(db.doc(`publicOrders/${String(data.publicCode || input.orderId)}`), { editProposal: proposal, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    const nextFulfillment = input.fulfillment ?? data.fulfillment;
+    if (!nextFulfillment || !['PICKUP', 'DELIVERY'].includes(nextFulfillment.mode)) throw new HttpsError('failed-precondition', 'Forma de recebimento inválida.');
+    if (nextFulfillment.mode === 'DELIVERY' && !input.customer.address) throw new HttpsError('invalid-argument', 'Endereço obrigatório para delivery.');
+    let nextItems: PricedItem[] = Array.isArray(data.items) ? data.items as PricedItem[] : [];
+    let nextPricing = data.pricing;
+    if (catalogData) {
+      if (!catalogData.config.fulfillmentModes.includes(nextFulfillment.mode)) throw new HttpsError('failed-precondition', 'Forma de recebimento indisponível.');
+      if (input.items) {
+        try { nextItems = calculateCartPreview(input.items.map((item, index) => ({ ...item, cartItemId: String(index) })), catalogData.catalog).items; }
+        catch (cause) { throw new HttpsError('failed-precondition', cause instanceof Error ? cause.message : 'Itens inválidos.'); }
+      }
+      let deliveryFeeCents: number;
+      try { deliveryFeeCents = calculateDeliveryFee(catalogData.config.deliveryConfig, nextFulfillment.mode, nextFulfillment.zoneId); }
+      catch (cause) { throw new HttpsError('failed-precondition', cause instanceof Error ? cause.message : 'Delivery inválido.'); }
+      const subtotalCents = input.items ? nextItems.reduce((sum, item) => sum + item.totalPriceCents, 0) : Number(data.pricing?.subtotalCents ?? 0);
+      nextPricing = { ...data.pricing, subtotalCents, deliveryFeeCents, totalCents: subtotalCents + deliveryFeeCents, currency: 'BRL' };
+    }
+    const nextPayment = input.payment ?? data.payment;
+    if (nextPayment?.method !== 'CASH' && (nextPayment?.needsChange || nextPayment?.changeForCents !== undefined)) throw new HttpsError('invalid-argument', 'Troco só pode ser informado para dinheiro.');
+    if (nextPayment?.method === 'CASH' && nextPayment.needsChange && (nextPayment.changeForCents === undefined || nextPayment.changeForCents < nextPricing.totalCents)) throw new HttpsError('invalid-argument', 'O valor para troco precisa ser igual ou maior que o total do pedido.');
+    const finalFulfillment = catalogData && input.fulfillment ? { ...nextFulfillment, deliveryFeePending: nextFulfillment.mode === 'DELIVERY' && catalogData.config.deliveryConfig.mode === 'CONFIRM' } : nextFulfillment;
+    const changes = [input.items ? 'itens e total' : '', input.fulfillment ? 'forma de recebimento' : '', input.payment ? 'pagamento' : '', 'dados do cliente'].filter(Boolean);
+    const proposal = { status: 'PENDING', summary: `A loja ajustou ${changes.join(', ')}. Confira e escolha se concorda.`, requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, before: { items: previous.items, pricing: { totalCents: previous.pricing.totalCents }, fulfillment: { mode: previous.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } } };
+    const orderUpdate = { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', customerEditApproval: { status: 'PENDING', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, previous }, updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid, ...(input.items ? { items: nextItems } : {}), ...(catalogData && (input.items || input.fulfillment) ? { pricing: nextPricing } : {}), ...(input.fulfillment ? { fulfillment: finalFulfillment } : {}), ...(input.payment ? { payment: nextPayment } : {}) };
+    transaction.update(orderRef, orderUpdate);
+    transaction.set(db.doc(`publicOrders/${String(data.publicCode || input.orderId)}`), { editProposal: proposal, updatedAt: FieldValue.serverTimestamp(), ...(input.items ? { items: nextItems } : {}), ...(catalogData && (input.items || input.fulfillment) ? { pricing: { totalCents: nextPricing.totalCents } } : {}), ...(input.fulfillment ? { fulfillment: { mode: finalFulfillment.mode } } : {}) }, { merge: true });
   });
   logger.info('updateOrderDetails completed', { orderId: input.orderId, actorUid: request.auth?.uid });
+  return { ok: true };
+});
+
+const finalizeEditSchema = z.object({ orderId: z.string().min(1).max(128), decision: z.enum(['ACCEPTED', 'REJECTED']) });
+export const finalizeOrderEdit = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = finalizeEditSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Decisão de edição inválida.');
+  const { orderId, decision } = parsed.data;
+  const orderRef = db.doc(`orders/${orderId}`);
+  await db.runTransaction(async (transaction) => {
+    const orderSnapshot = await transaction.get(orderRef);
+    if (!orderSnapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    const current = orderSnapshot.data()!;
+    const approval = current.customerEditApproval;
+    if (!approval || approval.status !== 'PENDING') throw new HttpsError('failed-precondition', 'Não há alteração aguardando decisão.');
+    const publicCode = String(current.publicCode || orderId);
+    const publicRef = db.doc(`publicOrders/${publicCode}`);
+    const publicSnapshot = await transaction.get(publicRef);
+    const proposal = publicSnapshot.exists ? publicSnapshot.data()?.editProposal : null;
+    if (!proposal || proposal.status !== decision) throw new HttpsError('failed-precondition', 'A decisão do cliente ainda não foi registrada.');
+    const common = { customerEditApproval: { ...approval, status: decision, decidedAt: FieldValue.serverTimestamp() }, updatedAt: FieldValue.serverTimestamp() };
+    if (decision === 'REJECTED') {
+      transaction.update(orderRef, { ...common, customer: approval.previous.customer, notes: approval.previous.notes, items: approval.previous.items, pricing: approval.previous.pricing, fulfillment: approval.previous.fulfillment, payment: approval.previous.payment });
+      transaction.set(publicRef, { items: proposal.before.items, pricing: proposal.before.pricing, fulfillment: proposal.before.fulfillment, editProposal: { ...proposal, status: 'REJECTED', respondedAt: FieldValue.serverTimestamp() }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    } else {
+      transaction.update(orderRef, common);
+      transaction.set(publicRef, { editProposal: { ...proposal, status: 'ACCEPTED', respondedAt: FieldValue.serverTimestamp() }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
+  });
+  return { ok: true };
+});
+
+const estimateSchema = z.object({ orderId: z.string().min(1).max(128), estimatedMinutes: z.number().int().min(5).max(240) });
+export const updateOrderEstimate = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = estimateSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Previsão inválida.');
+  const { orderId, estimatedMinutes } = parsed.data;
+  const orderRef = db.doc(`orders/${orderId}`);
+  await db.runTransaction(async (transaction) => {
+    const snapshot = await transaction.get(orderRef);
+    if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    if (['COMPLETED', 'CANCELLED'].includes(String(snapshot.data()?.status))) throw new HttpsError('failed-precondition', 'Este pedido não aceita mais alterações.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(orderRef, { estimatedMinutes, estimatedUpdatedAt: now, updatedAt: now });
+    const publicCode = String(snapshot.data()?.publicCode || orderId);
+    transaction.set(db.doc(`publicOrders/${publicCode}`), { estimatedMinutes, estimatedUpdatedAt: now, updatedAt: now }, { merge: true });
+  });
   return { ok: true };
 });
 

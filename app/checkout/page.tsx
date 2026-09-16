@@ -8,7 +8,6 @@ import { PublicHeader } from '@/components/public-header';
 import { useCart, useCatalog } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
-import { createDirectOrder, isFunctionsUnavailable } from '@/lib/direct-orders';
 import { calculateCartPreview, calculateDeliveryFee, formatBRL, formatNextOpening, getStoreAvailability, type FulfillmentMode } from '@/shared/domain';
 
 const paymentLabels = { PIX: 'Pix', CARD: 'Cartão na entrega', CASH: 'Dinheiro' } as const;
@@ -83,9 +82,6 @@ export default function CheckoutPage() {
 
     const clientRequestId = sessionStorage.getItem('acai-checkout-request-id') ?? crypto.randomUUID();
     sessionStorage.setItem('acai-checkout-request-id', clientRequestId);
-    const directCodeKey = `acai-direct-public-code:${clientRequestId}`;
-    const directPublicCode = sessionStorage.getItem(directCodeKey) ?? crypto.randomUUID().replace(/-/g, '');
-    sessionStorage.setItem(directCodeKey, directPublicCode);
     const payload = {
       clientRequestId,
       customer: {
@@ -114,30 +110,11 @@ export default function CheckoutPage() {
 
     setSubmitting(true);
     try {
-      let response: { data: { publicCode: string; orderNumber: string; totalCents: number } };
-      const usesLegacyBeverageOptions = payload.items.some((item) => item.productId === 'refrigerante' && (item.sizeId !== 'unico' || item.selections.some((selection) => selection.groupId === 'sabores-refrigerante')));
-      const saveDirect = async () => {
-        const orderNumber = `#A${new Intl.DateTimeFormat('en-GB', { timeZone: 'America/Sao_Paulo', year: '2-digit', month: '2-digit', day: '2-digit' }).format(new Date()).replace(/\//g, '')}${directPublicCode.slice(-4).toUpperCase()}`;
-        await createDirectOrder(getFirebaseClient().db, { clientRequestId, publicCode: directPublicCode, orderNumber, customer: { name: fields.name.trim(), whatsapp: fields.whatsapp, ...(fulfillment === 'DELIVERY' ? { address: { street: fields.street.trim(), number: fields.number.trim(), complement: fields.complement.trim(), neighborhood: fields.neighborhood.trim(), reference: fields.reference.trim() } } : {}) }, items: preview.items, fulfillment: { mode: fulfillment, ...(zoneId ? { zoneId } : {}) }, payment: { method: paymentMethod, needsChange: paymentMethod === 'CASH' ? Boolean(needsChange) : false, ...(paymentMethod === 'CASH' && needsChange ? { changeForCents } : {}) }, notes: fields.orderNotes, subtotalCents: preview.subtotalCents, deliveryFeeCents: deliveryFee, totalCents, estimatedMinutes: config.orderEstimateMinutes ?? 15 });
-        return { publicCode: directPublicCode, orderNumber, totalCents };
-      };
-      if (usesLegacyBeverageOptions) {
-        // A versão gratuita do catálogo pode enriquecer o refrigerante no navegador.
-        // Nesse caso gravamos pelo mesmo fallback direto para preservar sabor, ml e preço.
-        response = { data: await saveDirect() };
-      } else {
-        const { functions } = getFirebaseClient();
-        const createOrder = httpsCallable<typeof payload, { publicCode: string; orderNumber: string; totalCents: number }>(functions, 'createOrder');
-        try {
-          response = await createOrder(payload);
-        } catch (cause) {
-          if (!isFunctionsUnavailable(cause)) throw cause;
-          response = { data: await saveDirect() };
-        }
-      }
+      const { functions } = getFirebaseClient();
+      const createOrder = httpsCallable<typeof payload, { publicCode: string; orderNumber: string; totalCents: number }>(functions, 'createOrder');
+      const response = await createOrder(payload);
       cart.clear();
       sessionStorage.removeItem('acai-checkout-request-id');
-      sessionStorage.removeItem(directCodeKey);
       window.location.href = `/pedido/${response.data.publicCode}?novo=1`;
     } catch (cause: unknown) {
       const rawMessage = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';

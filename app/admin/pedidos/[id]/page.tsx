@@ -1,7 +1,6 @@
 'use client';
 
-import { doc, onSnapshot, serverTimestamp, setDoc, Timestamp, updateDoc } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -20,7 +19,7 @@ import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
-import { finalizeOrderEditDirect, isFunctionsUnavailable, updateOrderDetailsDirect, updateOrderStatusDirect, type CustomerEditDecision, type PublicOrderEditProposal } from '@/lib/direct-orders';
+import { finalizeOrderEditDirect, updateOrderDetailsDirect, updateOrderEstimateDirect, updateOrderStatusDirect, type CustomerEditDecision, type PublicOrderEditProposal } from '@/lib/direct-orders';
 import { useCatalog } from '@/components/providers';
 import {
   calculateCartPreview,
@@ -140,16 +139,9 @@ export default function OrderDetailPage() {
         setNotice('Pedido estornado e cancelado. O financeiro e o Caixa foram atualizados juntos.');
       } else if (needsFinalize) {
         // A resposta pública já foi dada: registra o aceite privado antes da transição.
-        await finalizeOrderEditDirect(getFirebaseClient().db, order.id, 'ACCEPTED');
+        await finalizeOrderEditDirect(getFirebaseClient().functions, order.id, 'ACCEPTED');
       } else {
-        const callable = httpsCallable(getFirebaseClient().functions, 'updateOrderStatus');
-        try {
-          await callable({ orderId: order.id, status, ...(reason ? { reason } : {}) });
-        } catch (cause) {
-          if (!isFunctionsUnavailable(cause)) throw cause;
-          if (status === 'COMPLETED') throw new Error('O backend financeiro precisa estar disponível para concluir o pedido.');
-          await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
-        }
+        await updateOrderStatusDirect(getFirebaseClient().functions, order.id, status, reason);
         setNotice(status === 'COMPLETED' ? 'Pedido concluído e registrado em Finanças e no Caixa.' : status === 'CANCELLED' ? 'Pedido cancelado.' : status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
       }
       setCancelOpen(false);
@@ -202,11 +194,9 @@ export default function OrderDetailPage() {
             : {}),
         };
       }
-      const actorUid = getFirebaseClient().auth.currentUser?.uid;
-      if (!actorUid) throw new Error('Sessão administrativa expirada. Entre novamente.');
       if (editFulfillmentMode === 'DELIVERY' && (!customer.address?.street || !customer.address.number || !customer.address.neighborhood)) throw new Error('Preencha o endereço para delivery.');
       const changeForCents = editPaymentMethod === 'CASH' && editChangeFor.trim() ? parseCurrencyToCents(editChangeFor) : null;
-      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } }, actorUid);
+      await updateOrderDetailsDirect(getFirebaseClient().functions, order.id, { customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } });
       setEditOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
@@ -245,11 +235,8 @@ export default function OrderDetailPage() {
     if (!order) return;
     setBusy(true); setItemsError(''); setError('');
     try {
-      const preview = calculateCartPreview(itemDrafts, catalog);
-      const actorUid = getFirebaseClient().auth.currentUser?.uid;
-      if (!actorUid) throw new Error('Sessão administrativa expirada. Entre novamente.');
-      const pricing = { subtotalCents: preview.subtotalCents, deliveryFeeCents: order.pricing.deliveryFeeCents, totalCents: preview.subtotalCents + order.pricing.deliveryFeeCents };
-      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer: order.customer, notes: order.notes ?? '', items: preview.items, pricing }, actorUid);
+      calculateCartPreview(itemDrafts, catalog);
+      await updateOrderDetailsDirect(getFirebaseClient().functions, order.id, { customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } });
       setItemsOpen(false);
     } catch (cause) {
       setItemsError(cause instanceof Error ? cause.message : 'Confira os itens e tente novamente.');
@@ -258,7 +245,7 @@ export default function OrderDetailPage() {
   async function finalizeEdit(decision: CustomerEditDecision) {
     if (!order) return;
     setBusy(true); setError('');
-    try { await finalizeOrderEditDirect(getFirebaseClient().db, order.id, decision); }
+    try { await finalizeOrderEditDirect(getFirebaseClient().functions, order.id, decision); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível registrar a decisão.'); }
     finally { setBusy(false); }
   }
@@ -269,9 +256,7 @@ export default function OrderDetailPage() {
     if (!Number.isSafeInteger(minutes) || minutes < 5 || minutes > 240) { setError('Informe uma previsão entre 5 e 240 minutos.'); return; }
     setBusy(true); setError('');
     try {
-      const db = getFirebaseClient().db;
-      await updateDoc(doc(db, 'orders', order.id), { estimatedMinutes: minutes, estimatedUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() });
-      if (order.publicCode) await setDoc(doc(db, 'publicOrders', order.publicCode), { estimatedMinutes: minutes, estimatedUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+      await updateOrderEstimateDirect(getFirebaseClient().functions, order.id, minutes);
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar a previsão.'); }
     finally { setBusy(false); }
   }

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, setDoc, collection } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, collection, Timestamp } from 'firebase/firestore';
 import { afterAll, beforeAll, describe, it } from 'vitest';
 
 let env: RulesTestEnvironment;
@@ -45,6 +45,9 @@ describe('Firestore Rules deny by default', () => {
     await assertSucceeds(setDoc(doc(db, 'products', 'new'), { active: true, displayOrder: 2 }));
     await assertSucceeds(setDoc(doc(db, 'storePublicConfig', 'main'), { orderingEnabled: true }));
     await assertFails(setDoc(doc(db, 'orders', 'bypass'), { status: 'COMPLETED' }));
+    await assertFails(setDoc(doc(db, 'financeEntries', 'manual'), { kind: 'EXPENSE', category: 'Insumos', description: 'Frutas', amountCents: 1200, date: '2026-09-16', status: 'PAID', orderNumber: null, notes: null, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertFails(setDoc(doc(db, 'financeEntries', 'forged-source'), { kind: 'INCOME', category: 'Vendas de açaí', description: 'Fraude', amountCents: 999999, date: '2026-09-16', status: 'PAID', sourceOrderId: 'secret', createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertFails(setDoc(doc(db, 'publicOrders', 'spoofed'), { publicCode: 'spoofed', status: 'NEW', orderNumber: '#HACK', items: [{ productId: 'x' }], pricing: { totalCents: 1 } }));
     await assertFails(setDoc(doc(db, 'integrationConfig', 'saipos'), { mappings: {} }));
   });
 });

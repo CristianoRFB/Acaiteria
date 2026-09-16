@@ -35,6 +35,7 @@ export interface CashMovement {
   paymentMethod?: CashPaymentMethod;
   orderNumber?: string;
   sourceOrderId?: string;
+  sourceLocalSaleId?: string;
   operatorUid: string;
   operatorEmail?: string;
   note?: string;
