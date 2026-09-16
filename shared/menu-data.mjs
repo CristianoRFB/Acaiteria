@@ -30,7 +30,7 @@ const modifierImage = (id) => {
   const exact = {
     'base-acai': 'acai', 'base-cupuacu': 'cupuacu', 'base-iogurte': 'iogurte', 'base-graviola': 'iogurte', 'base-pitaya': 'pitaya', 'base-acai-zero': 'acai',
     'mousse-morango': 'mousse-morango', 'mousse-chocolate': 'mousse-chocolate', 'mousse-maracuja': 'mousse-maracuja', 'diverso-leite-condensado': 'leite-condensado',
-    'fruta-banana': 'banana', 'fruta-morango': 'morango', 'fruta-kiwi': 'kiwi', 'fruta-manga': 'manga', 'granola-tradicional': 'granola', 'chocolate-granulado': 'granulado', 'chocolate-oreo': 'oreo', 'diverso-creme-pistache': 'pistache',
+    'fruta-abacaxi': 'abacaxi', 'fruta-banana': 'banana', 'fruta-cereja': 'cereja', 'fruta-mamao': 'mamao', 'fruta-morango': 'morango', 'fruta-kiwi': 'kiwi', 'fruta-manga': 'manga', 'fruta-pessego': 'pessego', 'fruta-uva': 'uva', 'granola-tradicional': 'granola', 'chocolate-granulado': 'granulado', 'chocolate-oreo': 'oreo', 'diverso-creme-pistache': 'pistache',
   }[id];
   if (exact) return `/menu/ingredients/${exact}.jpg`;
   if (id.startsWith('mousse-')) return '/menu/ingredients/mousse-morango.jpg';

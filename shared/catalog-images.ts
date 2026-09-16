@@ -26,9 +26,14 @@ const modifierImages: Record<string, string> = {
   'mousse-maracuja': '/menu/ingredients/mousse-maracuja.jpg',
   'diverso-leite-condensado': '/menu/ingredients/leite-condensado.jpg',
   'fruta-banana': '/menu/ingredients/banana.jpg',
+  'fruta-abacaxi': '/menu/ingredients/abacaxi.jpg',
+  'fruta-cereja': '/menu/ingredients/cereja.jpg',
   'fruta-morango': '/menu/ingredients/morango.jpg',
   'fruta-kiwi': '/menu/ingredients/kiwi.jpg',
+  'fruta-mamao': '/menu/ingredients/mamao.jpg',
   'fruta-manga': '/menu/ingredients/manga.jpg',
+  'fruta-pessego': '/menu/ingredients/pessego.jpg',
+  'fruta-uva': '/menu/ingredients/uva.jpg',
   'granola-tradicional': '/menu/ingredients/granola.jpg',
   'chocolate-granulado': '/menu/ingredients/granulado.jpg',
   'chocolate-oreo': '/menu/ingredients/oreo.jpg',
@@ -40,6 +45,7 @@ export function resolveProductImage(id: string, current?: string): string {
 }
 
 export function resolveModifierImage(id: string, current?: string): string {
+  if (modifierImages[id] && (!current || current === '/menu/ingredients/morango.jpg')) return modifierImages[id];
   if (current) return current;
   if (modifierImages[id]) return modifierImages[id];
   if (id.startsWith('base-')) return '/menu/ingredients/acai.jpg';
