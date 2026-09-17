@@ -33,11 +33,12 @@ describe('createOrder no Emulator Suite', () => {
     const response = await call({ ...basePayload, clientRequestId, items: [{ ...basePayload.items[0], clientTotal: 1, basePriceCents: 1 }] });
     expect(response.status).toBe(200);
     expect(response.body.result?.totalCents).toBe(1800);
-    expect(String(response.body.result?.publicCode)).toHaveLength(22);
+    expect(String(response.body.result?.publicCode)).toHaveLength(32);
     const snapshot = await db.collection('orders').where('clientRequestId', '==', clientRequestId).get();
     expect(snapshot.size).toBe(1);
     expect(snapshot.docs[0].data().items[0].unitPriceCents).toBe(1800);
     expect(snapshot.docs[0].data().status).toBe('NEW');
+    expect(snapshot.docs[0].data().pricingVerification).toEqual({ status: 'VERIFIED', source: 'SERVER' });
   });
   it('impede pedido duplicado na repetição do mesmo request id', async () => {
     const clientRequestId = crypto.randomUUID();

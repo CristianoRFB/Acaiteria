@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
@@ -69,9 +69,9 @@ async function loadCatalog(): Promise<{ catalog: CatalogSnapshot; config: StoreP
 
 function makeOrderNumber(now = new Date(), timeZone = 'America/Sao_Paulo'): string {
   const day = new Intl.DateTimeFormat('en-CA', { timeZone, year: '2-digit', month: '2-digit', day: '2-digit' }).format(now).replace(/-/g, '');
-  return `#A${day}${randomBytes(2).toString('hex').toUpperCase()}`;
+  return `#A${day}${randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()}`;
 }
-function makePublicCode(): string { return randomBytes(16).toString('base64url'); }
+function makePublicCode(): string { return randomUUID().replace(/-/g, ''); }
 function requestIdFrom(data: unknown): string { return typeof data === 'object' && data && 'clientRequestId' in data ? String((data as { clientRequestId?: unknown }).clientRequestId).slice(0, 80) : 'unknown'; }
 
 export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB', enforceAppCheck }, async (request) => {
@@ -130,6 +130,7 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
     fulfillment: { ...input.fulfillment, deliveryFeePending: input.fulfillment.mode === 'DELIVERY' && config.deliveryConfig.mode === 'CONFIRM' },
     payment: input.payment,
     pricing: { subtotalCents: cart.subtotalCents, deliveryFeeCents, totalCents, currency: 'BRL' },
+    pricingVerification: { status: 'VERIFIED', source: 'SERVER' },
     status: 'NEW' as OrderStatus,
     source: input.source,
     integration: { provider: configuredMode(), status: 'PENDING', attemptCount: 0 },
@@ -146,7 +147,7 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
       finalOrderId = idempotency.data()?.orderId as string; return;
     }
     transaction.create(orderRef, orderData);
-    transaction.create(db.doc(`publicOrders/${publicCode}`), { orderNumber, publicCode, createdAt: now, updatedAt: now, items: cart.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes: orderData.estimatedMinutes, integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
+    transaction.create(db.doc(`publicOrders/${publicCode}`), { orderNumber, publicCode, createdAt: now, updatedAt: now, items: cart.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes: orderData.estimatedMinutes, pricingReviewStatus: 'VERIFIED', integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
     transaction.create(requestRef, { orderId: orderRef.id, requestHash, createdAt: now });
   });
   if (finalOrderId !== orderRef.id) {
@@ -398,6 +399,7 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Operação e cancelamento devem ser realizados no Saipos. Sincronização de status ainda não homologada.');
     const current = snapshot.data()?.status as OrderStatus;
     if (snapshot.data()?.customerEditApproval?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Aguardando a aprovação do cliente para continuar este pedido.');
+    if (status === 'CONFIRMED' && snapshot.data()?.pricingVerification?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Confira itens e total antes de confirmar este pedido.');
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
     let completionRegister: DocumentSnapshot | null = null;
     let completionFinance: DocumentSnapshot | null = null;

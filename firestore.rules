@@ -5,92 +5,29 @@ service cloud.firestore {
     function userRole() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
     function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
     function isAdmin() { return userRole() == 'admin'; }
-    function validProduct(data) {
-      return data.name is string
-        && data.slug is string
-        && data.description is string
-        && data.active is bool
-        && data.categoryId is string
-        && data.productType in ['CUSTOMIZABLE', 'SIMPLE']
-        && data.displayOrder is int
-        && data.sizes is list
-        && data.modifierGroupIds is list;
-    }
-    match /storePublicConfig/{id} {
-      allow read: if true;
-      allow create, update, delete: if isAdmin();
-    }
-    match /storePrivateConfig/{id} {
-      allow read, write: if isAdmin();
-    }
-    match /categories/{id} {
-      allow read: if isStaff() || resource.data.active == true;
-      allow create, update, delete: if isAdmin();
-    }
-    match /products/{id} {
-      allow read: if isStaff() || resource.data.active == true;
-      allow create, update: if isAdmin() && validProduct(request.resource.data);
-      allow delete: if isAdmin();
-    }
-    match /modifierGroups/{id} {
-      allow read: if isStaff() || resource.data.active == true;
-      allow create, update, delete: if isAdmin();
-    }
-    match /modifiers/{id} {
-      allow read: if isStaff() || resource.data.active == true;
-      allow create, update, delete: if isAdmin();
-    }
-    match /promotions/{id} {
-      allow read: if isStaff() || resource.data.active == true;
-      allow create, update, delete: if isAdmin();
-    }
-    match /financeEntries/{id} {
-      allow read: if isStaff();
-      // Todo lançamento, inclusive manual, passa pelo backend autenticado.
-      allow write: if false;
-    }
-    match /cashControl/{id} {
-      allow read: if isStaff();
-      allow write: if false;
-    }
-    match /cashRegisters/{id} {
-      allow read: if isStaff();
-      allow write: if false;
-    }
-    match /cashMovements/{id} {
-      allow read: if isStaff();
-      allow write: if false;
-    }
-    match /orders/{id} {
-      allow read: if isStaff();
-      // O backend valida catálogo, preço, disponibilidade e efeitos financeiros.
-      allow create, update, delete: if false;
-    }
+    function validProduct(data) { return data.name is string && data.slug is string && data.description is string && data.active is bool && data.categoryId is string && data.productType in ['CUSTOMIZABLE', 'SIMPLE'] && data.displayOrder is int && data.sizes is list && data.modifierGroupIds is list; }
+    match /storePublicConfig/{id} { allow read: if true; allow create, update, delete: if isAdmin(); }
+    match /storePrivateConfig/{id} { allow read, write: if isAdmin(); }
+    match /categories/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
+    match /products/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update: if isAdmin() && validProduct(request.resource.data); allow delete: if isAdmin(); }
+    match /modifierGroups/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
+    match /modifiers/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
+    match /promotions/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
+    match /financeEntries/{id} { allow read: if isStaff(); allow write: if false; }
+    match /cashControl/{id} { allow read: if isStaff(); allow write: if false; }
+    match /cashRegisters/{id} { allow read: if isStaff(); allow write: if false; }
+    match /cashMovements/{id} { allow read: if isStaff(); allow write: if false; }
+    match /orders/{id} { allow read: if isStaff(); allow create, update, delete: if false; }
     match /publicOrders/{id} {
       allow read: if true;
-      // O backend controla criação, status e espelho do pedido.
       allow create: if false;
-      // O cliente anônimo só pode responder a uma proposta pendente.
-      allow update: if !signedIn()
-        && resource.data.publicCode == id
-        && resource.data.editProposal is map
-        && resource.data.editProposal.status == 'PENDING'
-        && request.resource.data.editProposal is map
-        && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED']
-        && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt'])
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']);
+      allow update: if !signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']);
       allow delete: if false;
     }
-    match /users/{uid} {
-      allow read: if signedIn() && (request.auth.uid == uid || isAdmin());
-      allow write: if isAdmin();
-    }
+    match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if isAdmin(); }
     match /orderRequests/{id} { allow read, write: if false; }
     match /integrationConfig/{id} { allow read, write: if false; }
-    match /orders/{id}/integrationAttempts/{attempt} {
-      allow read: if isStaff();
-      allow write: if false;
-    }
+    match /orders/{id}/integrationAttempts/{attempt} { allow read: if isStaff(); allow write: if false; }
     match /{document=**} { allow read, write: if false; }
   }
 }

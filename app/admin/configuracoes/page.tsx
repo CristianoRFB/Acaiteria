@@ -17,13 +17,18 @@ import {
   resetAdminTutorial,
   type AdminTutorialProgress,
 } from '@/lib/admin-tutorials';
-import type { StoreDayHours, StoreHoursWindow, StorePublicConfig } from '@/shared/domain';
+import type { DeliveryZone, StoreDayHours, StoreHoursWindow, StorePublicConfig } from '@/shared/domain';
 import { normalizeStoreConfig } from '@/shared/store-config';
 
 const fallbackHours: StoreDayHours[] = [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, closed: true, windows: [] }));
 const defaultHolidayHours: StoreHoursWindow[] = [{ open: '15:00', close: '21:50' }];
 const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
 const dayNames = ['Domingo', 'Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado'];
+type ZoneDraft = { id: string; name: string; fee: string; active: boolean };
+function zoneId(value: string, index: number) {
+  const normalized = value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+  return normalized ? `zona-${normalized}-${index + 1}` : `zona-${index + 1}`;
+}
 
 export default function SettingsPage() {
   const { role, user } = useAuth();
@@ -35,6 +40,8 @@ export default function SettingsPage() {
   const [holidayHoursDraft, setHolidayHoursDraft] = useState<StoreHoursWindow[]>(defaultHolidayHours);
   const [holidayDateInput, setHolidayDateInput] = useState('');
   const [tutorialProgress, setTutorialProgress] = useState<AdminTutorialProgress>({});
+  const [deliveryMode, setDeliveryMode] = useState<StorePublicConfig['deliveryConfig']['mode']>('FIXED');
+  const [zonesDraft, setZonesDraft] = useState<ZoneDraft[]>([]);
 
   useEffect(() => {
     if (!hasFirebaseConfig || role !== 'admin') return;
@@ -56,6 +63,8 @@ export default function SettingsPage() {
     setHoursDraft((config.hours?.length === 7 ? config.hours : fallbackHours).map((day) => ({ ...day, windows: day.windows.map((window) => ({ ...window })) })));
     setHolidayDatesDraft([...(config.holidayDates ?? [])]);
     setHolidayHoursDraft(config.holidayHours?.length ? config.holidayHours.map((window) => ({ ...window })) : defaultHolidayHours);
+    setDeliveryMode(config.deliveryConfig.mode);
+    setZonesDraft((config.deliveryConfig.zones ?? []).map((zone) => ({ id: zone.id, name: zone.name, fee: (zone.feeCents / 100).toFixed(2).replace('.', ','), active: zone.active })));
   }, [config]);
 
   function updateDay(day: number, value: Partial<StoreDayHours>) { setHoursDraft((old) => old.map((item) => item.day === day ? { ...item, ...value } : item)); }
@@ -64,6 +73,8 @@ export default function SettingsPage() {
   function removeWindow(day: number, index: number) { setHoursDraft((old) => old.map((item) => item.day === day ? { ...item, windows: item.windows.filter((_, windowIndex) => windowIndex !== index) } : item)); }
   function addHolidayDate() { if (!/^\d{4}-\d{2}-\d{2}$/.test(holidayDateInput) || holidayDatesDraft.includes(holidayDateInput)) return; setHolidayDatesDraft((old) => [...old, holidayDateInput].sort()); setHolidayDateInput(''); }
   function updateHolidayWindow(index: number, value: Partial<StoreHoursWindow>) { setHolidayHoursDraft((old) => old.map((window, windowIndex) => windowIndex === index ? { ...window, ...value } : window)); }
+  function updateZone(index: number, value: Partial<ZoneDraft>) { setZonesDraft((old) => old.map((zone, zoneIndex) => zoneIndex === index ? { ...zone, ...value } : zone)); }
+  function addZone() { setZonesDraft((old) => [...old, { id: '', name: '', fee: '0,00', active: true }]); }
 
   async function save(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,13 +86,19 @@ export default function SettingsPage() {
       const hours = JSON.parse(String(data.get('hours') || '[]')) as StoreDayHours[];
       const holidayDates = JSON.parse(String(data.get('holidayDates') || '[]')) as string[];
       const holidayHours = JSON.parse(String(data.get('holidayHours') || '[]')) as StoreHoursWindow[];
-      const zones = JSON.parse(String(data.get('zones') || '[]'));
       if (!Array.isArray(hours) || hours.length !== 7) throw new Error('Horários devem conter os 7 dias.');
       if (!Array.isArray(holidayDates) || holidayDates.some((date) => typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date))) throw new Error('Feriados devem usar datas no formato AAAA-MM-DD.');
       if (!Array.isArray(holidayHours) || !holidayHours.length || holidayHours.some((window) => !timePattern.test(window.open) || !timePattern.test(window.close))) throw new Error('Janelas dos feriados inválidas. Use HH:mm.');
       const deliveryMode = String(data.get('deliveryMode')) as StorePublicConfig['deliveryConfig']['mode'];
       const fixedFeeCents = parseCurrencyToCents(String(data.get('fixedFee') ?? ''));
       if (deliveryMode === 'FIXED' && fixedFeeCents === null) throw new Error('Informe uma taxa válida em reais.');
+      const zones: DeliveryZone[] = zonesDraft.map((zone, index) => {
+        const name = zone.name.trim();
+        const feeCents = parseCurrencyToCents(zone.fee);
+        if (!name || feeCents === null) throw new Error(`Confira o bairro e a taxa da região ${index + 1}.`);
+        return { id: zone.id || zoneId(name, index), name, feeCents, active: zone.active };
+      });
+      if (deliveryMode === 'ZONES' && !zones.length) throw new Error('Adicione pelo menos uma região de entrega.');
       const orderEstimateMinutes = Number(data.get('orderEstimateMinutes'));
       if (!Number.isSafeInteger(orderEstimateMinutes) || orderEstimateMinutes < 5 || orderEstimateMinutes > 240) throw new Error('A previsão padrão deve ficar entre 5 e 240 minutos.');
 
@@ -148,9 +165,13 @@ export default function SettingsPage() {
         <div className="space-y-4"><AdminTextarea label="Instruções do pedido" name="orderInstructions" defaultValue={config.orderInstructions} /><div className="grid gap-4 sm:grid-cols-2"><AdminField label="Tempo padrão para ficar pronto (minutos)" name="orderEstimateMinutes" type="number" min="5" max="240" defaultValue={config.orderEstimateMinutes ?? 15} /><AdminField label="Prazo de entrega" name="deliveryEstimate" defaultValue={config.deliveryEstimate} /></div><AdminField label="Prazo em dias movimentados" name="busyDeliveryEstimate" defaultValue={config.busyDeliveryEstimate} /><AdminField label="Horário em feriados" name="holidayHoursNote" defaultValue={config.holidayHoursNote} /><AdminTextarea label="Mensagem de agradecimento" name="gratitudeMessage" defaultValue={config.gratitudeMessage} /><p className="text-xs text-[#826a75]">O cliente verá esta previsão no acompanhamento. Use uma estimativa realista; não exibimos contagem regressiva falsa.</p></div>
       </SettingsSection>
 
-      <SettingsSection title="Delivery" description="Se você não entrega, escolha Sem delivery. Caso entregue, selecione como a taxa será combinada.">
-        <div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-bold">Estratégia<select name="deliveryMode" defaultValue={config.deliveryConfig.mode} className="mt-2 h-11 w-full rounded-xl border bg-[#fffaf5] px-3 font-normal"><option value="NONE">Sem delivery</option><option value="CONFIRM">Taxa confirmada depois</option><option value="FIXED">Taxa fixa</option><option value="ZONES">Por bairro/zona</option></select></label><AdminField label="Taxa fixa (R$)" name="fixedFee" type="text" inputMode="decimal" placeholder="Ex.: 4,00" defaultValue={((config.deliveryConfig.fixedFeeCents ?? 0) / 100).toFixed(2).replace('.', ',')} /></div>
-        <details className="mt-4 rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-4"><summary className="cursor-pointer text-sm font-black text-[#82204f]">Configuração avançada por bairro ou zona</summary><p className="mt-2 text-xs leading-relaxed text-[#826a75]">Use somente se a taxa mudar por bairro. Este campo mantém o formato técnico atual para configurações já existentes.</p><div className="mt-3"><AdminTextarea label="Bairros e taxas (configuração avançada)" name="zones" defaultValue={JSON.stringify(config.deliveryConfig.zones ?? [], null, 2)} rows={7} /></div></details>
+      <SettingsSection title="Entrega e taxa">
+        <p className="mb-4 text-sm text-[#6f5360]">Escolha uma forma simples de cobrar a entrega. Os clientes verão o valor antes de confirmar o pedido.</p>
+        <label className="block max-w-md text-sm font-bold">Como cobrar a entrega?<select name="deliveryMode" value={deliveryMode} onChange={(event) => setDeliveryMode(event.target.value as StorePublicConfig['deliveryConfig']['mode'])} className="mt-2 h-11 w-full rounded-xl border bg-[#fffaf5] px-3 font-normal"><option value="NONE">Não faço delivery</option><option value="CONFIRM">Confirmar a taxa depois do pedido</option><option value="FIXED">Uma taxa igual para todos</option><option value="ZONES">Taxa diferente por bairro</option></select></label>
+        {deliveryMode === 'FIXED' && <div className="mt-4 max-w-md"><AdminField label="Taxa de entrega (R$)" name="fixedFee" type="text" inputMode="decimal" placeholder="Ex.: 4,00" defaultValue={((config.deliveryConfig.fixedFeeCents ?? 0) / 100).toFixed(2).replace('.', ',')} /><p className="mt-2 text-xs text-[#826a75]">Exemplo: escreva 4,00 para cobrar quatro reais.</p></div>}
+        {deliveryMode === 'CONFIRM' && <p className="mt-4 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">O cliente fará o pedido sem taxa. A equipe confirma o valor da entrega depois.</p>}
+        {deliveryMode === 'NONE' && <p className="mt-4 rounded-xl bg-[#fff0f5] p-3 text-sm text-[#82204f]">A opção de delivery ficará escondida para os clientes.</p>}
+        {deliveryMode === 'ZONES' && <div className="mt-5 rounded-2xl border border-[#82204f]/12 bg-[#fffaf5] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="font-black">Taxas por bairro</h3><p className="mt-1 text-xs text-[#826a75]">Adicione cada bairro e o valor que será mostrado ao cliente.</p></div><Button type="button" variant="outline" className="rounded-full" onClick={addZone}><Plus /> Adicionar bairro</Button></div><div className="mt-4 space-y-3">{zonesDraft.map((zone, index) => <div key={`${zone.id}-${index}`} className="grid gap-2 rounded-xl bg-white p-3 sm:grid-cols-[1fr_140px_auto_auto] sm:items-end"><label className="text-sm font-bold">Bairro ou região<input value={zone.name} onChange={(event) => updateZone(index, { name: event.target.value })} placeholder="Ex.: Centro" className="mt-1 h-11 w-full rounded-xl border border-[#82204f]/15 bg-white px-3 font-normal" /></label><label className="text-sm font-bold">Taxa (R$)<input value={zone.fee} onChange={(event) => updateZone(index, { fee: event.target.value })} inputMode="decimal" placeholder="4,00" className="mt-1 h-11 w-full rounded-xl border border-[#82204f]/15 bg-white px-3 font-normal" /></label><label className="flex h-11 items-center gap-2 text-xs font-bold"><input type="checkbox" checked={zone.active} onChange={(event) => updateZone(index, { active: event.target.checked })} /> Disponível</label><button type="button" onClick={() => setZonesDraft((old) => old.filter((_, zoneIndex) => zoneIndex !== index))} className="grid h-11 w-11 place-items-center rounded-xl text-red-700 hover:bg-red-50" aria-label={`Remover ${zone.name || `região ${index + 1}`} `}><Trash2 className="size-4" /></button></div>)}{!zonesDraft.length && <p className="rounded-xl bg-white p-4 text-sm text-[#826a75]">Ainda não há bairros cadastrados. Use “Adicionar bairro”.</p>}</div></div>}
       </SettingsSection>
 
       <SettingsSection title="Horários" description="Defina quando os pedidos podem ser recebidos e o horário especial dos feriados.">

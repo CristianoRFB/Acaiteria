@@ -19,11 +19,7 @@ export interface PublicOrderEditProposal {
   requestedAt?: unknown;
   requestedBy?: string;
   respondedAt?: unknown;
-  before: {
-    items: PricedItem[];
-    pricing: { totalCents: number };
-    fulfillment: { mode: 'PICKUP' | 'DELIVERY' };
-  };
+  before: { items: PricedItem[]; pricing: { totalCents: number }; fulfillment: { mode: 'PICKUP' | 'DELIVERY' } };
 }
 
 export async function updateOrderStatusDirect(functions: Functions, orderId: string, status: OrderStatus, reason?: string) {

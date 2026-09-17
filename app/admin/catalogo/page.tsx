@@ -444,25 +444,20 @@ export default function CatalogPage() {
             </div>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               <label className="block text-sm font-bold">
-                Tipo de produto
+                Como este item é vendido?
                 <select
                   name="productType"
                   defaultValue={editing?.productType ?? 'CUSTOMIZABLE'}
                   className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-[#fffaf5] px-3 font-normal"
                 >
                   <option value="CUSTOMIZABLE">
-                    Permite montar combinações
+                    Cliente escolhe sabores e adicionais
                   </option>
-                  <option value="SIMPLE">Produto pronto</option>
+                  <option value="SIMPLE">Produto pronto, sem montagem</option>
                 </select>
+                <span className="mt-1 block text-xs font-normal text-[#826a75]">Use a primeira opção para açaí, milk-shake e produtos que o cliente monta.</span>
               </label>
-              <AdminField
-                label="Ordem no cardápio"
-                name="displayOrder"
-                type="number"
-                required
-                defaultValue={editing?.displayOrder ?? products.length + 1}
-              />
+              <AdminField label="Foto do produto (opcional)" name="imageUrl" defaultValue={editing?.imageUrl} placeholder="Cole aqui o link de uma foto" />
             </div>
             <div className="mt-4">
               <AdminTextarea
@@ -505,24 +500,19 @@ export default function CatalogPage() {
             )}
             <details className="mt-5 rounded-2xl border border-dashed border-[#82204f]/20 p-4">
               <summary className="cursor-pointer text-sm font-bold text-[#82204f]">
-                Configurações avançadas (opcional)
+                Mais opções (normalmente não precisa mexer)
               </summary>
               <div className="mt-4 space-y-4">
                 <AdminField
-                  label="Endereço da imagem"
-                  name="imageUrl"
-                  defaultValue={editing?.imageUrl}
-                  placeholder="Opcional"
+                  label="Posição no cardápio"
+                  name="displayOrder"
+                  type="number"
+                  required
+                  defaultValue={editing?.displayOrder ?? products.length + 1}
                 />
-                <AdminField
-                  label="Identificador do link"
-                  name="slug"
-                  defaultValue={editing?.slug}
-                  placeholder="Gerado automaticamente"
-                />
+                <input type="hidden" name="slug" defaultValue={editing?.slug} />
                 <p className="text-xs text-[#826a75]">
-                  Você pode ignorar estes campos. Eles são usados apenas para
-                  integrações e links.
+                  A posição menor aparece primeiro. O link do produto é criado automaticamente.
                 </p>
               </div>
             </details>
