@@ -47,7 +47,7 @@ export function AdminNotifications() {
     setMessage('');
     try {
       const reason = status === 'CANCELLED' ? 'Recusado pela loja' : undefined;
-      await updateOrderStatusDirect(getFirebaseClient().functions, orderId, status, reason);
+      await updateOrderStatusDirect(getFirebaseClient().db, orderId, status, reason);
       setMessage(status === 'CONFIRMED' ? 'Pedido aceito.' : 'Pedido recusado.');
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Não foi possível atualizar o pedido.');

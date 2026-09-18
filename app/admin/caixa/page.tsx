@@ -208,7 +208,7 @@ export default function CashRegisterPage() {
       const amount = openingAmount.trim() ? parseBRLToCents(openingAmount) : -1;
       if (amount < 0)
         throw new Error('Informe o saldo inicial disponível para troco.');
-      await openCashRegister(getFirebaseClient().functions, {
+      await openCashRegister(getFirebaseClient().db, {
         initialBalanceCents: amount,
         note: openingNote,
         openingDate: todayKey(),
@@ -233,7 +233,7 @@ export default function CashRegisterPage() {
     resetFeedback();
     setBusy(true);
     try {
-      await recordCashMovement(getFirebaseClient().functions, {
+      await recordCashMovement(getFirebaseClient().db, {
         registerId: current.id,
         type: action,
         amountCents: parseRequiredMoney(
@@ -266,7 +266,7 @@ export default function CashRegisterPage() {
     resetFeedback();
     setBusy(true);
     try {
-      await recordLocalSale(getFirebaseClient().functions, {
+      await recordLocalSale(getFirebaseClient().db, {
         registerId: current.id,
         amountCents: parseRequiredMoney(localSaleAmount, 'a venda'),
         paymentMethod: localSalePaymentMethod,
@@ -298,7 +298,7 @@ export default function CashRegisterPage() {
     try {
       if (!countedCash.trim())
         throw new Error('Informe o valor contado em dinheiro.');
-      await closeCashRegister(getFirebaseClient().functions, {
+      await closeCashRegister(getFirebaseClient().db, {
         registerId: current.id,
         countedCashCents,
         note: closingNote,

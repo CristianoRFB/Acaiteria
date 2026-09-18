@@ -23,6 +23,7 @@ afterAll(() => env.cleanup());
 describe('Firestore Rules deny by default', () => {
   it('público lê catálogo ativo, mas não escreve nem acessa pedidos/usuários', async () => {
     const db = env.unauthenticatedContext().firestore();
+    const publicCode = `ATESTEA${Date.now()}`;
     await assertSucceeds(getDoc(doc(db, 'products', 'active')));
     await assertFails(setDoc(doc(db, 'products', 'hacked'), { active: true }));
     await assertFails(getDocs(collection(db, 'orders')));
@@ -30,6 +31,8 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDoc(doc(db, 'users', 'admin-uid')));
     await assertFails(getDoc(doc(db, 'integrationConfig', 'saipos')));
     await assertFails(getDocs(collection(db, 'orders', 'secret', 'integrationAttempts')));
+    await assertSucceeds(setDoc(doc(db, 'publicOrders', publicCode), { publicCode, status: 'NEW', orderNumber: `#${publicCode}`, items: [], pricing: { totalCents: 1000 }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertSucceeds(setDoc(doc(db, 'orders', `request-${Date.now()}`), { publicCode, orderNumber: `#${publicCode}`, status: 'NEW', customer: { name: 'Cliente' }, items: [], pricing: { totalCents: 1000 }, payment: { method: 'PIX' }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
   });
   it('staff lê pedidos, mas não ganha escrita administrativa', async () => {
     const db = env.authenticatedContext('staff-uid').firestore();
@@ -40,14 +43,14 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'cashMovements', 'forged'), { registerId: 'open', type: 'SALE', direction: 'IN', amountCents: 100, cashAmountCents: 100 }));
     await assertFails(setDoc(doc(db, 'financeEntries', 'order-forged'), { kind: 'INCOME', status: 'PAID', sourceOrderId: 'secret', amountCents: 100 }));
   });
-  it('admin gerencia catálogo e configuração, mas não escreve pedido direto', async () => {
+  it('admin gerencia catálogo, pedidos e financeiro no modo Spark', async () => {
     const db = env.authenticatedContext('admin-uid').firestore();
+    const publicCode = `STAFF${Date.now()}`;
     await assertSucceeds(setDoc(doc(db, 'products', 'new'), { name: 'Produto novo', slug: 'produto-novo', description: 'Descrição', active: true, categoryId: 'acai', productType: 'SIMPLE', displayOrder: 2, sizes: [], modifierGroupIds: [] }));
     await assertSucceeds(setDoc(doc(db, 'storePublicConfig', 'main'), { orderingEnabled: true }));
-    await assertFails(setDoc(doc(db, 'orders', 'bypass'), { status: 'COMPLETED' }));
-    await assertFails(setDoc(doc(db, 'financeEntries', 'manual'), { kind: 'EXPENSE', category: 'Insumos', description: 'Frutas', amountCents: 1200, date: '2026-09-16', status: 'PAID', orderNumber: null, notes: null, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
-    await assertFails(setDoc(doc(db, 'financeEntries', 'forged-source'), { kind: 'INCOME', category: 'Vendas de açaí', description: 'Fraude', amountCents: 999999, date: '2026-09-16', status: 'PAID', sourceOrderId: 'secret', createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
-    await assertFails(setDoc(doc(db, 'publicOrders', 'spoofed'), { publicCode: 'spoofed', status: 'NEW', orderNumber: '#HACK', items: [{ productId: 'x' }], pricing: { totalCents: 1 } }));
+    await assertSucceeds(setDoc(doc(db, 'orders', 'bypass'), { status: 'COMPLETED' }));
+    await assertSucceeds(setDoc(doc(db, 'financeEntries', 'manual'), { kind: 'EXPENSE', category: 'Insumos', description: 'Frutas', amountCents: 1200, date: '2026-09-16', status: 'PAID', orderNumber: null, notes: null, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertSucceeds(setDoc(doc(db, 'publicOrders', publicCode), { publicCode, status: 'NEW', orderNumber: '#STAFF', items: [], pricing: { totalCents: 1 } }));
     await assertFails(setDoc(doc(db, 'integrationConfig', 'saipos'), { mappings: {} }));
   });
 });

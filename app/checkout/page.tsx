@@ -1,6 +1,5 @@
 'use client';
 
-import { httpsCallable } from 'firebase/functions';
 import { ArrowLeft, Bike, CheckCircle2, Clock3, Loader2, MapPin, Store } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
@@ -8,6 +7,7 @@ import { PublicHeader } from '@/components/public-header';
 import { useCart, useCatalog } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { createOrderDirect } from '@/lib/direct-orders';
 import { calculateCartPreview, calculateDeliveryFee, formatBRL, formatNextOpening, getStoreAvailability, type FulfillmentMode } from '@/shared/domain';
 
 const paymentLabels = { PIX: 'Pix', CARD: 'Cartão na entrega', CASH: 'Dinheiro' } as const;
@@ -97,7 +97,7 @@ export default function CheckoutPage() {
           },
         } : {}),
       },
-      items: cart.items.map(({ productId, sizeId, selections, quantity, notes }) => ({ productId, sizeId, selections, quantity, ...(notes ? { notes } : {}) })),
+      items: cart.items.map(({ cartItemId, productId, sizeId, selections, quantity, notes }) => ({ cartItemId, productId, sizeId, selections, quantity, ...(notes ? { notes } : {}) })),
       fulfillment: { mode: fulfillment, ...(zoneId ? { zoneId } : {}) },
       payment: {
         method: paymentMethod,
@@ -105,17 +105,15 @@ export default function CheckoutPage() {
         ...(paymentMethod === 'CASH' && needsChange ? { changeForCents } : {}),
       },
       ...(fields.orderNotes ? { notes: fields.orderNotes } : {}),
-      clientPreviewTotalCents: totalCents,
+      deliveryFeeCents: deliveryFee,
     };
 
     setSubmitting(true);
     try {
-      const { functions } = getFirebaseClient();
-      const createOrder = httpsCallable<typeof payload, { publicCode: string; orderNumber: string; totalCents: number }>(functions, 'createOrder');
-      const response = await createOrder(payload);
+      const response = await createOrderDirect(getFirebaseClient().db, payload, catalog);
       cart.clear();
       sessionStorage.removeItem('acai-checkout-request-id');
-      window.location.href = `/pedido/${response.data.publicCode}?novo=1`;
+      window.location.href = `/pedido/${response.publicCode}?novo=1`;
     } catch (cause: unknown) {
       const rawMessage = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';
       const errorCode = typeof cause === 'object' && cause && 'code' in cause ? String((cause as { code?: unknown }).code) : '';
@@ -191,7 +189,7 @@ export default function CheckoutPage() {
         <div className="mt-5 space-y-4 border-b border-white/10 pb-5">{preview.items.map((item, index) => <div key={`${item.productId}-${index}`} className="text-sm"><div className="flex justify-between gap-3"><span className="text-white/75">{item.quantity}x {item.productName}<small className="block text-white/45">{item.sizeLabel}</small></span><strong>{formatBRL(item.totalPriceCents)}</strong></div>{item.modifierSelections.filter((group) => group.items.length).map((group) => <p key={group.groupId} className="mt-1 text-[11px] leading-relaxed text-white/45"><strong className="text-white/60">{group.groupName}:</strong> {group.items.map((modifier) => `${modifier.quantity > 1 ? `${modifier.quantity}x ` : ''}${modifier.name}`).join(', ')}</p>)}{item.notes && <p className="mt-1 text-[11px] italic text-white/45">“{item.notes}”</p>}</div>)}</div>
         <dl className="mt-5 space-y-3 text-sm"><SummaryLine label="Recebimento" value={fulfillment === 'DELIVERY' ? 'Entrega' : 'Retirada'} />{fulfillment === 'DELIVERY' && <SummaryLine label="Endereço" value={fields.street ? `${fields.street}, ${fields.number || 's/n'}${fields.neighborhood ? ` · ${fields.neighborhood}` : ''}` : 'Preencha o endereço'} />}<SummaryLine label="Pagamento" value={paymentLabels[paymentMethod]} />{paymentMethod === 'CASH' && <SummaryLine label="Troco" value={needsChange === null ? 'Informe se precisa' : needsChange ? changeForCents === null ? 'Informe o valor' : `Para ${formatBRL(changeForCents)}` : 'Não precisa'} />}<SummaryLine label="Estimativa" value={availability.estimate.label} /></dl>
         <div className="mt-5 border-t border-white/10 pt-4"><SummaryLine label="Subtotal" value={formatBRL(preview.subtotalCents)} /><div className="mt-2"><SummaryLine label="Entrega" value={fulfillment === 'DELIVERY' && config.deliveryConfig.mode === 'CONFIRM' ? 'A confirmar' : formatBRL(deliveryFee)} /></div><div className="mt-5 flex items-end justify-between"><span className="text-sm">Total previsto</span><strong className="text-3xl font-black text-[#ffcf3d]">{formatBRL(totalCents)}</strong></div></div>
-        <p className="mt-3 text-[11px] leading-relaxed text-white/45">O servidor recalcula o valor com o cardápio atual antes de salvar o pedido.</p>
+        <p className="mt-3 text-[11px] leading-relaxed text-white/45">A loja confere os itens e o valor antes de confirmar o pedido.</p>
         <Button type="submit" disabled={submitting || !availability.acceptingOrders} className="mt-6 h-12 w-full rounded-full bg-[#d7f04a] font-black text-[#351924] hover:bg-[#c4dd36] disabled:bg-white/15 disabled:text-white/55">{submitting ? <><Loader2 className="animate-spin" /> Enviando…</> : !availability.acceptingOrders ? <><Clock3 /> Loja fechada</> : <><CheckCircle2 /> Confirmar pedido</>}</Button>
         {!availability.acceptingOrders && <p className="mt-3 text-center text-xs text-white/60">Seu carrinho ficará salvo para a próxima abertura.</p>}
       </div></aside>

@@ -1,8 +1,7 @@
 'use client';
 
 import { Check, ChefHat, Clock3, Copy, KeyRound, MessageCircle, PackageCheck, RefreshCw } from 'lucide-react';
-import { httpsCallable } from 'firebase/functions';
-import { collection, doc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -28,7 +27,7 @@ export default function OrderPage() {
   const { publicCode } = useParams<{ publicCode: string }>(); const search = useSearchParams(); const { config } = useCatalog();
   const routeCode = (() => { try { return decodeURIComponent(publicCode); } catch { return publicCode; } })();
   const [order, setOrder] = useState<PublicOrder | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [legacyMode, setLegacyMode] = useState(false); const [copied, setCopied] = useState(false); const [statusNotice, setStatusNotice] = useState(''); const [editBusy, setEditBusy] = useState(false); const [editError, setEditError] = useState(''); const previousStatus = useRef<OrderStatus | null>(null); const resolvedCodeRef = useRef(publicCode);
-  const load = useCallback(async () => { if (!hasFirebaseConfig) { setError('Firebase não configurado.'); setLoading(false); return; } try { const { functions } = getFirebaseClient(); const lookup = httpsCallable<{ publicCode: string }, PublicOrder>(functions, 'getPublicOrder'); const response = await lookup({ publicCode: resolvedCodeRef.current }); setOrder(response.data); setError(''); } catch { setError('Pedido não encontrado ou temporariamente indisponível.'); } finally { setLoading(false); } }, []);
+  const load = useCallback(async () => { if (!hasFirebaseConfig) { setError('Firebase não configurado.'); setLoading(false); return; } try { const snapshot = await getDoc(doc(getFirebaseClient().db, 'publicOrders', resolvedCodeRef.current)); if (!snapshot.exists()) throw new Error('not-found'); setOrder(snapshot.data() as PublicOrder); setError(''); } catch { setError('Pedido não encontrado ou temporariamente indisponível.'); } finally { setLoading(false); } }, []);
   useEffect(() => {
     resolvedCodeRef.current = routeCode;
     if (!hasFirebaseConfig) { void load(); return undefined; }

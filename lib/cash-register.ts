@@ -1,94 +1,23 @@
-import { httpsCallable, type Functions } from 'firebase/functions';
+import { addDoc, collection, doc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
 import type { CashPaymentMethod } from '@/shared/cash-register';
 
-type CashOperationResult = {
-  registerId?: string;
-  movementId?: string;
-  differenceCents?: number;
-  idempotent?: boolean;
-};
-
-function requestId() {
-  return crypto.randomUUID();
+export async function openCashRegister(db: Firestore, input: { initialBalanceCents: number; note?: string; openingDate: string }) {
+  const entry = await addDoc(collection(db, 'cashRegisters'), { ...input, status: 'OPEN', expectedCashCents: input.initialBalanceCents, operatorUid: 'admin', openedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  return entry.id;
 }
-
-async function operateCashRegister(
-  functions: Functions,
-  payload: Record<string, unknown>,
-): Promise<CashOperationResult> {
-  const callable = httpsCallable<Record<string, unknown>, CashOperationResult>(
-    functions,
-    'operateCashRegister',
-  );
-  const result = await callable(payload);
-  return result.data;
+export async function recordCashMovement(db: Firestore, input: { registerId: string; type: 'WITHDRAWAL' | 'SUPPLY'; amountCents: number; note: string }) {
+  return runTransaction(db, async (transaction) => { const registerRef = doc(db, 'cashRegisters', input.registerId); const register = await transaction.get(registerRef); if (!register.exists()) throw new Error('Caixa não encontrado.'); const entry = doc(collection(db, 'cashMovements')); const impact = input.type === 'WITHDRAWAL' ? -input.amountCents : input.amountCents; transaction.set(entry, { ...input, direction: input.type === 'WITHDRAWAL' ? 'OUT' : 'IN', cashAmountCents: input.amountCents, operatorUid: 'admin', createdAt: serverTimestamp() }); transaction.update(registerRef, { expectedCashCents: Number(register.data().expectedCashCents ?? 0) + impact, lastMovementAt: serverTimestamp(), updatedAt: serverTimestamp() }); return entry.id; });
 }
-
-export async function openCashRegister(
-  functions: Functions,
-  input: { initialBalanceCents: number; note?: string; openingDate: string },
-) {
-  const result = await operateCashRegister(functions, {
-    operation: 'OPEN',
-    clientRequestId: requestId(),
-    ...input,
-  });
-  if (!result.registerId) throw new Error('Abertura de caixa sem identificador.');
-  return result.registerId;
-}
-
-export async function recordCashMovement(
-  functions: Functions,
-  input: {
-    registerId: string;
-    type: 'WITHDRAWAL' | 'SUPPLY';
-    amountCents: number;
-    note: string;
-  },
-) {
-  const result = await operateCashRegister(functions, {
-    operation: 'MOVEMENT',
-    clientRequestId: requestId(),
-    ...input,
-  });
-  if (!result.movementId) throw new Error('Movimentação sem identificador.');
-  return result.movementId;
-}
-
-export async function recordLocalSale(
-  functions: Functions,
-  input: {
-    registerId: string;
-    amountCents: number;
-    paymentMethod: CashPaymentMethod;
-    description: string;
-    orderNumber?: string;
-    note?: string;
-  },
-) {
-  const result = await operateCashRegister(functions, {
-    operation: 'LOCAL_SALE',
-    clientRequestId: requestId(),
-    ...input,
-  });
-  if (!result.movementId) throw new Error('Venda sem identificador.');
-  return result.movementId;
-}
-
-export async function closeCashRegister(
-  functions: Functions,
-  input: { registerId: string; countedCashCents: number; note?: string },
-) {
-  return operateCashRegister(functions, {
-    operation: 'CLOSE',
-    ...input,
+export async function recordLocalSale(db: Firestore, input: { registerId: string; amountCents: number; paymentMethod: CashPaymentMethod; description: string; orderNumber?: string; note?: string }) {
+  return runTransaction(db, async (transaction) => {
+    const registerRef = doc(db, 'cashRegisters', input.registerId); const register = await transaction.get(registerRef); if (!register.exists()) throw new Error('Caixa não encontrado.'); const movementRef = doc(collection(db, 'cashMovements')); const financeRef = doc(collection(db, 'financeEntries'));
+    transaction.set(movementRef, { ...input, type: 'SALE', direction: 'IN', cashAmountCents: input.paymentMethod === 'CASH' ? input.amountCents : 0, operatorUid: 'admin', createdAt: serverTimestamp() });
+    transaction.set(financeRef, { kind: 'INCOME', category: 'Vendas de açaí', description: input.description, amountCents: input.amountCents, date: new Date().toISOString().slice(0, 10), status: 'PAID', paymentMethod: input.paymentMethod, orderNumber: input.orderNumber ?? null, notes: input.note ?? null, sourceLocalSaleId: movementRef.id, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    transaction.update(registerRef, { expectedCashCents: Number(register.data().expectedCashCents ?? 0) + (input.paymentMethod === 'CASH' ? input.amountCents : 0), lastMovementAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    return movementRef.id;
   });
 }
-
-export async function refundCompletedOrder(
-  functions: Functions,
-  input: { orderId: string; reason: string },
-) {
-  const callable = httpsCallable(functions, 'refundCompletedOrder');
-  await callable(input);
+export async function closeCashRegister(db: Firestore, input: { registerId: string; countedCashCents: number; note?: string }) {
+  await runTransaction(db, async (transaction) => { const ref = doc(db, 'cashRegisters', input.registerId); const snapshot = await transaction.get(ref); if (!snapshot.exists()) throw new Error('Caixa não encontrado.'); const expected = Number(snapshot.data().expectedCashCents ?? 0); transaction.update(ref, { status: 'CLOSED', countedCashCents: input.countedCashCents, differenceCents: input.countedCashCents - expected, closingNote: input.note ?? '', closedAt: serverTimestamp(), updatedAt: serverTimestamp() }); });
 }
+export async function refundCompletedOrder(db: Firestore, input: { orderId: string; reason: string }) { await runTransaction(db, async (transaction) => { const ref = doc(db, 'orders', input.orderId); const snapshot = await transaction.get(ref); if (!snapshot.exists()) throw new Error('Pedido não encontrado.'); const code = snapshot.data().publicCode as string | undefined; transaction.update(ref, { status: 'CANCELLED', statusMessage: `Pedido cancelado: ${input.reason}`, updatedAt: serverTimestamp() }); if (code) transaction.update(doc(db, 'publicOrders', code), { status: 'CANCELLED', statusMessage: `Pedido cancelado: ${input.reason}`, updatedAt: serverTimestamp() }); }); }

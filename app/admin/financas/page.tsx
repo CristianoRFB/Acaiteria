@@ -2,12 +2,16 @@
 
 import {
   collection,
+  addDoc,
+  doc,
   limit,
   onSnapshot,
   orderBy,
   query,
   Timestamp,
   where,
+  serverTimestamp,
+  updateDoc,
 } from 'firebase/firestore';
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Pencil, Plus, Save, WalletCards, X } from 'lucide-react';
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
@@ -28,7 +32,6 @@ import {
   type FinanceEntryKind,
   type FinanceEntryStatus,
 } from '@/shared/finance';
-import { httpsCallable } from 'firebase/functions';
 
 const todayKey = () => {
   const now = new Date();
@@ -173,7 +176,8 @@ export default function FinancesPage() {
       ...(String(data.get('notes') ?? '').trim() ? { notes: String(data.get('notes') ?? '').trim() } : {}),
     };
     try {
-      await httpsCallable(getFirebaseClient().functions, 'saveFinanceEntry')({ ...(editing ? { id: editing.id } : {}), ...payload });
+      if (editing) await updateDoc(doc(getFirebaseClient().db, 'financeEntries', editing.id), { ...payload, updatedAt: serverTimestamp() });
+      else await addDoc(collection(getFirebaseClient().db, 'financeEntries'), { ...payload, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
       setFormOpen(false);
       setEditing(null);
       setFinanceRequestId(null);
@@ -189,7 +193,7 @@ export default function FinancesPage() {
     setError('');
     setStatusBusyId(entry.id);
     try {
-      await httpsCallable(getFirebaseClient().functions, 'updateFinanceStatus')({ id: entry.id, status: entry.status === 'PAID' ? 'PENDING' : 'PAID' });
+      await updateDoc(doc(getFirebaseClient().db, 'financeEntries', entry.id), { status: entry.status === 'PAID' ? 'PENDING' : 'PAID', updatedAt: serverTimestamp() });
       setNotice(entry.status === 'PAID' ? 'Lançamento marcado como pendente.' : 'Lançamento marcado como pago.');
     } catch {
       setError('Não foi possível atualizar o status do lançamento.');

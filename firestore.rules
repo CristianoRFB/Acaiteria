@@ -13,15 +13,19 @@ service cloud.firestore {
     match /modifierGroups/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
     match /modifiers/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
     match /promotions/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
-    match /financeEntries/{id} { allow read: if isStaff(); allow write: if false; }
-    match /cashControl/{id} { allow read: if isStaff(); allow write: if false; }
-    match /cashRegisters/{id} { allow read: if isStaff(); allow write: if false; }
-    match /cashMovements/{id} { allow read: if isStaff(); allow write: if false; }
-    match /orders/{id} { allow read: if isStaff(); allow create, update, delete: if false; }
+    match /financeEntries/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /cashControl/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /cashRegisters/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /cashMovements/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /orders/{id} {
+      allow read: if isStaff();
+      allow create: if isStaff() || (!signedIn() && request.resource.data.status == 'NEW' && request.resource.data.publicCode is string && request.resource.data.orderNumber is string && request.resource.data.customer is map && request.resource.data.items is list && request.resource.data.pricing is map && request.resource.data.payment is map && request.resource.data.fulfillment is map);
+      allow update, delete: if isStaff();
+    }
     match /publicOrders/{id} {
       allow read: if true;
-      allow create: if false;
-      allow update: if !signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']);
+      allow create: if isStaff() || (!signedIn() && request.resource.data.publicCode == id && request.resource.data.orderNumber is string && request.resource.data.items is list && request.resource.data.pricing is map && request.resource.data.status == 'NEW');
+      allow update: if isStaff() || (!signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']));
       allow delete: if false;
     }
     match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if isAdmin(); }
