@@ -22,11 +22,16 @@
     "test:functions:integration": "npm --prefix functions run build && firebase emulators:exec --project demo-acai-mais-sabor --only firestore,functions \"npm --prefix functions run test:integration\"",
     "emulators": "npm --prefix functions run build && firebase emulators:start --project demo-acai-mais-sabor --import=.firebase-data --export-on-exit=.firebase-data",
     "seed:emulator": "firebase emulators:exec --project demo-acai-mais-sabor --only firestore,auth --export-on-exit=.firebase-data \"npm --prefix functions run seed:emulator\"",
-    "ci": "npm run lint && npm run typecheck && npm test && npm run build"
+    "ci": "npm run lint && npm run typecheck && npm test && npm run build",
+    "dev:vinext": "vinext dev --port 3001",
+    "build:vinext": "vinext build",
+    "start:vinext": "wrangler dev --config dist/server/wrangler.json",
+    "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
     "@shadcn/react": "0.3.0",
+    "@vinext/cloudflare": "^1.0.0-beta.8",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
