@@ -2,7 +2,7 @@
 
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { connectAuthEmulator, getAuth, type Auth } from 'firebase/auth';
-import { connectFirestoreEmulator, getFirestore, type Firestore } from 'firebase/firestore';
+import { connectFirestoreEmulator, initializeFirestore, type Firestore } from 'firebase/firestore';
 import { connectFunctionsEmulator, getFunctions, type Functions } from 'firebase/functions';
 import { initializeAppCheck, ReCaptchaV3Provider } from 'firebase/app-check';
 
@@ -29,7 +29,9 @@ export function getFirebaseClient(): { app: FirebaseApp; auth: Auth; db: Firesto
   if (!hasFirebaseConfig) throw new Error('Firebase não configurado. Copie .env.example para .env.local.');
   app = getApps()[0] ?? initializeApp(firebaseConfig);
   auth ??= getAuth(app);
-  db ??= getFirestore(app);
+  // Em redes móveis/proxies, o WebChannel pode cair repetidamente. O fallback por long-polling
+  // mantém carrinho, acompanhamento e painel operando sem exigir configuração do cliente.
+  db ??= initializeFirestore(app, { experimentalAutoDetectLongPolling: true });
   functions ??= getFunctions(app, 'southamerica-east1');
 
   if (process.env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true' && !emulatorsConnected) {

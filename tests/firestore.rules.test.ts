@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
 import { doc, getDoc, getDocs, setDoc, collection, Timestamp } from 'firebase/firestore';
-import { afterAll, beforeAll, describe, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createOrderDirect } from '@/lib/direct-orders';
 
 let env: RulesTestEnvironment;
 beforeAll(async () => {
@@ -42,6 +43,22 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'cashRegisters', 'open'), { expectedCashCents: 999999 }, { merge: true }));
     await assertFails(setDoc(doc(db, 'cashMovements', 'forged'), { registerId: 'open', type: 'SALE', direction: 'IN', amountCents: 100, cashAmountCents: 100 }));
     await assertFails(setDoc(doc(db, 'financeEntries', 'order-forged'), { kind: 'INCOME', status: 'PAID', sourceOrderId: 'secret', amountCents: 100 }));
+  });
+  it('checkout anônimo grava pedido e acompanhamento público juntos, sem expor dados privados', async () => {
+    const db = env.unauthenticatedContext().firestore();
+    // O harness de regras expõe o cliente compatível; a função de checkout usa o SDK modular.
+    const directDb = db as unknown as import('firebase/firestore').Firestore;
+    const requestId = `checkout-${Date.now()}`;
+    const catalog = {
+      categories: [],
+      groups: [],
+      modifiers: [],
+      products: [{ id: 'copo', name: 'Copo teste', slug: 'copo-teste', description: 'Teste', active: true, categoryId: 'acai', productType: 'SIMPLE' as const, displayOrder: 1, modifierGroupIds: [], sizes: [{ id: '300', label: '300 ml', active: true, basePriceCents: 1400, displayOrder: 1 }] }],
+    };
+    const result = await createOrderDirect(directDb, { clientRequestId: requestId, customer: { name: 'Teste', whatsapp: '5517999999999' }, items: [{ cartItemId: 'cart-1', productId: 'copo', sizeId: '300', selections: [], quantity: 1 }], fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX', needsChange: false }, deliveryFeeCents: 0 }, catalog);
+    await assertFails(getDoc(doc(db, 'orders', requestId)));
+    await assertSucceeds(getDoc(doc(db, 'publicOrders', result.publicCode)));
+    await expect(createOrderDirect(directDb, { clientRequestId: requestId, customer: { name: 'Teste', whatsapp: '5517999999999' }, items: [{ cartItemId: 'cart-1', productId: 'copo', sizeId: '300', selections: [], quantity: 1 }], fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX', needsChange: false }, deliveryFeeCents: 0 }, catalog)).resolves.toMatchObject({ publicCode: result.publicCode });
   });
   it('admin gerencia catálogo, pedidos e financeiro no modo Spark', async () => {
     const db = env.authenticatedContext('admin-uid').firestore();

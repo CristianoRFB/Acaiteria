@@ -1,4 +1,4 @@
-import { collection, doc, getDoc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
+import { collection, doc, getDoc, runTransaction, serverTimestamp, writeBatch, type Firestore } from 'firebase/firestore';
 
 import { calculateCartPreview, getCustomerOrderStatusMessage, ORDER_TRANSITIONS, type CartItemDraft, type CatalogSnapshot, type FulfillmentMode, type OrderStatus, type PricedItem } from '@/shared/domain';
 
@@ -26,12 +26,21 @@ export async function createOrderDirect(db: Firestore, input: DirectCreateOrderI
   const preview = calculateCartPreview(input.items, catalog); const code = publicCode(input.clientRequestId);
   const orderRef = doc(db, 'orders', input.clientRequestId); const publicRef = doc(db, 'publicOrders', code);
   const pricing = { subtotalCents: preview.subtotalCents, deliveryFeeCents: input.deliveryFeeCents, totalCents: preview.subtotalCents + input.deliveryFeeCents };
-  await runTransaction(db, async (transaction) => {
-    if ((await transaction.get(orderRef)).exists()) return;
-    const orderNumber = `#${code}`; const statusMessage = getCustomerOrderStatusMessage('NEW');
-    transaction.set(orderRef, { publicCode: code, orderNumber, customer: input.customer, items: preview.items, fulfillment: input.fulfillment, payment: input.payment, pricing, notes: input.notes ?? '', status: 'NEW', statusMessage, estimatedMinutes: 20, statusHistory: [{ status: 'NEW', at: new Date(), reason: 'Pedido recebido pelo site' }], createdAt: serverTimestamp(), updatedAt: serverTimestamp(), clientRequestId: input.clientRequestId });
-    transaction.set(publicRef, { publicCode: code, orderNumber, items: preview.items, fulfillment: input.fulfillment, pricing: { totalCents: pricing.totalCents }, status: 'NEW', statusMessage, estimatedMinutes: 20, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
-  });
+  const orderNumber = `#${code}`; const statusMessage = getCustomerOrderStatusMessage('NEW');
+  // O cliente anônimo não pode ler o pedido privado. Um batch cria os dois documentos de
+  // forma atômica sem essa leitura, mantendo as regras restritivas para dados pessoais.
+  const batch = writeBatch(db);
+  batch.set(orderRef, { publicCode: code, orderNumber, customer: input.customer, items: preview.items, fulfillment: input.fulfillment, payment: input.payment, pricing, notes: input.notes ?? '', status: 'NEW', statusMessage, estimatedMinutes: 20, statusHistory: [{ status: 'NEW', at: new Date(), reason: 'Pedido recebido pelo site' }], createdAt: serverTimestamp(), updatedAt: serverTimestamp(), clientRequestId: input.clientRequestId });
+  batch.set(publicRef, { publicCode: code, orderNumber, items: preview.items, fulfillment: input.fulfillment, pricing: { totalCents: pricing.totalCents }, status: 'NEW', statusMessage, estimatedMinutes: 20, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  try {
+    await batch.commit();
+  } catch (cause) {
+    // Se a conexão caiu após o primeiro envio, o segundo clique usa o mesmo requestId.
+    // O create já existente é negado pelas regras; confirmar o espelho público evita
+    // duplicar pedidos e leva o cliente direto ao acompanhamento original.
+    const existing = await getDoc(publicRef);
+    if (!existing.exists()) throw cause;
+  }
   return { publicCode: code, orderNumber: `#${code}`, totalCents: pricing.totalCents };
 }
 
