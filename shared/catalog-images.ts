@@ -1,5 +1,5 @@
 const productImages: Record<string, string> = {
-  'acai-monte-seu': '/menu/products/acai-monte-seu.jpg',
+  'acai-monte-seu': '/menu/products/acai-monte-seu-hq.webp',
   'milk-shake': '/menu/products/milk-shake.jpg',
   sorvete: '/menu/products/sorvete.jpg',
   'shake-acai-banana-whey': '/menu/generated/shake-acai-banana-whey.png',
@@ -13,6 +13,9 @@ const productImages: Record<string, string> = {
 
 const comboIds = ['barbie', 'banana-ball', 'beijinho', 'bem-casado', 'chocomaster', 'dos-sonhos', 'favorito', 'power', 'raspas', 'saboroso', 'jade', 'pistache-berry', 'yogo-top', 'joaninha', 'kids-1', 'kids-2', 'mais-sabor', 'manila', 'moranguete', 'prestigio', 'supreme', 'tropical', '220-volts', 'santa-fe', 'explosao-de-oreo', 'nuvem'];
 for (const id of comboIds) productImages[id] = `/menu/products/combo-${id}.jpg`;
+productImages.barbie = '/menu/products/combo-barbie-hq.webp';
+productImages.power = '/menu/products/combo-power-hq.webp';
+productImages.tropical = '/menu/products/combo-tropical-hq.webp';
 
 const modifierImages: Record<string, string> = {
   'base-acai': '/menu/ingredients/acai.jpg',
