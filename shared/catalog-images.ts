@@ -16,6 +16,13 @@ for (const id of comboIds) productImages[id] = `/menu/products/combo-${id}-hq.we
 productImages.barbie = '/menu/products/combo-barbie-hq.webp';
 productImages.power = '/menu/products/combo-power-hq.webp';
 productImages.tropical = '/menu/products/combo-tropical-hq.webp';
+// Algumas fotos geradas têm transparência nas bordas; use as versões achatadas
+// para manter o fundo rosado consistente em cards pequenos e no mobile.
+productImages['banana-ball'] = '/menu/products/combo-banana-ball-hq-flat.webp';
+productImages['kids-1'] = '/menu/products/combo-kids-1-hq-flat.webp';
+productImages.manila = '/menu/products/combo-manila-hq-flat.webp';
+productImages['pistache-berry'] = '/menu/products/combo-pistache-berry-hq-flat.webp';
+productImages.power = '/menu/products/combo-power-hq-flat.webp';
 
 const modifierImages: Record<string, string> = {
   'base-acai': '/menu/ingredients/acai.jpg',
@@ -71,13 +78,27 @@ const generatedModifierImageIds = new Set([
 export function optimizedMenuImage(url?: string): string | undefined {
   if (!url?.startsWith('/menu/')) return url;
   const webp = url.replace(/\.(?:png|jpe?g)$/i, '.webp');
-  if (webp.endsWith('-hq.webp')) return webp;
+  if (/-hq(?:-flat)?\.webp$/i.test(webp)) return webp;
   if (webp.startsWith('/menu/ingredients/') || webp.startsWith('/menu/generated/') || webp.startsWith('/menu/products/')) return webp.replace(/\.webp$/i, '-hq.webp');
   return webp;
 }
 
 export function resolveProductImage(id: string, current?: string): string {
-  return optimizedMenuImage(productImages[id] || current || '/menu/products/acai-monte-seu.jpg')!;
+  const defaultImage = productImages[id];
+  // URLs informadas no painel (Firebase Storage, CDN ou uma imagem local própria)
+  // precisam vencer o padrão do catálogo. O seed antigo só deve ser atualizado
+  // automaticamente para a versão HQ correspondente.
+  const legacySeedUrls = new Set([
+    `/menu/products/${id}.webp`,
+    `/menu/products/${id}.jpg`,
+    `/menu/products/combo-${id}.webp`,
+    `/menu/products/combo-${id}.jpg`,
+    '/menu/products/acai-monte-seu.webp',
+    '/menu/products/milk-shake.webp',
+    '/menu/products/salada-de-frutas.webp',
+  ]);
+  if (current && !legacySeedUrls.has(current) && current !== defaultImage) return optimizedMenuImage(current)!;
+  return optimizedMenuImage(defaultImage || current || '/menu/products/acai-monte-seu.jpg')!;
 }
 
 export function resolveModifierImage(id: string, current?: string): string {

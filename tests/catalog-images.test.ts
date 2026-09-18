@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveModifierImage } from '@/shared/catalog-images';
+import { resolveModifierImage, resolveProductImage } from '@/shared/catalog-images';
 
 describe('imagens dos complementos', () => {
   it('usa uma imagem própria para cada fruta do cardápio', () => {
@@ -14,5 +14,10 @@ describe('imagens dos complementos', () => {
   it('corrige o fallback antigo de morango sem sobrescrever uma imagem personalizada', () => {
     expect(resolveModifierImage('fruta-mamao', '/menu/ingredients/morango.jpg')).toBe('/menu/ingredients/mamao-hq.webp');
     expect(resolveModifierImage('fruta-mamao', '/uploads/mamao-da-loja.jpg')).toBe('/uploads/mamao-da-loja.jpg');
+  });
+
+  it('preserva a imagem personalizada informada no painel do produto', () => {
+    expect(resolveProductImage('kids-2', 'https://cdn.exemplo.com/kids-2.webp')).toBe('https://cdn.exemplo.com/kids-2.webp');
+    expect(resolveProductImage('kids-2', '/menu/products/combo-kids-2.webp')).toBe('/menu/products/combo-kids-2-hq.webp');
   });
 });
