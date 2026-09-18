@@ -26,6 +26,7 @@ import {
   type ProductSize,
 } from '@/shared/domain';
 import { normalizeCatalogProduct } from '@/shared/catalog-normalization';
+import { resolveProductImage } from '@/shared/catalog-images';
 
 type SizeDraft = { id: string; label: string; price: string; active: boolean };
 const defaultSizes: SizeDraft[] = [
@@ -236,8 +237,13 @@ export default function CatalogPage() {
         {products.map((product) => (
           <article
             key={product.id}
-            className="rounded-[24px] bg-white p-5 shadow-sm"
+            className="surface overflow-hidden rounded-3xl"
           >
+            <div className="relative aspect-[16/8] overflow-hidden bg-surface-warm">
+              <img src={resolveProductImage(product.id, product.imageUrl)} alt="" loading="lazy" className="size-full object-cover" />
+              <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-black text-brand-deep">{product.sizes.filter((size) => size.active).length} tamanhos ativos</span>
+            </div>
+            <div className="p-5">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <span className="text-xs font-bold text-[#a62c63]">
@@ -285,6 +291,7 @@ export default function CatalogPage() {
             >
               Editar produto
             </button>
+            </div>
           </article>
         ))}
       </div>
