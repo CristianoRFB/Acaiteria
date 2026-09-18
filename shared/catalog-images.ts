@@ -72,7 +72,7 @@ export function optimizedMenuImage(url?: string): string | undefined {
   if (!url?.startsWith('/menu/')) return url;
   const webp = url.replace(/\.(?:png|jpe?g)$/i, '.webp');
   if (webp.endsWith('-hq.webp')) return webp;
-  if (webp.startsWith('/menu/ingredients/') || webp.startsWith('/menu/generated/')) return webp.replace(/\.webp$/i, '-hq.webp');
+  if (webp.startsWith('/menu/ingredients/') || webp.startsWith('/menu/generated/') || webp.startsWith('/menu/products/')) return webp.replace(/\.webp$/i, '-hq.webp');
   return webp;
 }
 
