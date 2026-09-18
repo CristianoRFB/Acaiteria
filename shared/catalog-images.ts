@@ -8,7 +8,7 @@ const productImages: Record<string, string> = {
   'salada-de-frutas': '/menu/products/salada-de-frutas-hq.webp',
   'agua-sem-gas': '/menu/generated/agua-sem-gas.png',
   'agua-com-gas': '/menu/generated/agua-com-gas.png',
-  refrigerante: '/menu/generated/refrigerante.png',
+  refrigerante: '/menu/generated/refri-coca-cola-hq.webp',
 };
 
 const comboIds = ['barbie', 'banana-ball', 'beijinho', 'bem-casado', 'chocomaster', 'dos-sonhos', 'favorito', 'power', 'raspas', 'saboroso', 'jade', 'pistache-berry', 'yogo-top', 'joaninha', 'kids-1', 'kids-2', 'mais-sabor', 'manila', 'moranguete', 'prestigio', 'supreme', 'tropical', '220-volts', 'santa-fe', 'explosao-de-oreo', 'nuvem'];
@@ -70,7 +70,10 @@ const generatedModifierImageIds = new Set([
 /** Mantém fotos do cardápio leves para redes móveis, inclusive em catálogos já cadastrados. */
 export function optimizedMenuImage(url?: string): string | undefined {
   if (!url?.startsWith('/menu/')) return url;
-  return url.replace(/\.(?:png|jpe?g)$/i, '.webp');
+  const webp = url.replace(/\.(?:png|jpe?g)$/i, '.webp');
+  if (webp.endsWith('-hq.webp')) return webp;
+  if (webp.startsWith('/menu/ingredients/') || webp.startsWith('/menu/generated/')) return webp.replace(/\.webp$/i, '-hq.webp');
+  return webp;
 }
 
 export function resolveProductImage(id: string, current?: string): string {
@@ -78,6 +81,7 @@ export function resolveProductImage(id: string, current?: string): string {
 }
 
 export function resolveModifierImage(id: string, current?: string): string {
+  if (id === 'refri-coca-cola') return '/menu/generated/refri-coca-cola-hq.webp';
   if (generatedModifierImageIds.has(id)) return optimizedMenuImage(`/menu/generated/${id}.png`)!;
   if (modifierImages[id] && (!current || current === '/menu/ingredients/morango.jpg')) return optimizedMenuImage(modifierImages[id])!;
   if (current) return optimizedMenuImage(current)!;

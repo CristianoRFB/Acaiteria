@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowLeft, ArrowRight, BookOpen, CheckCircle2, X } from 'lucide-react';
+import { ArrowDownRight, ArrowLeft, ArrowRight, BookOpen, CheckCircle2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '@/components/providers';
@@ -61,6 +61,10 @@ export function AdminTutorial() {
           <p className="text-xs font-black uppercase tracking-[.16em] text-[#a62c63]">Passo {stepIndex + 1} de {active.steps.length}</p>
           <h3 className="mt-3 text-2xl font-black text-[#2b1722]">{step.title}</h3>
           <p className="mt-3 text-base leading-relaxed text-[#6f5360]">{step.text}</p>
+          {step.image && <figure className="relative mt-6 overflow-hidden rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-2">
+            <img src={step.image} alt={step.imageAlt ?? ''} className="max-h-56 w-full rounded-xl object-contain object-top sm:max-h-64" loading="lazy" />
+            <figcaption className="absolute right-3 top-3 flex items-center gap-1.5 rounded-full bg-[#d7f04a] px-3 py-1.5 text-[11px] font-black text-[#351924] shadow-lg"><ArrowDownRight className="size-4" /> {step.hint ?? 'Veja aqui'}</figcaption>
+          </figure>}
           <div className="mt-8 flex flex-wrap items-center justify-between gap-3">
             <button type="button" onClick={() => finish('skipped')} className="text-sm font-black text-[#826a75] hover:text-[#82204f]">Pular tutorial</button>
             <div className="flex gap-2"><button type="button" disabled={stepIndex === 0} onClick={() => setStepIndex((current) => current - 1)} className="inline-flex h-11 items-center gap-2 rounded-full border border-[#82204f]/15 px-4 text-sm font-black text-[#82204f] disabled:cursor-not-allowed disabled:opacity-40"><ArrowLeft className="size-4" /> Voltar</button><button type="button" onClick={() => isLast ? finish('completed') : setStepIndex((current) => current + 1)} className="inline-flex h-11 items-center gap-2 rounded-full bg-[#82204f] px-5 text-sm font-black text-white">{isLast ? <><CheckCircle2 className="size-4" /> Concluir</> : <>Próximo <ArrowRight className="size-4" /></>}</button></div>
