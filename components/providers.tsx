@@ -27,7 +27,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: !useDevelopmentSeed, development: useDevelopmentSeed });
   useEffect(() => {
     if (useDevelopmentSeed || !hasFirebaseConfig) {
-      setState({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: false, development: true });
+      setState({ catalog: enrichCatalogImages(withBeverageOptions(developmentCatalog)), config: developmentStoreConfig, promotions: [], loading: false, development: true });
       return;
     }
     let db;
