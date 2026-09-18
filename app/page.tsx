@@ -3,10 +3,10 @@
 import { ArrowRight, Clock3, MapPin, Timer, WalletCards } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { LandingHero } from '@/components/landing-hero';
 import { PublicHeader } from '@/components/public-header';
 import { OrderLookup } from '@/components/order-lookup';
 import { useCatalog } from '@/components/providers';
-import { Button } from '@/components/ui/button';
 import { formatBRL, formatNextOpening, getStoreAvailability, type Product, type ProductCategory, type Promotion } from '@/shared/domain';
 import { resolveProductImage } from '@/shared/catalog-images';
 
@@ -23,31 +23,16 @@ export default function Home() {
   const sundayHours = config.hours.find((day) => day.day === 0)?.windows.map((window) => `${window.open} às ${window.close}`).join(' / ') || 'A confirmar';
 
   const heroImage = resolveProductImage(primary?.id ?? 'acai-monte-seu', primary?.imageUrl);
+  const combo = products.find((product) => product.categoryId === 'combinados') ?? products.find((product) => product.id === 'barbie');
+  const drink = products.find((product) => product.id === 'refrigerante') ?? products.find((product) => product.categoryId === 'bebidas');
+  const heroSlides = [
+    { eyebrow: 'Açaí do seu jeito', title: 'Seu sabor, do seu jeito.', description: 'Monte seu copo com açaí cremoso, frutas frescas e os complementos que você mais gosta.', cta: 'Montar meu copo', href: primary ? `/montar/${primary.id}` : '#cardapio', image: '/landing/acai-society-hero.webp', imageAlt: 'Três opções coloridas de açaí com frutas e granola', tag: 'Mais pedido', accent: 'yellow' as const },
+    { eyebrow: 'Combinados da casa', title: 'Uma combinação que vira memória.', description: combo?.description || 'Escolha uma combinação pronta e personalize do seu jeito antes de finalizar.', cta: 'Ver combinados', href: '#categoria-combinados', image: combo ? resolveProductImage(combo.id, combo.imageUrl) : heroImage, imageAlt: combo?.name || 'Açaí combinado com frutas e complementos', tag: 'Feitos na hora', accent: 'lime' as const },
+    { eyebrow: 'Peça sem complicação', title: 'Do primeiro clique ao pedido.', description: 'Cardápio completo, pagamento simples e acompanhamento do pedido em tempo real.', cta: 'Ver cardápio', href: '#cardapio', image: drink ? resolveProductImage(drink.id, drink.imageUrl) : heroImage, imageAlt: drink?.name || 'Bebida gelada da Açaí + Sabor', tag: 'Tudo fresquinho', accent: 'pink' as const },
+  ];
   return <main className="page-shell">
     <PublicHeader />
-    <section className="relative overflow-hidden border-b border-brand/10">
-      <div className="absolute -right-32 -top-28 size-80 rounded-full bg-secondary/25 blur-3xl" />
-      <div className="absolute -bottom-44 left-1/3 size-80 rounded-full bg-accent/20 blur-3xl" />
-      <div className="mx-auto grid max-w-6xl items-center gap-8 px-4 py-10 sm:px-6 sm:py-16 lg:grid-cols-[1.05fr_.95fr] lg:py-20">
-        <div className="relative z-10">
-          <div className={`status-badge mb-5 border ${open ? 'border-emerald-700/15 bg-emerald-50 text-emerald-800' : 'border-amber-700/15 bg-amber-50 text-amber-900'}`}>
-            <span className={`size-2 rounded-full ${open ? 'bg-emerald-500' : 'bg-amber-500'}`} />
-            {open ? `ABERTO AGORA${availability.closesAt ? ` · até ${availability.closesAt}` : ''}` : `FECHADO NO MOMENTO · ${availability.reason === 'OUTSIDE_HOURS' ? formatNextOpening(availability.nextOpening) : config.pauseMessage || 'Pedidos indisponíveis'}`}
-          </div>
-          <h1 className="max-w-xl text-5xl font-black leading-[.94] tracking-[-0.06em] text-brand-strong sm:text-6xl lg:text-7xl">Seu sabor, do seu jeito.</h1>
-          <p className="mt-5 max-w-md text-lg leading-relaxed text-text-muted">Monte seu copo ou escolha um dos nossos combinados. O cardápio completo está logo abaixo.</p>
-          <p className="mt-3 text-sm font-bold text-brand">Tempo estimado: {availability.estimate.label}. <span className="font-normal text-text-muted">{availability.estimate.detail}</span></p>
-          <Button disabled={!primary} className="mt-7 h-13 rounded-full bg-brand px-6 text-base font-bold text-white shadow-[0_14px_30px_rgba(130,32,79,.24)] hover:bg-brand-strong" render={<a href={primary ? `/montar/${primary.id}` : '#cardapio'} />}>
-            Montar meu copo <ArrowRight className="size-5" />
-          </Button>
-        </div>
-        <div className="relative mx-auto aspect-square w-full max-w-[430px]" aria-hidden="true">
-          <div className="absolute inset-[6%] rotate-6 rounded-[38%_62%_52%_48%/47%_41%_59%_53%] bg-[#ffcf3d]" />
-          <img src={heroImage} alt="Açaí da casa Açaí + Sabor" fetchPriority="high" className="absolute inset-[13%] size-[74%] -rotate-3 rounded-[52%_48%_45%_55%/50%_47%_53%_50%] object-cover shadow-[0_30px_60px_rgba(83,20,47,.28)]" />
-          <div className="absolute bottom-[7%] right-[2%] rounded-2xl bg-white px-4 py-3 shadow-xl"><strong className="block text-sm text-brand-strong">Açaí + Sabor</strong><span className="text-xs text-text-muted">Santa Fé do Sul</span></div>
-        </div>
-      </div>
-    </section>
+    <LandingHero slides={heroSlides} open={open} statusText={open ? `Aberto agora${availability.closesAt ? ` · até ${availability.closesAt}` : ''}` : `Fechado · ${availability.reason === 'OUTSIDE_HOURS' ? formatNextOpening(availability.nextOpening) : config.pauseMessage || 'Pedidos indisponíveis'}`} estimate={availability.estimate.label} city={config.city ?? 'Santa Fé do Sul'} />
 
     <OrderLookup />
 
