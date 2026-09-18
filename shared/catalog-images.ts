@@ -64,22 +64,28 @@ const generatedModifierImageIds = new Set([
   'refri-fanta', 'refri-sprite', 'refri-pepsi', 'refri-sukita',
 ]);
 
+/** Mantém fotos do cardápio leves para redes móveis, inclusive em catálogos já cadastrados. */
+export function optimizedMenuImage(url?: string): string | undefined {
+  if (!url?.startsWith('/menu/')) return url;
+  return url.replace(/\.(?:png|jpe?g)$/i, '.webp');
+}
+
 export function resolveProductImage(id: string, current?: string): string {
-  return productImages[id] || current || '/menu/products/acai-monte-seu.jpg';
+  return optimizedMenuImage(productImages[id] || current || '/menu/products/acai-monte-seu.jpg')!;
 }
 
 export function resolveModifierImage(id: string, current?: string): string {
-  if (generatedModifierImageIds.has(id)) return `/menu/generated/${id}.png`;
-  if (modifierImages[id] && (!current || current === '/menu/ingredients/morango.jpg')) return modifierImages[id];
-  if (current) return current;
-  if (modifierImages[id]) return modifierImages[id];
-  if (id.startsWith('base-')) return '/menu/ingredients/acai.jpg';
-  if (id.startsWith('mousse-')) return '/menu/ingredients/mousse-morango.jpg';
-  if (id.startsWith('fruta-')) return '/menu/ingredients/morango.jpg';
-  if (id.startsWith('cobertura-')) return '/menu/ingredients/leite-condensado.jpg';
-  if (id.startsWith('sorvete-') || id.startsWith('bola-')) return '/menu/products/sorvete.jpg';
-  if (id.startsWith('milk-')) return '/menu/products/milk-shake.jpg';
-  if (id.startsWith('chocolate-')) return '/menu/ingredients/granulado.jpg';
-  if (id.startsWith('diverso-')) return '/menu/ingredients/granola.jpg';
-  return '/menu/ingredients/granola.jpg';
+  if (generatedModifierImageIds.has(id)) return optimizedMenuImage(`/menu/generated/${id}.png`)!;
+  if (modifierImages[id] && (!current || current === '/menu/ingredients/morango.jpg')) return optimizedMenuImage(modifierImages[id])!;
+  if (current) return optimizedMenuImage(current)!;
+  if (modifierImages[id]) return optimizedMenuImage(modifierImages[id])!;
+  if (id.startsWith('base-')) return optimizedMenuImage('/menu/ingredients/acai.jpg')!;
+  if (id.startsWith('mousse-')) return optimizedMenuImage('/menu/ingredients/mousse-morango.jpg')!;
+  if (id.startsWith('fruta-')) return optimizedMenuImage('/menu/ingredients/morango.jpg')!;
+  if (id.startsWith('cobertura-')) return optimizedMenuImage('/menu/ingredients/leite-condensado.jpg')!;
+  if (id.startsWith('sorvete-') || id.startsWith('bola-')) return optimizedMenuImage('/menu/products/sorvete.jpg')!;
+  if (id.startsWith('milk-')) return optimizedMenuImage('/menu/products/milk-shake.jpg')!;
+  if (id.startsWith('chocolate-')) return optimizedMenuImage('/menu/ingredients/granulado.jpg')!;
+  if (id.startsWith('diverso-')) return optimizedMenuImage('/menu/ingredients/granola.jpg')!;
+  return optimizedMenuImage('/menu/ingredients/granola.jpg')!;
 }

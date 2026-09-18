@@ -19,7 +19,7 @@ const beverageModifiers: Modifier[] = [
   maxQuantity: 1,
   allergenKeys: [],
   displayOrder: index + 1,
-  imageUrl: '/menu/products/bebida.jpg',
+  imageUrl: '/menu/products/bebida.webp',
 }));
 
 const beverageGroup: ModifierGroup = {
@@ -51,7 +51,7 @@ function beverageProduct(existing?: Product): Product {
     active: existing?.active ?? true,
     categoryId: existing?.categoryId ?? 'bebidas',
     productType: 'CUSTOMIZABLE',
-    imageUrl: existing?.imageUrl || '/menu/products/bebida.jpg',
+    imageUrl: existing?.imageUrl || '/menu/products/bebida.webp',
     displayOrder: existing?.displayOrder ?? 3,
     sizes: beverageSizes,
     modifierGroupIds: ['sabores-refrigerante'],
