@@ -1,4 +1,4 @@
-import { doc, getDoc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
+import { collection, doc, getDoc, runTransaction, serverTimestamp, type Firestore } from 'firebase/firestore';
 
 import { calculateCartPreview, getCustomerOrderStatusMessage, ORDER_TRANSITIONS, type CartItemDraft, type CatalogSnapshot, type FulfillmentMode, type OrderStatus, type PricedItem } from '@/shared/domain';
 
@@ -43,18 +43,25 @@ export async function updateOrderStatusDirect(db: Firestore, orderId: string, st
     if (!ORDER_TRANSITIONS[current.status]?.includes(status)) throw new Error('Essa mudança de status não é permitida.');
     const statusMessage = getCustomerOrderStatusMessage(status, reason);
     transaction.update(orderRef, { status, statusMessage, updatedAt: serverTimestamp(), statusHistory: [...(current.statusHistory ?? []), { status, at: new Date(), ...(reason ? { reason } : {}) }] });
+    if (status === 'COMPLETED') {
+      const order = snap.data() as { orderNumber?: string; pricing?: { totalCents?: number }; payment?: { method?: string } };
+      const financeRef = doc(collection(db, 'financeEntries'));
+      transaction.set(financeRef, { kind: 'INCOME', category: 'Vendas de açaí', description: `Pedido ${order.orderNumber ?? orderId}`, amountCents: Number(order.pricing?.totalCents ?? 0), date: new Date().toISOString().slice(0, 10), status: 'PAID', paymentMethod: order.payment?.method ?? 'OTHER', orderNumber: order.orderNumber ?? null, sourceOrderId: orderId, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+    }
     if (current.publicCode) transaction.update(doc(db, 'publicOrders', current.publicCode), { status, statusMessage, updatedAt: serverTimestamp() });
   });
 }
 
-export async function updateOrderDetailsDirect(db: Firestore, orderId: string, input: DirectOrderDetailsUpdate) {
+export async function updateOrderDetailsDirect(db: Firestore, orderId: string, input: DirectOrderDetailsUpdate, catalog?: CatalogSnapshot) {
   const orderRef = doc(db, 'orders', orderId);
   await runTransaction(db, async (transaction) => {
     const snap = await transaction.get(orderRef); if (!snap.exists()) throw new Error('Pedido não encontrado.');
     const current = snap.data() as { publicCode?: string; items: PricedItem[]; pricing: { totalCents: number }; fulfillment: { mode: 'PICKUP' | 'DELIVERY' } };
+    const nextItems = input.items && catalog ? calculateCartPreview(input.items, catalog) : null;
+    const nextPricing = nextItems ? { ...current.pricing, subtotalCents: nextItems.subtotalCents, totalCents: nextItems.subtotalCents + Number((current.pricing as { deliveryFeeCents?: number }).deliveryFeeCents ?? 0) } : current.pricing;
     const proposal: PublicOrderEditProposal = { status: 'PENDING', summary: 'A loja fez uma alteração. Confira e aceite para que ela possa confirmar o pedido.', requestedAt: new Date(), before: { items: current.items, pricing: { totalCents: current.pricing.totalCents }, fulfillment: current.fulfillment } };
-    transaction.update(orderRef, { customer: input.customer, notes: input.notes, ...(input.fulfillment ? { fulfillment: input.fulfillment } : {}), ...(input.payment ? { payment: input.payment } : {}), customerEditApproval: { status: 'PENDING' }, updatedAt: serverTimestamp() });
-    if (current.publicCode) transaction.update(doc(db, 'publicOrders', current.publicCode), { ...(input.fulfillment ? { fulfillment: input.fulfillment } : {}), editProposal: proposal, updatedAt: serverTimestamp() });
+    transaction.update(orderRef, { customer: input.customer, notes: input.notes, ...(nextItems ? { items: nextItems.items, pricing: nextPricing } : {}), ...(input.fulfillment ? { fulfillment: input.fulfillment } : {}), ...(input.payment ? { payment: input.payment } : {}), customerEditApproval: { status: 'PENDING' }, updatedAt: serverTimestamp() });
+    if (current.publicCode) transaction.update(doc(db, 'publicOrders', current.publicCode), { ...(nextItems ? { items: nextItems.items, pricing: { totalCents: nextPricing.totalCents } } : {}), ...(input.fulfillment ? { fulfillment: input.fulfillment } : {}), editProposal: proposal, updatedAt: serverTimestamp() });
   });
 }
 

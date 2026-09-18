@@ -236,7 +236,7 @@ export default function OrderDetailPage() {
     setBusy(true); setItemsError(''); setError('');
     try {
       calculateCartPreview(itemDrafts, catalog);
-      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } });
+      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } }, catalog);
       setItemsOpen(false);
     } catch (cause) {
       setItemsError(cause instanceof Error ? cause.message : 'Confira os itens e tente novamente.');
