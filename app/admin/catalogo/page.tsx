@@ -79,6 +79,7 @@ export default function CatalogPage() {
   const [error, setError] = useState('');
   const [categoryError, setCategoryError] = useState('');
   const [sizes, setSizes] = useState<SizeDraft[]>(defaultSizes);
+  const [imageUrl, setImageUrl] = useState('');
   useEffect(() => {
     if (!hasFirebaseConfig || role !== 'admin') return;
     const db = getFirebaseClient().db;
@@ -109,12 +110,14 @@ export default function CatalogPage() {
   function openNew() {
     setEditing(null);
     setSizes(defaultSizes);
+    setImageUrl('');
     setError('');
     setShowForm(true);
   }
   function openEdit(product: Product) {
     setEditing(product);
     setSizes(toDraftSizes(product.sizes));
+    setImageUrl(product.imageUrl ?? '');
     setError('');
     setShowForm(true);
   }
@@ -464,8 +467,47 @@ export default function CatalogPage() {
                 </select>
                 <span className="mt-1 block text-xs font-normal text-[#826a75]">Use a primeira opção para açaí, milk-shake e produtos que o cliente monta.</span>
               </label>
-              <AdminField label="Foto do produto (opcional)" name="imageUrl" defaultValue={editing?.imageUrl} placeholder="Cole aqui o link de uma foto" />
             </div>
+            <section className="mt-5 rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-4" aria-labelledby="image-help-title">
+              <div>
+                <h3 id="image-help-title" className="font-black">Imagem do cardápio</h3>
+                <p className="mt-1 text-xs leading-relaxed text-[#826a75]">
+                  Cole o link público de uma foto. Se deixar em branco, o sistema usa a imagem padrão deste produto.
+                </p>
+              </div>
+              <div className="mt-4 grid gap-4 sm:grid-cols-[150px_1fr] sm:items-start">
+                <div className="aspect-square overflow-hidden rounded-2xl border border-[#82204f]/10 bg-white">
+                  <img
+                    src={imageUrl || resolveProductImage(editing?.id ?? 'acai-monte-seu', editing?.imageUrl)}
+                    alt="Prévia da imagem do produto"
+                    className="size-full object-cover"
+                    onError={(event) => { event.currentTarget.src = resolveProductImage(editing?.id ?? 'acai-monte-seu'); }}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold" htmlFor="product-image-url">
+                    Link da foto
+                    <input
+                      id="product-image-url"
+                      name="imageUrl"
+                      type="url"
+                      value={imageUrl}
+                      onChange={(event) => setImageUrl(event.target.value)}
+                      placeholder="https://.../foto-do-acai.jpg"
+                      className="mt-2 h-11 w-full rounded-xl border border-[#82204f]/15 bg-white px-3 font-normal"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setImageUrl('')}
+                    className="mt-3 min-h-10 rounded-full border border-[#82204f]/20 px-4 text-xs font-black text-[#82204f] hover:bg-white"
+                  >
+                    Usar imagem padrão
+                  </button>
+                  <p className="mt-2 text-xs text-[#826a75]">Dica: use JPG, PNG ou WebP em formato quadrado para o melhor resultado.</p>
+                </div>
+              </div>
+            </section>
             <div className="mt-4">
               <AdminTextarea
                 label="Descrição curta"

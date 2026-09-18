@@ -1,18 +1,18 @@
 const productImages: Record<string, string> = {
-  'acai-monte-seu': '/menu/products/acai-monte-seu-hq.webp',
-  'milk-shake': '/menu/products/milk-shake.jpg',
-  sorvete: '/menu/products/sorvete.jpg',
+  'acai-monte-seu': '/menu/products/acai-monte-seu-gold.webp',
+  'milk-shake': '/menu/products/milk-shake-hq.webp',
+  sorvete: '/menu/products/sorvete-hq.webp',
   'shake-acai-banana-whey': '/menu/generated/shake-acai-banana-whey.png',
   'shake-acai-morango': '/menu/generated/shake-acai-morango.png',
   'shake-acai-banana': '/menu/generated/shake-acai-banana.png',
-  'salada-de-frutas': '/menu/products/salada-de-frutas.jpg',
+  'salada-de-frutas': '/menu/products/salada-de-frutas-hq.webp',
   'agua-sem-gas': '/menu/generated/agua-sem-gas.png',
   'agua-com-gas': '/menu/generated/agua-com-gas.png',
   refrigerante: '/menu/generated/refrigerante.png',
 };
 
 const comboIds = ['barbie', 'banana-ball', 'beijinho', 'bem-casado', 'chocomaster', 'dos-sonhos', 'favorito', 'power', 'raspas', 'saboroso', 'jade', 'pistache-berry', 'yogo-top', 'joaninha', 'kids-1', 'kids-2', 'mais-sabor', 'manila', 'moranguete', 'prestigio', 'supreme', 'tropical', '220-volts', 'santa-fe', 'explosao-de-oreo', 'nuvem'];
-for (const id of comboIds) productImages[id] = `/menu/products/combo-${id}.jpg`;
+for (const id of comboIds) productImages[id] = `/menu/products/combo-${id}-hq.webp`;
 productImages.barbie = '/menu/products/combo-barbie-hq.webp';
 productImages.power = '/menu/products/combo-power-hq.webp';
 productImages.tropical = '/menu/products/combo-tropical-hq.webp';
