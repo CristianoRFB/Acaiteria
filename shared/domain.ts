@@ -132,6 +132,9 @@ export interface CatalogSnapshot {
   modifiers: Modifier[];
 }
 
+/** Limite operacional do pedido: R$ 100.000,00 em centavos inteiros. */
+export const MAX_ORDER_TOTAL_CENTS = 10_000_000;
+
 export interface GroupValidation { valid: boolean; errors: string[]; selectionCount: number }
 export interface PricedModifierSelection extends ModifierSelection {
   name: string;
@@ -271,6 +274,7 @@ export function calculateModifierCharges(group: ModifierGroup, size: ProductSize
   for (const selection of selections) {
     const modifier = modifiersById.get(selection.modifierId);
     if (!modifier) continue;
+    if (!Number.isSafeInteger(modifier.priceCents) || modifier.priceCents < 0 || modifier.priceCents > MAX_ORDER_TOTAL_CENTS) throw new Error('Preço de adicional inválido.');
     const free = modifier.premium || group.pricingMode === 'individual' ? 0 : Math.min(freeLeft, selection.quantity);
     freeLeft -= free;
     const chargedQuantity = selection.quantity - free;
@@ -284,6 +288,7 @@ export function calculateItemPrice(draft: CartItemDraft, catalog: CatalogSnapsho
   if (!product) throw new Error('Produto indisponível.');
   const size = product.sizes.find((candidate) => candidate.id === draft.sizeId && candidate.active);
   if (!size) throw new Error('Tamanho indisponível.');
+  if (!Number.isSafeInteger(size.basePriceCents) || size.basePriceCents < 0 || size.basePriceCents > MAX_ORDER_TOTAL_CENTS) throw new Error('Preço do produto inválido.');
   if (!Number.isSafeInteger(draft.quantity) || draft.quantity < 1 || draft.quantity > 20) throw new Error('Quantidade inválida.');
 
   const normalized = normalizeSelections(draft.selections);
@@ -311,12 +316,16 @@ export function calculateItemPrice(draft: CartItemDraft, catalog: CatalogSnapsho
   }
   for (const selection of normalized) if (!effectiveGroups.some((group) => group.id === selection.groupId)) throw new Error('Grupo de adicionais inválido.');
   const unitPriceCents = size.basePriceCents + modifiersTotal;
-  return { productId: product.id, productName: product.name, sizeId: size.id, sizeLabel: size.label, quantity: draft.quantity, modifierSelections: pricedGroups, unitPriceCents, totalPriceCents: unitPriceCents * draft.quantity, ...(draft.notes ? { notes: draft.notes.slice(0, 300) } : {}) };
+  const totalPriceCents = unitPriceCents * draft.quantity;
+  if (!Number.isSafeInteger(unitPriceCents) || !Number.isSafeInteger(totalPriceCents) || unitPriceCents < 0 || totalPriceCents < 0 || totalPriceCents > MAX_ORDER_TOTAL_CENTS) throw new Error('Total do item ultrapassa o limite permitido.');
+  return { productId: product.id, productName: product.name, sizeId: size.id, sizeLabel: size.label, quantity: draft.quantity, modifierSelections: pricedGroups, unitPriceCents, totalPriceCents, ...(draft.notes ? { notes: draft.notes.slice(0, 300) } : {}) };
 }
 
 export function calculateCartPreview(items: CartItemDraft[], catalog: CatalogSnapshot): { items: PricedItem[]; subtotalCents: number } {
   const priced = items.map((item) => calculateItemPrice(item, catalog));
-  return { items: priced, subtotalCents: sumMoney(priced.map((item) => item.totalPriceCents)) };
+  const subtotalCents = sumMoney(priced.map((item) => item.totalPriceCents));
+  if (subtotalCents > MAX_ORDER_TOTAL_CENTS) throw new Error('Total do pedido ultrapassa o limite permitido.');
+  return { items: priced, subtotalCents };
 }
 
 const dayMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };

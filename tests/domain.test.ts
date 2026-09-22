@@ -96,4 +96,11 @@ describe('adulteração', () => {
     expect(() => calculateItemPrice({ cartItemId: 'x', productId: 'fake', sizeId: 'x', selections: [], quantity: 1 }, developmentCatalog)).toThrow(/Produto/);
     expect(() => calculateItemPrice({ cartItemId: 'x', productId: 'agua-sem-gas', sizeId: 'fake', selections: [], quantity: 1 }, developmentCatalog)).toThrow(/Tamanho/);
   });
+
+  it('rejeita preço negativo ou pedido acima do limite operacional', () => {
+    const negative = { ...developmentCatalog, products: developmentCatalog.products.map((product) => product.id === 'agua-sem-gas' ? { ...product, sizes: product.sizes.map((size) => ({ ...size, basePriceCents: -1 })) } : product) };
+    expect(() => calculateItemPrice({ cartItemId: 'x', productId: 'agua-sem-gas', sizeId: 'unico', selections: [], quantity: 1 }, negative)).toThrow(/Preço/);
+    const huge = { ...developmentCatalog, products: developmentCatalog.products.map((product) => product.id === 'agua-sem-gas' ? { ...product, sizes: product.sizes.map((size) => ({ ...size, basePriceCents: 6_000_000 })) } : product) };
+    expect(() => calculateCartPreview([{ cartItemId: 'x', productId: 'agua-sem-gas', sizeId: 'unico', selections: [], quantity: 2 }], huge)).toThrow(/limite/);
+  });
 });

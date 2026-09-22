@@ -5,8 +5,8 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 
 ## Correções aplicadas
 
-- Escritas de pedidos e do espelho público foram fechadas para o cliente. Criação, alteração de itens/preços, status, previsão e estorno passam pelas funções autenticadas.
-- O checkout não usa mais fallback de gravação direta no Firestore. Quando o backend não responde, o pedido fica preservado no formulário e o cliente recebe a alternativa de contato pelo WhatsApp.
+- O checkout em plano Spark mantém a gravação direta do pedido e do espelho público, mas agora valida formato, limites, pagamento, endereço, quantidade de itens e totais antes do batch atômico. Alteração de itens/preços, status, previsão e estorno continuam restritos ao painel autenticado.
+- Quando a gravação do checkout perde a conexão depois do envio, o mesmo `clientRequestId` é reutilizado para evitar duplicação; se o envio não for confirmado, o formulário permanece preservado e o cliente recebe a alternativa de contato pelo WhatsApp.
 - Edição e mudança de situação do Financeiro passaram para funções autenticadas. Lançamentos automáticos vinculados a pedido ou venda local não podem ser editados nem apagados pelo painel.
 - O registro de venda local continua transacional: Caixa e Financeiro são gravados juntos, com idempotência e efeito correto por forma de pagamento.
 - A consulta de pedidos concluídos usada pela visão comercial ganhou índice por `status` e `updatedAt`.
@@ -18,7 +18,7 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 | Área | Resultado | Observação |
 |---|---|---|
 | Autenticação e papéis | Passou | Funções administrativas exigem `admin` ou `staff`; Financeiro exige `admin`. |
-| Pedidos e preços | Passou | Backend recalcula catálogo, preço e taxa; escrita direta foi bloqueada. |
+| Pedidos e preços | Passou | O checkout recalcula catálogo, preço e taxa no cliente antes do batch; limites e totais inconsistentes são rejeitados pelas validações e Rules. |
 | Caixa | Passou | Operações usam função autenticada, caixa aberto e transação. |
 | Financeiro | Passou | Manual e automático passam pelo backend; exclusão direta bloqueada. |
 | Cliente e acompanhamento | Passou | Leitura pública fica limitada ao espelho/código; resposta de edição aceita somente decisão pendente. |

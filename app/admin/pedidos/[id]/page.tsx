@@ -18,7 +18,7 @@ import { KitchenTicket } from '@/components/kitchen-ticket';
 import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
-import { getFirebaseClient } from '@/lib/firebase/client';
+import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import { finalizeOrderEditDirect, updateOrderDetailsDirect, updateOrderEstimateDirect, updateOrderStatusDirect, type CustomerEditDecision, type PublicOrderEditProposal } from '@/lib/direct-orders';
 import { useCatalog } from '@/components/providers';
 import {
@@ -86,20 +86,19 @@ export default function OrderDetailPage() {
   const [publicEditProposal, setPublicEditProposal] = useState<PublicOrderEditProposal | null>(null);
   const [kitchenOpen, setKitchenOpen] = useState(false);
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
-  useEffect(
-    () =>
-      onSnapshot(
+  useEffect(() => {
+    if (!hasFirebaseConfig) { setError('Firebase não configurado.'); return undefined; }
+    try {
+      return onSnapshot(
         doc(getFirebaseClient().db, 'orders', id),
-        (snapshot) =>
-          setOrder(
-            snapshot.exists()
-              ? ({ id: snapshot.id, ...snapshot.data() } as FullOrder)
-              : null,
-          ),
+        (snapshot) => setOrder(snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as FullOrder) : null),
         (cause) => setError(cause.message),
-      ),
-    [id],
-  );
+      );
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível carregar o pedido.');
+      return undefined;
+    }
+  }, [id]);
   useEffect(() => {
     if (!order) return;
     setEditFields({ name: order.customer.name, whatsapp: order.customer.whatsapp, street: order.customer.address?.street ?? '', number: order.customer.address?.number ?? '', complement: order.customer.address?.complement ?? '', neighborhood: order.customer.address?.neighborhood ?? '', reference: order.customer.address?.reference ?? '', notes: order.notes ?? '' });
@@ -109,8 +108,13 @@ export default function OrderDetailPage() {
   }, [order]);
   useEffect(() => { if (order?.estimatedMinutes) setEstimateMinutes(String(order.estimatedMinutes)); }, [order?.estimatedMinutes]);
   useEffect(() => {
-    if (!order?.publicCode) { setPublicEditProposal(null); return undefined; }
-    return onSnapshot(doc(getFirebaseClient().db, 'publicOrders', order.publicCode), (snapshot) => setPublicEditProposal((snapshot.data()?.editProposal as PublicOrderEditProposal | undefined) ?? null), () => setPublicEditProposal(null));
+    if (!hasFirebaseConfig || !order?.publicCode) { setPublicEditProposal(null); return undefined; }
+    try {
+      return onSnapshot(doc(getFirebaseClient().db, 'publicOrders', order.publicCode), (snapshot) => setPublicEditProposal((snapshot.data()?.editProposal as PublicOrderEditProposal | undefined) ?? null), () => setPublicEditProposal(null));
+    } catch {
+      setPublicEditProposal(null);
+      return undefined;
+    }
   }, [order?.publicCode]);
   async function update(status: OrderStatus, reason?: string): Promise<boolean> {
     if (!order) return false;

@@ -4,6 +4,7 @@ const defaultHours: StoreDayHours[] = [
   { day: 0, closed: false, windows: [{ open: '15:00', close: '21:50' }] },
   ...[1, 2, 3, 4, 5, 6].map((day) => ({ day, closed: false, windows: [{ open: '14:00', close: '21:50' }] })),
 ];
+const timePattern = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export const defaultStorePublicConfig: StorePublicConfig = {
   storeName: 'Açaí + Sabor',
@@ -49,7 +50,7 @@ function safeWindows(value: unknown, fallback: StoreHoursWindow[]): StoreHoursWi
   if (!Array.isArray(value)) return fallback.map((window) => ({ ...window }));
   const windows = value.filter((item) => {
     const candidate = record(item);
-    return typeof candidate.open === 'string' && typeof candidate.close === 'string';
+    return typeof candidate.open === 'string' && timePattern.test(candidate.open) && typeof candidate.close === 'string' && timePattern.test(candidate.close);
   }).map((item) => ({ open: String(record(item).open), close: String(record(item).close) }));
   return windows.length ? windows : fallback.map((window) => ({ ...window }));
 }

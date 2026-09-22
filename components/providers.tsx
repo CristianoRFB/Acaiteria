@@ -73,6 +73,54 @@ interface CartState {
 const CartContext = createContext<CartState | null>(null);
 const CART_KEY = 'acai-mais-sabor-cart-v2';
 
+function newCartItemId(prefix = 'cart') {
+  try { return `${prefix}-${crypto.randomUUID()}`; } catch { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
+}
+
+/**
+ * localStorage é editável pelo usuário e pode conter JSON quebrado ou um
+ * carrinho gigantesco. Normalize antes de renderizar para que isso nunca
+ * derrube o cardápio/checkout.
+ */
+function sanitizeCartDrafts(value: unknown): CartItemDraft[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate, index) => {
+    if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return [];
+    const raw = candidate as Record<string, unknown>;
+    if (typeof raw.productId !== 'string' || !raw.productId.trim() || typeof raw.sizeId !== 'string' || !raw.sizeId.trim()) return [];
+    const quantity = typeof raw.quantity === 'number' && Number.isSafeInteger(raw.quantity)
+      ? Math.max(1, Math.min(20, raw.quantity))
+      : 1;
+    const selections = Array.isArray(raw.selections) ? raw.selections.flatMap((group) => {
+      if (!group || typeof group !== 'object' || Array.isArray(group)) return [];
+      const groupValue = group as Record<string, unknown>;
+      if (typeof groupValue.groupId !== 'string' || !groupValue.groupId.trim() || !Array.isArray(groupValue.items)) return [];
+      const items = groupValue.items.flatMap((item) => {
+        if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+        const itemValue = item as Record<string, unknown>;
+        if (typeof itemValue.modifierId !== 'string' || !itemValue.modifierId.trim()) return [];
+        const itemQuantity = typeof itemValue.quantity === 'number' && Number.isSafeInteger(itemValue.quantity)
+          ? Math.max(1, Math.min(20, itemValue.quantity))
+          : 1;
+        return [{ modifierId: itemValue.modifierId.trim(), quantity: itemQuantity }];
+      }).slice(0, 60);
+      return [{ groupId: groupValue.groupId.trim(), items }];
+    }).slice(0, 30) : [];
+    return [{
+      cartItemId: typeof raw.cartItemId === 'string' && raw.cartItemId.trim() ? raw.cartItemId.slice(0, 120) : newCartItemId(`restored-${index}`),
+      productId: raw.productId.trim().slice(0, 120),
+      sizeId: raw.sizeId.trim().slice(0, 120),
+      selections,
+      quantity,
+      ...(typeof raw.notes === 'string' && raw.notes.trim() ? { notes: raw.notes.slice(0, 300) } : {}),
+      ...(typeof raw.catalogVersion === 'string' ? { catalogVersion: raw.catalogVersion.slice(0, 80) } : {}),
+    }];
+  }).slice(0, 30);
+}
+
+function removeStoredCart() { try { localStorage.removeItem(CART_KEY); } catch { /* armazenamento bloqueado */ } }
+function persistCart(value: CartItemDraft[]) { try { localStorage.setItem(CART_KEY, JSON.stringify(value)); } catch { /* quota/modo privado: a sessão continua em memória */ } }
+
 export function CartProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<CartItemDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
@@ -80,12 +128,12 @@ export function CartProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(CART_KEY);
-      const loaded = saved ? JSON.parse(saved) as CartItemDraft[] : [];
-      itemsRef.current = Array.isArray(loaded) ? loaded : [];
+      const loaded = saved ? JSON.parse(saved) : [];
+      itemsRef.current = sanitizeCartDrafts(loaded);
       setItems(itemsRef.current);
       setHydrated(true);
     } catch {
-      localStorage.removeItem(CART_KEY);
+      removeStoredCart();
       itemsRef.current = [];
       setItems([]);
       setHydrated(true);
@@ -94,14 +142,14 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const commit = useCallback((updateItems: (current: CartItemDraft[]) => CartItemDraft[]) => {
     const next = updateItems(itemsRef.current);
     itemsRef.current = next;
-    localStorage.setItem(CART_KEY, JSON.stringify(next));
+    persistCart(next);
     setItems(next);
   }, []);
-  const add = useCallback((item: Omit<CartItemDraft, 'cartItemId'>) => { const id = crypto.randomUUID(); commit((old) => [...old, { ...item, cartItemId: id }]); return id; }, [commit]);
+  const add = useCallback((item: Omit<CartItemDraft, 'cartItemId'>) => { const id = newCartItemId(); commit((old) => [...old, { ...item, cartItemId: id }].slice(0, 30)); return id; }, [commit]);
   const update = useCallback((id: string, item: Omit<CartItemDraft, 'cartItemId'>) => commit((old) => old.map((candidate) => candidate.cartItemId === id ? { ...item, cartItemId: id } : candidate)), [commit]);
   const remove = useCallback((id: string) => commit((old) => old.filter((item) => item.cartItemId !== id)), [commit]);
   const setQuantity = useCallback((id: string, quantity: number) => commit((old) => old.map((item) => item.cartItemId === id ? { ...item, quantity: Math.max(1, Math.min(20, quantity)) } : item)), [commit]);
-  const duplicate = useCallback((id: string) => commit((old) => { const item = old.find((candidate) => candidate.cartItemId === id); return item ? [...old, { ...item, cartItemId: crypto.randomUUID() }] : old; }), [commit]);
+  const duplicate = useCallback((id: string) => commit((old) => { const item = old.find((candidate) => candidate.cartItemId === id); return item ? [...old, { ...item, cartItemId: newCartItemId() }].slice(0, 30) : old; }), [commit]);
   const clear = useCallback(() => commit(() => []), [commit]);
   const value = useMemo(() => ({ items, hydrated, add, update, remove, setQuantity, duplicate, clear }), [items, hydrated, add, update, remove, setQuantity, duplicate, clear]);
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
@@ -114,12 +162,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, role: null, loading: true });
   useEffect(() => {
     if (!hasFirebaseConfig) { setState({ user: null, role: null, loading: false }); return; }
-    const { auth, db } = getFirebaseClient();
+    let auth: ReturnType<typeof getFirebaseClient>['auth'];
+    let db: ReturnType<typeof getFirebaseClient>['db'];
+    try {
+      ({ auth, db } = getFirebaseClient());
+    } catch {
+      setState({ user: null, role: null, loading: false });
+      return;
+    }
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { setState({ user: null, role: null, loading: false }); return; }
-      const roleDoc = await getDoc(doc(db, 'users', user.uid));
-      const role = roleDoc.exists() ? roleDoc.data().role as Role : null;
-      setState({ user, role, loading: false });
+      try {
+        const roleDoc = await getDoc(doc(db, 'users', user.uid));
+        const role = roleDoc.exists() ? roleDoc.data().role as Role : null;
+        setState({ user, role, loading: false });
+      } catch {
+        // Uma falha transitória no documento de papel não deve deixar o painel
+        // preso em “carregando” nem conceder acesso administrativo.
+        setState({ user, role: null, loading: false });
+      }
     });
   }, []);
   return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;

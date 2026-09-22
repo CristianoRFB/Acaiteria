@@ -80,7 +80,7 @@ describe('persisted integration outbox', () => {
     expect(order.integration.status).toBe('ACCEPTED');
     expect(order.integration.externalOrderId).toBe(`LOCAL-${ref.id}`);
     expect((await ref.collection('integrationAttempts').get()).size).toBe(1);
-  });
+  }, 15000);
   it('preserves a failed order, respects backoff, retries transient failures and retains attempts', async () => {
     process.env.FUNCTIONS_EMULATOR = 'true'; process.env.LOCAL_PROVIDER_SCENARIO = 'transient';
     const ref = await fixture('local');

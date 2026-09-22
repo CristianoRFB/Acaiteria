@@ -21,11 +21,30 @@ export interface DirectCreateOrderInput {
 }
 function publicCode(requestId: string) { const clean = requestId.replace(/[^a-z0-9]/gi, '').slice(0, 10).toUpperCase(); return `A${clean || Math.random().toString(36).slice(2, 10).toUpperCase()}`; }
 
+function validateDirectCreateInput(input: DirectCreateOrderInput) {
+  if (typeof input.clientRequestId !== 'string' || input.clientRequestId.length < 8 || input.clientRequestId.length > 80) throw new Error('Identificador de pedido inválido.');
+  if (typeof input.customer?.name !== 'string' || input.customer.name.trim().length < 2 || input.customer.name.length > 80) throw new Error('Informe seu nome.');
+  if (typeof input.customer?.whatsapp !== 'string' || input.customer.whatsapp.trim().length < 8 || input.customer.whatsapp.length > 30) throw new Error('Informe um WhatsApp válido.');
+  if (!Array.isArray(input.items) || input.items.length < 1 || input.items.length > 30) throw new Error('Adicione pelo menos um item ao pedido.');
+  if (input.fulfillment?.mode !== 'PICKUP' && input.fulfillment?.mode !== 'DELIVERY') throw new Error('Forma de recebimento inválida.');
+  if (input.fulfillment.mode === 'DELIVERY') {
+    const address = input.customer.address;
+    if (!address || typeof address.street !== 'string' || address.street.trim().length < 2 || typeof address.number !== 'string' || !address.number.trim() || typeof address.neighborhood !== 'string' || address.neighborhood.trim().length < 2) throw new Error('Preencha o endereço de entrega.');
+  }
+  if (!Number.isSafeInteger(input.deliveryFeeCents) || input.deliveryFeeCents < 0 || input.deliveryFeeCents > 10_000_000) throw new Error('Taxa de entrega inválida.');
+  if (!['PIX', 'CARD', 'CASH'].includes(input.payment?.method ?? '') || typeof input.payment?.needsChange !== 'boolean') throw new Error('Forma de pagamento inválida.');
+  if (input.payment.method !== 'CASH' && (input.payment.needsChange || input.payment.changeForCents !== undefined)) throw new Error('Troco só pode ser informado para dinheiro.');
+  if (input.notes !== undefined && (typeof input.notes !== 'string' || input.notes.length > 500)) throw new Error('Observação muito longa.');
+}
+
 /** Plano Spark: pedido e espelho público são gravados juntos; a equipe confere antes de confirmar. */
 export async function createOrderDirect(db: Firestore, input: DirectCreateOrderInput, catalog: CatalogSnapshot) {
+  validateDirectCreateInput(input);
   const preview = calculateCartPreview(input.items, catalog); const code = publicCode(input.clientRequestId);
   const orderRef = doc(db, 'orders', input.clientRequestId); const publicRef = doc(db, 'publicOrders', code);
   const pricing = { subtotalCents: preview.subtotalCents, deliveryFeeCents: input.deliveryFeeCents, totalCents: preview.subtotalCents + input.deliveryFeeCents };
+  const changeForCents = input.payment.changeForCents;
+  if (input.payment.method === 'CASH' && input.payment.needsChange && (!Number.isSafeInteger(changeForCents) || (changeForCents ?? 0) < pricing.totalCents)) throw new Error('O valor para troco precisa ser igual ou maior que o total do pedido.');
   const orderNumber = `#${code}`; const statusMessage = getCustomerOrderStatusMessage('NEW');
   // O cliente anônimo não pode ler o pedido privado. Um batch cria os dois documentos de
   // forma atômica sem essa leitura, mantendo as regras restritivas para dados pessoais.

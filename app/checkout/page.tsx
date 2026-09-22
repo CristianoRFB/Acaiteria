@@ -1,7 +1,7 @@
 'use client';
 
 import { ArrowLeft, Bike, CheckCircle2, Clock3, Loader2, MapPin, Store } from 'lucide-react';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { PublicHeader } from '@/components/public-header';
 import { useCart, useCatalog } from '@/components/providers';
@@ -39,6 +39,7 @@ export default function CheckoutPage() {
   const [error, setError] = useState('');
   const [whatsappFallbackUrl, setWhatsappFallbackUrl] = useState('');
   const [now, setNow] = useState(() => new Date());
+  const requestIdRef = useRef<string | null>(null);
 
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 30_000); return () => window.clearInterval(timer); }, []);
   useEffect(() => {
@@ -80,8 +81,14 @@ export default function CheckoutPage() {
     if (paymentMethod === 'CASH' && needsChange && changeForCents! < totalCents) { setError('O valor para troco precisa ser igual ou maior que o total do pedido.'); return; }
     if (!hasFirebaseConfig) { setError('Firebase ainda não foi configurado. O pedido não foi enviado.'); return; }
 
-    const clientRequestId = sessionStorage.getItem('acai-checkout-request-id') ?? crypto.randomUUID();
-    sessionStorage.setItem('acai-checkout-request-id', clientRequestId);
+    let clientRequestId = requestIdRef.current;
+    try {
+      const saved = sessionStorage.getItem('acai-checkout-request-id');
+      if (!clientRequestId && saved && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(saved)) clientRequestId = saved;
+    } catch { /* modo privado/bloqueio de storage: seguimos em memória */ }
+    clientRequestId ??= crypto.randomUUID();
+    requestIdRef.current = clientRequestId;
+    try { sessionStorage.setItem('acai-checkout-request-id', clientRequestId); } catch { /* opcional */ }
     const payload = {
       clientRequestId,
       customer: {
@@ -112,7 +119,8 @@ export default function CheckoutPage() {
     try {
       const response = await createOrderDirect(getFirebaseClient().db, payload, catalog);
       cart.clear();
-      sessionStorage.removeItem('acai-checkout-request-id');
+      requestIdRef.current = null;
+      try { sessionStorage.removeItem('acai-checkout-request-id'); } catch { /* opcional */ }
       window.location.href = `/pedido/${response.publicCode}?novo=1`;
     } catch (cause: unknown) {
       const rawMessage = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';

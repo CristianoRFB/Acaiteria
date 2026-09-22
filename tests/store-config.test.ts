@@ -20,4 +20,15 @@ describe('store config normalization', () => {
     expect(config.address).toBe(defaultStorePublicConfig.address);
     expect(config.deliveryConfig).toEqual(defaultStorePublicConfig.deliveryConfig);
   });
+
+  it('descarta horários impossíveis sem deixar o cálculo operacional inconsistente', () => {
+    const config = normalizeStoreConfig({
+      hours: [{ day: 1, closed: false, windows: [{ open: '99:99', close: '25:80' }] }],
+      holidayHours: [{ open: '12:00', close: 'invalido' }],
+      deliveryConfig: { mode: 'ZONES', zones: [{ id: 'centro', name: 'Centro', feeCents: -500, active: true }] },
+    });
+    expect(config.hours.find((day) => day.day === 1)?.windows).toEqual([{ open: '14:00', close: '21:50' }]);
+    expect(config.holidayHours).toEqual(defaultStorePublicConfig.holidayHours);
+    expect(config.deliveryConfig.zones?.[0].feeCents).toBe(0);
+  });
 });

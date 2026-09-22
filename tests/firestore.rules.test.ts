@@ -32,8 +32,11 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDoc(doc(db, 'users', 'admin-uid')));
     await assertFails(getDoc(doc(db, 'integrationConfig', 'saipos')));
     await assertFails(getDocs(collection(db, 'orders', 'secret', 'integrationAttempts')));
-    await assertSucceeds(setDoc(doc(db, 'publicOrders', publicCode), { publicCode, status: 'NEW', orderNumber: `#${publicCode}`, items: [], pricing: { totalCents: 1000 }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
-    await assertSucceeds(setDoc(doc(db, 'orders', `request-${Date.now()}`), { publicCode, orderNumber: `#${publicCode}`, status: 'NEW', customer: { name: 'Cliente' }, items: [], pricing: { totalCents: 1000 }, payment: { method: 'PIX' }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertSucceeds(setDoc(doc(db, 'publicOrders', publicCode), { publicCode, status: 'NEW', orderNumber: `#${publicCode}`, items: [{ productId: 'copo', quantity: 1 }], pricing: { totalCents: 1000 }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertSucceeds(setDoc(doc(db, 'orders', `request-${Date.now()}`), { publicCode, orderNumber: `#${publicCode}`, status: 'NEW', customer: { name: 'Cliente', whatsapp: '5517999999999' }, items: [{ productId: 'copo', quantity: 1 }], pricing: { subtotalCents: 1000, deliveryFeeCents: 0, totalCents: 1000 }, payment: { method: 'PIX', needsChange: false }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    const invalidPublicCode = `invalid-${Date.now()}`;
+    await assertFails(setDoc(doc(db, 'publicOrders', invalidPublicCode), { publicCode: invalidPublicCode, status: 'NEW', orderNumber: '#invalid', items: [], pricing: { totalCents: -1 }, fulfillment: { mode: 'PICKUP' } }));
+    await assertFails(setDoc(doc(db, 'orders', `forged-${Date.now()}`), { publicCode, orderNumber: `#${publicCode}`, status: 'NEW', customer: { name: 'X', whatsapp: '1' }, items: [{ productId: 'copo', quantity: 1 }], pricing: { subtotalCents: 1, deliveryFeeCents: 0, totalCents: 9999999 }, payment: { method: 'PIX', needsChange: false }, fulfillment: { mode: 'PICKUP' } }));
   });
   it('staff lê pedidos, mas não ganha escrita administrativa', async () => {
     const db = env.authenticatedContext('staff-uid').firestore();
