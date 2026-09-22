@@ -20,4 +20,9 @@ describe('imagens dos complementos', () => {
     expect(resolveProductImage('kids-2', 'https://cdn.exemplo.com/kids-2.webp')).toBe('https://cdn.exemplo.com/kids-2.webp');
     expect(resolveProductImage('kids-2', '/menu/products/combo-kids-2.webp')).toBe('/menu/products/combo-kids-2-hq.webp');
   });
+
+  it('troca placeholders do seed pela foto padrão de alta qualidade', () => {
+    expect(resolveProductImage('acai-monte-seu', '/development-acai-placeholder.png')).toBe('/menu/products/acai-monte-seu-gold-hq.webp');
+    expect(resolveProductImage('refrigerante', '/menu/generated/refrigerante.webp')).toBe('/menu/generated/refri-coca-cola-hq.webp');
+  });
 });

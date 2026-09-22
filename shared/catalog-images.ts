@@ -96,6 +96,9 @@ export function resolveProductImage(id: string, current?: string): string {
     '/menu/products/acai-monte-seu.webp',
     '/menu/products/milk-shake.webp',
     '/menu/products/salada-de-frutas.webp',
+    '/menu/products/bebida.webp',
+    '/menu/generated/refrigerante.webp',
+    '/development-acai-placeholder.png',
   ]);
   if (current && !legacySeedUrls.has(current) && current !== defaultImage) return optimizedMenuImage(current)!;
   return optimizedMenuImage(defaultImage || current || '/menu/products/acai-monte-seu.jpg')!;
