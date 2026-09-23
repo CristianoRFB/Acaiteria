@@ -1,6 +1,6 @@
 'use client';
 
-import { onAuthStateChanged, type User } from 'firebase/auth';
+import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
@@ -174,6 +174,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!user) { setState({ user: null, role: null, loading: false }); return; }
       try {
         const roleDoc = await getDoc(doc(db, 'users', user.uid));
+        if (roleDoc.exists() && roleDoc.data().active === false) {
+          await signOut(auth);
+          setState({ user: null, role: null, loading: false });
+          return;
+        }
         const role = roleDoc.exists() ? roleDoc.data().role as Role : null;
         setState({ user, role, loading: false });
       } catch {

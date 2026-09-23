@@ -8,8 +8,8 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "vitest run --config vitest.config.ts --exclude src/create-order.integration.test.ts",
-    "test:integration": "vitest run --config vitest.config.ts src/create-order.integration.test.ts",
+    "test": "vitest run --config vitest.config.ts --exclude src/create-order.integration.test.ts --exclude src/delivery.integration.test.ts",
+    "test:integration": "vitest run --config vitest.config.ts src/create-order.integration.test.ts src/delivery.integration.test.ts",
     "seed:emulator": "node scripts/seed-emulator.mjs"
   },
   "dependencies": {

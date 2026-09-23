@@ -17,14 +17,19 @@ beforeAll(async () => {
     await setDoc(doc(db, 'users', 'staff-uid'), { role: 'staff' });
     await setDoc(doc(db, 'users', 'driver-uid'), { role: 'driver' });
     await setDoc(doc(db, 'users', 'other-driver-uid'), { role: 'driver' });
+    await setDoc(doc(db, 'users', 'inactive-driver-uid'), { role: 'driver', active: false });
     await setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { name: 'Motoboy teste', status: 'AVAILABLE', enabled: true });
     await setDoc(doc(db, 'deliveryDrivers', 'other-driver-uid'), { name: 'Outro motoboy', status: 'AVAILABLE', enabled: true });
+    await setDoc(doc(db, 'deliveryDrivers', 'inactive-driver-uid'), { name: 'Motoboy inativo', status: 'OFFLINE', enabled: false });
     await setDoc(doc(db, 'deliveries', 'delivery-own'), { orderId: 'secret', driverId: 'driver-uid', status: 'ASSIGNED', customerName: 'Cliente', address: { street: 'Rua A', number: '1', neighborhood: 'Centro' }, totalCents: 1000 });
     await setDoc(doc(db, 'deliveries', 'delivery-other'), { orderId: 'secret', driverId: 'other-driver-uid', status: 'ASSIGNED', customerName: 'Outro', address: { street: 'Rua B', number: '2', neighborhood: 'Centro' }, totalCents: 1000 });
+    await setDoc(doc(db, 'deliveries', 'delivery-inactive'), { orderId: 'secret', driverId: 'inactive-driver-uid', status: 'ASSIGNED', customerName: 'Conta inativa', address: { street: 'Rua C', number: '3', neighborhood: 'Centro' }, totalCents: 1000 });
+    await setDoc(doc(db, 'deliveries', 'delivery-history'), { orderId: 'secret', driverId: null, driverIds: ['driver-uid'], status: 'READY_FOR_DELIVERY', customerName: 'Histórico', address: { street: 'Rua D', number: '4', neighborhood: 'Centro' }, totalCents: 1000 });
+    await setDoc(doc(db, 'deliveryDrivers', 'driver-uid', 'deliveryHistory', 'delivery-history'), { deliveryId: 'delivery-history', status: 'DRIVER_REJECTED' });
     await setDoc(doc(db, 'cashRegisters', 'open'), { status: 'OPEN', expectedCashCents: 1000 });
     await setDoc(doc(db, 'cashMovements', 'movement'), { registerId: 'open', type: 'SUPPLY', direction: 'IN', amountCents: 100, cashAmountCents: 100 });
   });
-});
+}, 30000);
 afterAll(() => env.cleanup());
 
 describe('Firestore Rules deny by default', () => {
@@ -39,6 +44,8 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDoc(doc(db, 'integrationConfig', 'saipos')));
     await assertFails(getDocs(collection(db, 'orders', 'secret', 'integrationAttempts')));
     await assertSucceeds(setDoc(doc(db, 'publicOrders', publicCode), { publicCode, status: 'NEW', orderNumber: `#${publicCode}`, items: [{ productId: 'copo', quantity: 1 }], pricing: { totalCents: 1000 }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
+    await assertSucceeds(getDoc(doc(db, 'publicOrders', publicCode)));
+    await assertFails(getDocs(collection(db, 'publicOrders')));
     await assertSucceeds(setDoc(doc(db, 'orders', `request-${Date.now()}`), { publicCode, orderNumber: `#${publicCode}`, status: 'NEW', customer: { name: 'Cliente', whatsapp: '5517999999999' }, items: [{ productId: 'copo', quantity: 1 }], pricing: { subtotalCents: 1000, deliveryFeeCents: 0, totalCents: 1000 }, payment: { method: 'PIX', needsChange: false }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
     const invalidPublicCode = `invalid-${Date.now()}`;
     await assertFails(setDoc(doc(db, 'publicOrders', invalidPublicCode), { publicCode: invalidPublicCode, status: 'NEW', orderNumber: '#invalid', items: [], pricing: { totalCents: -1 }, fulfillment: { mode: 'PICKUP' } }));
@@ -58,11 +65,20 @@ describe('Firestore Rules deny by default', () => {
     await assertSucceeds(getDoc(doc(db, 'deliveryDrivers', 'driver-uid')));
     await assertFails(getDoc(doc(db, 'deliveryDrivers', 'other-driver-uid')));
     await assertSucceeds(getDoc(doc(db, 'deliveries', 'delivery-own')));
+    await assertSucceeds(getDoc(doc(db, 'deliveries', 'delivery-history')));
+    await assertSucceeds(getDoc(doc(db, 'deliveryDrivers', 'driver-uid', 'deliveryHistory', 'delivery-history')));
+    await assertFails(getDoc(doc(db, 'deliveryDrivers', 'other-driver-uid', 'deliveryHistory', 'delivery-history')));
     await assertFails(getDoc(doc(db, 'deliveries', 'delivery-other')));
     await assertSucceeds(getDocs(query(collection(db, 'deliveries'), where('driverId', '==', 'driver-uid'))));
     await assertFails(setDoc(doc(db, 'deliveries', 'delivery-own'), { status: 'DELIVERED' }, { merge: true }));
     await assertFails(setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { status: 'BUSY' }, { merge: true }));
     await assertFails(getDoc(doc(db, 'deliverySecrets', 'delivery-own')));
+  });
+  it('conta desativada perde acesso Firestore mesmo com sessão ainda válida', async () => {
+    const db = env.authenticatedContext('inactive-driver-uid').firestore();
+    await assertFails(getDoc(doc(db, 'deliveryDrivers', 'inactive-driver-uid')));
+    await assertFails(getDoc(doc(db, 'deliveries', 'delivery-inactive')));
+    await assertFails(getDoc(doc(db, 'orders', 'secret')));
   });
   it('checkout anônimo grava pedido e acompanhamento público juntos, sem expor dados privados', async () => {
     const db = env.unauthenticatedContext().firestore();

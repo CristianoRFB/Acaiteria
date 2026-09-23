@@ -2,7 +2,8 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function userRole() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
+    function activeUser() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (!get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['active']) || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active != false); }
+    function userRole() { return activeUser() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
     function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
     function isAdmin() { return userRole() == 'admin'; }
     function isDriver() { return userRole() == 'driver'; }
@@ -63,16 +64,24 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
     match /publicOrders/{id} {
-      allow read: if true;
+      allow get: if isStaff() || resource.data.publicCode == id;
+      allow list: if isStaff();
       allow create: if isStaff() || (!signedIn() && validPublicOrder(request.resource.data, id));
       allow update: if isStaff() || (!signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']));
       allow delete: if false;
     }
     match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if isAdmin(); }
-    match /deliveryDrivers/{uid} { allow read: if isStaff() || (isDriver() && request.auth.uid == uid); allow write: if isAdmin(); }
-    match /deliveries/{id} { allow read: if isStaff() || (isDriver() && resource.data.driverId == request.auth.uid); allow write: if false; }
+    match /deliveryDrivers/{uid} {
+      allow read: if isStaff() || (isDriver() && request.auth.uid == uid);
+      allow write: if isAdmin();
+      match /deliveryHistory/{deliveryId} {
+        allow read: if isStaff() || (isDriver() && request.auth.uid == uid);
+        allow write: if false;
+      }
+    }
+    match /deliveries/{id} { allow read: if isStaff() || (isDriver() && (resource.data.driverId == request.auth.uid || (resource.data.keys().hasAny(['driverIds']) && request.auth.uid in resource.data.driverIds))); allow write: if false; }
     match /deliveryEvents/{id} {
-      allow read: if isStaff() || (isDriver() && get(/databases/$(database)/documents/deliveries/$(resource.data.deliveryId)).data.driverId == request.auth.uid);
+      allow read: if isStaff() || (isDriver() && (get(/databases/$(database)/documents/deliveries/$(resource.data.deliveryId)).data.driverId == request.auth.uid || (get(/databases/$(database)/documents/deliveries/$(resource.data.deliveryId)).data.keys().hasAny(['driverIds']) && request.auth.uid in get(/databases/$(database)/documents/deliveries/$(resource.data.deliveryId)).data.driverIds)));
       allow write: if false;
     }
     match /deliverySecrets/{id} { allow read, write: if false; }

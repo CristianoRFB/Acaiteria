@@ -2,7 +2,7 @@
 
 import { collection, limit, onSnapshot, query } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { Bike, KeyRound, Phone, Plus, UserRound } from 'lucide-react';
+import { Bike, KeyRound, Pencil, Phone, Plus, UserRound } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 
 import { AdminShell } from '@/components/admin-shell';
@@ -39,6 +39,7 @@ export default function DriversPage() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [toggleBusyId, setToggleBusyId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<DriverRow | null>(null);
   useEffect(() => {
     if (!hasFirebaseConfig) return undefined;
     return onSnapshot(
@@ -118,6 +119,18 @@ export default function DriversPage() {
     } finally {
       setToggleBusyId(null);
     }
+  }
+  async function saveEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editing) return;
+    setBusy(true); setError(''); setNotice('');
+    const data = new FormData(event.currentTarget);
+    try {
+      await httpsCallable(getFirebaseClient().functions, 'updateDeliveryDriver')({ driverId: editing.id, name: String(data.get('name') ?? '').trim(), phone: String(data.get('phone') ?? '').trim(), email: String(data.get('email') ?? '').trim() });
+      setNotice('Cadastro do motoboy atualizado.'); setEditing(null);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar o cadastro.');
+    } finally { setBusy(false); }
   }
   return (
     <AdminShell adminOnly>
@@ -261,6 +274,13 @@ export default function DriversPage() {
               </span>
               <Button
                 variant="outline"
+                onClick={() => setEditing(editing?.id === driver.id ? null : driver)}
+                className="min-h-9 rounded-full px-3 text-xs font-black"
+              >
+                <Pencil className="size-3.5" /> Editar
+              </Button>
+              <Button
+                variant="outline"
                 disabled={
                   toggleBusyId === driver.id || driver.status === 'BUSY'
                 }
@@ -274,6 +294,14 @@ export default function DriversPage() {
                     : 'Desativar'}
               </Button>
             </div>
+            {editing?.id === driver.id && (
+              <form onSubmit={saveEdit} className="grid w-full gap-3 border-t border-border-soft pt-4 sm:grid-cols-3">
+                <label className="text-xs font-bold">Nome<input name="name" required minLength={2} defaultValue={driver.name} className="mt-1 h-10 w-full rounded-xl border border-border-soft bg-surface-warm px-3 text-sm" /></label>
+                <label className="text-xs font-bold">Telefone<input name="phone" required minLength={8} defaultValue={driver.phone} className="mt-1 h-10 w-full rounded-xl border border-border-soft bg-surface-warm px-3 text-sm" /></label>
+                <label className="text-xs font-bold">E-mail de acesso<input name="email" type="email" required defaultValue={driver.email} className="mt-1 h-10 w-full rounded-xl border border-border-soft bg-surface-warm px-3 text-sm" /></label>
+                <div className="flex gap-2 sm:col-span-3"><Button disabled={busy} className="min-h-10 rounded-full bg-brand text-white">{busy ? 'Salvando…' : 'Salvar alterações'}</Button><Button type="button" variant="outline" className="min-h-10 rounded-full" onClick={() => setEditing(null)}>Cancelar</Button></div>
+              </form>
+            )}
           </article>
         ))}
       </section>

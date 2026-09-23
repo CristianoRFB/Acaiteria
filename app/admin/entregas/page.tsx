@@ -1,10 +1,11 @@
 'use client';
 
-import { collection, limit, onSnapshot, query } from 'firebase/firestore';
+import { collection, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import {
   CheckCircle2,
   Clock3,
+  History,
   MapPin,
   RefreshCw,
   UserRound,
@@ -37,11 +38,13 @@ interface DriverRow {
   status?: DeliveryDriverStatus;
   enabled?: boolean;
 }
+interface DeliveryEventRow { id: string; type?: string; actorRole?: string; note?: string; createdAt?: { toDate?: () => Date } }
 
 const activeStatuses: DeliveryStatus[] = [
   'READY_FOR_DELIVERY',
   'ASSIGNED',
   'ACCEPTED',
+  'PICKED_UP',
   'ON_THE_WAY',
   'ARRIVED',
 ];
@@ -49,6 +52,7 @@ const statusTone: Record<DeliveryStatus, string> = {
   READY_FOR_DELIVERY: 'bg-amber-100 text-amber-900',
   ASSIGNED: 'bg-blue-100 text-blue-900',
   ACCEPTED: 'bg-indigo-100 text-indigo-900',
+  PICKED_UP: 'bg-cyan-100 text-cyan-900',
   ON_THE_WAY: 'bg-purple-100 text-purple-900',
   ARRIVED: 'bg-emerald-100 text-emerald-900',
   DELIVERED: 'bg-green-100 text-green-900',
@@ -66,6 +70,8 @@ export default function DeliveriesPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [eventDeliveryId, setEventDeliveryId] = useState<string | null>(null);
+  const [events, setEvents] = useState<DeliveryEventRow[]>([]);
 
   useEffect(() => {
     if (!hasFirebaseConfig || !role || !['admin', 'staff'].includes(role))
@@ -100,6 +106,25 @@ export default function DeliveriesPage() {
       stopDeliveries();
       stopDrivers();
     };
+  }, [role]);
+
+  useEffect(() => {
+    if (role !== 'admin' || !hasFirebaseConfig) return;
+    let cancelled = false;
+    void (async () => {
+      let totalSanitized = 0;
+      try {
+        for (let page = 0; page < 10; page += 1) {
+          const result = await httpsCallable<undefined, { sanitized: number; hasMore: boolean }>(getFirebaseClient().functions, 'sanitizeLegacyDeliveryLinks')();
+          totalSanitized += result.data.sanitized;
+          if (!result.data.hasMore) break;
+        }
+        if (!cancelled && totalSanitized > 0) setNotice(`${totalSanitized} registro(s) antigo(s) de entrega protegidos.`);
+      } catch {
+        // O acesso à operação continua disponível se a rotina já tiver sido executada ou ainda não estiver publicada.
+      }
+    })();
+    return () => { cancelled = true; };
   }, [role]);
 
   const visible = useMemo(
@@ -192,6 +217,24 @@ export default function DeliveriesPage() {
       setBusyId(null);
     }
   }
+  async function reassign(deliveryId: string) {
+    const driverId = selectedDriver[deliveryId];
+    if (!driverId) { setError('Escolha o novo motoboy disponível.'); return; }
+    setBusyId(deliveryId); setError(''); setNotice('');
+    try {
+      await httpsCallable(getFirebaseClient().functions, 'reassignDelivery')({ deliveryId, driverId });
+      setNotice('Motoboy trocado. A entrega foi devolvida à etapa de aceite.');
+      setSelectedDriver((current) => ({ ...current, [deliveryId]: '' }));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível trocar o motoboy.'); }
+    finally { setBusyId(null); }
+  }
+  async function showEvents(deliveryId: string) {
+    setEventDeliveryId(deliveryId); setError('');
+    try {
+      const snapshot = await getDocs(query(collection(getFirebaseClient().db, 'deliveryEvents'), where('deliveryId', '==', deliveryId), limit(100)));
+      setEvents(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryEventRow).sort((a, b) => (b.createdAt?.toDate?.().getTime() ?? 0) - (a.createdAt?.toDate?.().getTime() ?? 0)));
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar o histórico da entrega.'); }
+  }
 
   return (
     <AdminShell>
@@ -264,6 +307,9 @@ export default function DeliveriesPage() {
               }))
             }
             onAssign={() => void assign(delivery.id)}
+            onReassign={() => void reassign(delivery.id)}
+            onShowEvents={() => void showEvents(delivery.id)}
+            showEvents={eventDeliveryId === delivery.id ? events : null}
             busy={busyId === delivery.id}
           />
         ))}
@@ -352,6 +398,9 @@ function DeliveryCard({
   selectedDriver,
   onDriverChange,
   onAssign,
+  onReassign,
+  onShowEvents,
+  showEvents,
   busy,
 }: {
   delivery: DeliveryRow;
@@ -359,9 +408,13 @@ function DeliveryCard({
   selectedDriver: string;
   onDriverChange: (id: string) => void;
   onAssign: () => void;
+  onReassign: () => void;
+  onShowEvents: () => void;
+  showEvents: DeliveryEventRow[] | null;
   busy: boolean;
 }) {
   const isReady = delivery.status === 'READY_FOR_DELIVERY';
+  const canReassign = ['ASSIGNED', 'ACCEPTED'].includes(delivery.status);
   return (
     <article className="surface rounded-3xl p-5">
       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
@@ -415,12 +468,25 @@ function DeliveryCard({
         </div>
       )}
       {!isReady && (
-        <p className="mt-4 rounded-2xl bg-surface-warm p-3 text-sm text-text-muted">
-          {delivery.driverName
-            ? `Responsável: ${delivery.driverName}`
-            : 'Aguardando atualização do entregador.'}
-        </p>
+        <div className="mt-4 rounded-2xl bg-surface-warm p-3 text-sm text-text-muted">
+          <p>{delivery.driverName ? `Responsável: ${delivery.driverName}` : 'Aguardando atualização do entregador.'}</p>
+          {canReassign && <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <select aria-label={`Novo motoboy para ${delivery.orderNumber ?? delivery.orderId}`} value={selectedDriver} onChange={(event) => onDriverChange(event.target.value)} className="min-h-10 min-w-0 flex-1 rounded-full border border-border-soft bg-white px-4 text-sm font-bold">
+              <option value="">Trocar motoboy antes da retirada</option>
+              {drivers.map((driver) => <option key={driver.id} value={driver.id}>{driver.name ?? driver.id}</option>)}
+            </select>
+            <Button disabled={busy || !selectedDriver} onClick={onReassign} variant="outline" className="min-h-10 rounded-full">{busy ? 'Trocando…' : 'Trocar motoboy'}</Button>
+          </div>}
+        </div>
       )}
+      <div className="mt-4 border-t border-border-soft pt-3"><Button type="button" variant="outline" onClick={onShowEvents} className="min-h-9 rounded-full text-xs"><History className="size-4" /> Ver histórico</Button>
+        {showEvents && <ol className="mt-3 space-y-2">{showEvents.map((event) => <li key={event.id} className="rounded-xl bg-surface-warm px-3 py-2 text-xs"><strong>{eventLabel(event.type)}</strong>{event.note ? ` · ${event.note}` : ''}<span className="ml-2 text-text-muted">{event.createdAt?.toDate?.().toLocaleString('pt-BR') ?? 'Agora'}</span></li>)}</ol>}
+      </div>
     </article>
   );
+}
+
+function eventLabel(type?: string) {
+  const labels: Record<string, string> = { CREATED: 'Pedido preparado', ASSIGNED: 'Atribuída', ACCEPTED: 'Aceita', DRIVER_REJECTED: 'Recusada pelo motoboy', PICKED_UP: 'Retirada confirmada', ON_THE_WAY: 'Saiu para entrega', ARRIVED: 'Chegou ao endereço', DELIVERY_FAILED: 'Falha reportada', READY_FOR_DELIVERY: 'Devolvida à fila', REASSIGNED: 'Motoboy trocado', DELIVERED: 'Entrega confirmada', CANCELLED: 'Cancelada' };
+  return labels[type ?? ''] ?? type ?? 'Atualização';
 }

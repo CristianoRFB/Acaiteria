@@ -112,7 +112,8 @@ export default function DriverDeliveryPage() {
     : 'Endereço não informado';
   const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
   const canAccept = delivery.status === 'ASSIGNED';
-  const canStart = delivery.status === 'ACCEPTED';
+  const canPickup = delivery.status === 'ACCEPTED';
+  const canStart = delivery.status === 'PICKED_UP';
   const canArrive = delivery.status === 'ON_THE_WAY';
   const canConfirm = delivery.status === 'ARRIVED';
   return (
@@ -264,6 +265,20 @@ export default function DriverDeliveryPage() {
               </Button>
             </>
           )}
+          {canPickup && (
+            <Button
+              disabled={busy}
+              onClick={() =>
+                void call('progressDelivery', {
+                  deliveryId: delivery.id,
+                  status: 'PICKED_UP',
+                })
+              }
+              className="min-h-12 w-full rounded-full bg-[#6f2bc5] text-white"
+            >
+              Confirmar retirada do pedido
+            </Button>
+          )}
           {canStart && (
             <Button
               disabled={busy}
@@ -275,7 +290,7 @@ export default function DriverDeliveryPage() {
               }
               className="min-h-12 w-full rounded-full bg-[#6f2bc5] text-white"
             >
-              Iniciar entrega
+              Iniciar rota
             </Button>
           )}
           {canArrive && (
@@ -292,7 +307,7 @@ export default function DriverDeliveryPage() {
               Cheguei ao local
             </Button>
           )}
-          {(canArrive || canConfirm) && (
+          {(canStart || canArrive || canConfirm) && (
             <Button
               disabled={busy}
               variant="outline"

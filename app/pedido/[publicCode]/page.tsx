@@ -1,7 +1,7 @@
 'use client';
 
 import { Check, ChefHat, Clock3, Copy, KeyRound, MessageCircle, PackageCheck, RefreshCw } from 'lucide-react';
-import { collection, doc, getDoc, getDocs, onSnapshot, query, where } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -11,10 +11,11 @@ import { useCatalog } from '@/components/providers';
 import { respondToOrderEditDirect, type PublicOrderEditProposal } from '@/lib/direct-orders';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import { formatBRL, getCustomerOrderStatusMessage, getOrderEstimateForStatus, type OrderStatus, type PricedItem } from '@/shared/domain';
+import { deliveryStatusLabels, type DeliveryStatus } from '@/shared/delivery';
 
 interface PublicOrder {
   integrationMessage?: string; statusMessage?: string; pricingReviewStatus?: 'PENDING' | 'VERIFIED'; publicCode?: string; orderNumber: string; createdAt?: string; updatedAt?: string; estimatedMinutes?: number;
-  items: PricedItem[]; pricing: { totalCents: number }; fulfillment: { mode: 'PICKUP' | 'DELIVERY' }; status: OrderStatus; deliveryStatus?: string; deliveryCode?: string; deliveryCodeHint?: string; editProposal?: PublicOrderEditProposal;
+  items: PricedItem[]; pricing: { totalCents: number }; fulfillment: { mode: 'PICKUP' | 'DELIVERY' }; status: OrderStatus; deliveryStatus?: DeliveryStatus; deliveryDriverName?: string; deliveryCode?: string; deliveryCodeHint?: string; editProposal?: PublicOrderEditProposal;
 }
 const baseSteps: Array<{ statuses: OrderStatus[]; label: string; icon: typeof Clock3 }> = [
   { statuses: ['NEW'], label: 'Recebido', icon: Check }, { statuses: ['CONFIRMED'], label: 'Confirmado', icon: Clock3 }, { statuses: ['PREPARING'], label: 'Em preparo', icon: ChefHat }, { statuses: ['READY', 'OUT_FOR_DELIVERY'], label: 'Pronto', icon: PackageCheck }, { statuses: ['COMPLETED'], label: 'Concluído', icon: Check },
@@ -33,19 +34,9 @@ export default function OrderPage() {
     if (!hasFirebaseConfig) { void load(); return undefined; }
     const { db } = getFirebaseClient(); let stop = () => {}; let cancelled = false;
     async function subscribe() {
-      let target = routeCode;
-      const normalized = routeCode.replace(/^#/, '').toUpperCase();
-      if (normalized.startsWith('A')) {
-        try {
-          const matches = await getDocs(query(collection(db, 'publicOrders'), where('orderNumber', '==', `#${normalized}`)));
-          const match = matches.docs[0];
-          if (!match) { if (!cancelled) { setLoading(false); setError('Pedido não encontrado. Confira o número e tente novamente.'); } return; }
-          target = match.id;
-        } catch { if (!cancelled) { setLoading(false); setError('Não foi possível procurar o pedido agora. Tente novamente.'); } return; }
-      }
       if (cancelled) return;
-      resolvedCodeRef.current = target;
-      stop = onSnapshot(doc(db, 'publicOrders', target), (snapshot) => { if (snapshot.exists()) { setOrder(snapshot.data() as PublicOrder); setLoading(false); setError(''); setLegacyMode(false); } else { setLegacyMode(true); void load(); } }, () => { setLegacyMode(true); void load(); });
+      resolvedCodeRef.current = routeCode;
+      stop = onSnapshot(doc(db, 'publicOrders', routeCode), (snapshot) => { if (snapshot.exists()) { setOrder(snapshot.data() as PublicOrder); setLoading(false); setError(''); setLegacyMode(false); } else { setLegacyMode(true); void load(); } }, () => { setLegacyMode(true); void load(); });
     }
     void subscribe();
     return () => { cancelled = true; stop(); };
@@ -74,7 +65,26 @@ export default function OrderPage() {
       <div className="mt-7 rounded-[26px] border border-[#d2ae47] bg-[#1f1018] p-4 sm:p-5"><p className="text-xs font-black uppercase tracking-[.2em] text-[#e7bc54]">Código do pedido</p><p className="mt-2 break-all font-mono text-2xl font-black tracking-[.16em] text-white sm:text-3xl">{orderCode}</p><button type="button" onClick={copyCode} className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#d7f04a] px-5 text-sm font-black text-[#351924] transition hover:bg-[#c5df35]" aria-label="Copiar código do pedido"><Copy className="size-4" /> {copied ? 'Código copiado!' : 'Copiar código'}</button></div>
       <div className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-white/75"><span>Previsão:</span><strong className="text-white">{estimate.label}</strong><span>·</span><span>{order.fulfillment.mode === 'PICKUP' ? 'Retirada na loja' : 'Entrega'}</span></div>
       <a href="/" className="mt-7 inline-flex min-h-11 items-center rounded-full bg-[#c83d51] px-5 text-sm font-black text-white transition hover:bg-[#b93448]">Voltar ao início</a>
-      <div className="mt-8 border-t border-white/10 pt-6"><p className="rounded-2xl bg-white/10 p-4 text-sm font-bold leading-relaxed text-white" role="status" aria-live="polite">{order.statusMessage ?? getCustomerOrderStatusMessage(order.status) ?? order.integrationMessage ?? 'Pedido recebido pela loja. Acompanhe a atualização nesta página.'}</p>{statusNotice && <p className="mt-3 rounded-2xl bg-[#d7f04a] p-3 text-sm font-black text-[#351924]" role="status" aria-live="polite">{statusNotice}</p>}<div className="mt-7 grid gap-1" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>{steps.map((step, index) => { const Icon = step.icon; const done = activeIndex >= index && order.status !== 'CANCELLED'; return <div key={step.label} className="text-center"><span className={`mx-auto grid size-9 place-items-center rounded-full ${done ? 'bg-[#d7f04a] text-[#351924]' : 'bg-white/10 text-white/35'}`}><Icon className="size-4" /></span><span className={`mt-2 block text-[10px] font-bold ${done ? 'text-white' : 'text-white/35'}`}>{step.label}</span></div>; })}</div>{order.status === 'CANCELLED' && <div className="mt-6 rounded-2xl bg-red-400/15 p-4 text-sm font-bold text-red-100">Este pedido foi cancelado. Entre em contato com a loja se precisar de ajuda.</div>}</div>
+      <div className="mt-8 border-t border-white/10 pt-6">
+        <p className="rounded-2xl bg-white/10 p-4 text-sm font-bold leading-relaxed text-white" role="status" aria-live="polite">
+          {order.statusMessage ?? getCustomerOrderStatusMessage(order.status) ?? order.integrationMessage ?? 'Pedido recebido pela loja. Acompanhe a atualização nesta página.'}
+        </p>
+        {order.fulfillment.mode === 'DELIVERY' && order.deliveryStatus && (
+          <div className="mt-3 rounded-2xl bg-white/10 p-4 text-sm text-white">
+            <p><strong>Entrega:</strong> {deliveryStatusLabels[order.deliveryStatus]}</p>
+            {order.deliveryDriverName && <p className="mt-1"><strong>Motoboy:</strong> {order.deliveryDriverName}</p>}
+          </div>
+        )}
+        {statusNotice && <p className="mt-3 rounded-2xl bg-[#d7f04a] p-3 text-sm font-black text-[#351924]" role="status" aria-live="polite">{statusNotice}</p>}
+        <div className="mt-7 grid gap-1" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
+          {steps.map((step, index) => {
+            const Icon = step.icon;
+            const done = activeIndex >= index && order.status !== 'CANCELLED';
+            return <div key={step.label} className="text-center"><span className={`mx-auto grid size-9 place-items-center rounded-full ${done ? 'bg-[#d7f04a] text-[#351924]' : 'bg-white/10 text-white/35'}`}><Icon className="size-4" /></span><span className={`mt-2 block text-[10px] font-bold ${done ? 'text-white' : 'text-white/35'}`}>{step.label}</span></div>;
+          })}
+        </div>
+        {order.status === 'CANCELLED' && <div className="mt-6 rounded-2xl bg-red-400/15 p-4 text-sm font-bold text-red-100">Este pedido foi cancelado. Entre em contato com a loja se precisar de ajuda.</div>}
+      </div>
     </section>
     {order.fulfillment.mode === 'DELIVERY' && order.deliveryCode && order.status !== 'COMPLETED' && order.status !== 'CANCELLED' && <section className="mt-5 rounded-[28px] border-2 border-[#d7f04a] bg-[#fffde8] p-6 shadow-sm"><p className="text-xs font-black uppercase tracking-[.16em] text-[#82204f]">Código de recebimento</p><h2 className="mt-2 text-2xl font-black text-[#351924]">Informe este código ao motoboy</h2><p className="mt-2 text-sm leading-relaxed text-[#6f5360]">O entregador só poderá concluir o pedido depois de confirmar estes 4 dígitos com você.</p><div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center"><strong className="rounded-2xl bg-[#351924] px-5 py-4 text-center font-mono text-3xl tracking-[.3em] text-[#d7f04a] sm:flex-1">{order.deliveryCode}</strong><button type="button" onClick={() => void copyText(order.deliveryCode ?? '')} className="min-h-12 rounded-full bg-[#82204f] px-5 text-sm font-black text-white transition hover:bg-[#6d1941]">Copiar código</button></div></section>}
     <section className="mt-5 rounded-[28px] bg-white p-6 shadow-sm"><div className="flex items-center justify-between gap-4"><h2 className="text-xl font-black">Resumo do pedido</h2><strong className="text-xl font-black text-[#82204f]">{formatBRL(displayOrder.pricing.totalCents)}</strong></div><div className="mt-5 space-y-4">{displayOrder.items.map((item, index) => <div key={index} className="border-t border-[#82204f]/8 pt-4 first:border-0 first:pt-0"><div className="flex justify-between gap-3"><strong>{item.quantity}x {item.productName}</strong><span className="text-sm font-bold">{formatBRL(item.totalPriceCents)}</span></div><p className="mt-1 text-xs text-[#826a75]">{item.sizeLabel}</p>{item.modifierSelections.filter((group) => group.items.length).map((group) => <p key={group.groupId} className="mt-1 text-xs text-[#826a75]">{group.groupName}: {group.items.map((selected) => `${selected.quantity > 1 ? `${selected.quantity}x ` : ''}${selected.name}`).join(', ')}</p>)}</div>)}</div></section>
