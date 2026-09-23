@@ -11,6 +11,7 @@ import {
   WalletCards,
   CircleDollarSign,
   CircleHelp,
+  Bike,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { useEffect, type ReactNode } from 'react';
@@ -33,6 +34,8 @@ const links = [
   { href: '/admin/ajuda', label: 'Central de ajuda', icon: CircleHelp },
   { href: '/admin', label: 'Visão geral', icon: LayoutDashboard },
   { href: '/admin/pedidos', label: 'Pedidos', icon: ShoppingBag },
+  { href: '/admin/entregas', label: 'Entregas', icon: Bike },
+  { href: '/admin/entregadores', label: 'Entregadores', icon: Bike },
   { href: '/admin/catalogo', label: 'Catálogo', icon: Boxes },
   { href: '/admin/promocoes', label: 'Promoções', icon: Megaphone },
   { href: '/admin/adicionais', label: 'Adicionais', icon: SlidersHorizontal },
@@ -50,6 +53,7 @@ export function AdminShell({
   useEffect(() => {
     if (!hasFirebaseConfig) return;
     if (!loading && (!user || !role)) window.location.href = '/admin/login';
+    if (!loading && user && role === 'driver') window.location.href = '/entregador';
   }, [loading, user, role]);
   if (!hasFirebaseConfig)
     return (
@@ -65,7 +69,7 @@ export function AdminShell({
         text="Validando sua sessão e permissão."
       />
     );
-  if (!user || !role) return null;
+  if (!user || !role || role === 'driver') return null;
   if (adminOnly && role !== 'admin')
     return (
       <AdminMessage

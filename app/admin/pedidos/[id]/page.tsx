@@ -1,6 +1,7 @@
 'use client';
 
 import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -145,7 +146,13 @@ export default function OrderDetailPage() {
         // A resposta pública já foi dada: registra o aceite privado antes da transição.
         await finalizeOrderEditDirect(getFirebaseClient().db, order.id, 'ACCEPTED');
       } else {
-        await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
+        // Delivery status changes go through the callable so the delivery record,
+        // receipt code and public tracking mirror are created atomically.
+        if (order.fulfillment.mode === 'DELIVERY' && (status === 'READY' || status === 'CANCELLED' || status === 'COMPLETED')) {
+          await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId: order.id, status, ...(reason ? { reason } : {}) });
+        } else {
+          await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
+        }
         setNotice(status === 'COMPLETED' ? 'Pedido concluído e registrado em Finanças e no Caixa.' : status === 'CANCELLED' ? 'Pedido cancelado.' : status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
       }
       setCancelOpen(false);

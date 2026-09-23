@@ -59,6 +59,11 @@ Sistema de pedidos da Açaí + Sabor, em Santa Fé do Sul. O cliente pode escolh
 | Central de ajuda | `/admin/ajuda` | Orientações para pedidos, pagamentos, Caixa e Finanças. |
 | Configurações | [`/admin/configuracoes`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/configuracoes) | Dados da loja, entrega, horários, feriados e privacidade. |
 | Integração Saipos | [`/admin/integracao`](https://acai-mais-sabor-santa-fe.nexus7devstudio.chatgpt.site/admin/integracao) | Configuração e diagnóstico da integração, sem remover a operação própria. |
+| Central de entregas | `/admin/entregas` | Pedidos prontos, atribuição, status em rota e entregues. Otimizada para desktop e celular. |
+| Entregadores | `/admin/entregadores` | Cadastro de acesso, telefone e disponibilidade dos motoboys. |
+| Login do entregador | `/entregador/login` | Entrada mobile-first para o profissional de entrega. |
+| Painel do entregador | `/entregador` | Disponibilidade, entrega atual, próximas corridas e histórico. |
+| Detalhe da entrega | `/entregador/entrega/:id` | Aceite/recusa, navegação, chegada e confirmação por código. |
 
 ## Como o pedido funciona
 
@@ -68,11 +73,20 @@ Sistema de pedidos da Açaí + Sabor, em Santa Fé do Sul. O cliente pode escolh
 4. Se a loja editar itens ou valor, o pedido retorna ao cliente para aceite antes da confirmação.
 5. O cliente acompanha: recebido, confirmado, em preparo, pronto, saiu para entrega e concluído.
 
+### Fluxo de delivery
+
+1. Ao marcar um pedido delivery como **Pronto**, o backend cria uma entrega com código de recebimento de 4 dígitos; o código completo fica disponível somente no acompanhamento público do cliente.
+2. No admin, a equipe escolhe um motoboy disponível em **Central de entregas**. O motoboy aceita ou recusa pelo celular.
+3. O motoboy inicia a rota, abre a navegação, marca a chegada e pede o código ao cliente. O backend valida o hash do código e conclui pedido, entrega, Caixa e Finanças na mesma transação.
+4. O motoboy nunca consegue ler o código secreto, alterar documentos diretamente ou consultar entregas de outro profissional. A operação de mapa usa um link de navegação; não há rastreamento contínuo ou GPS em segundo plano.
+
+O módulo de entregas exige as Cloud Functions e as regras do Firestore publicadas. Salário, comissão, carteira, Pix para motoboy, ranking, gamificação, roteirização avançada e APK nativo ficam fora do escopo atual.
+
 ## Tecnologia e operação
 
 - React, TypeScript, Vinext/Vite e Tailwind, com layout responsivo para celular e computador.
 - Firebase Authentication para acesso administrativo e Cloud Firestore para catálogo, pedidos, configurações, promoções e finanças.
-- Funcionamento compatível com o plano gratuito: não exige Cloud Functions para receber e operar pedidos.
+- Funcionamento compatível com o plano gratuito: o fluxo básico continua operando no Firestore; o módulo de entregas usa Cloud Functions para atribuição, código de recebimento e conclusão financeira atômica.
 - Notificações operacionais no painel e fluxo de WhatsApp configurável pela loja.
 - Cardápio com combinados, monte seu copo, milk-shakes, sorvetes, bebidas, shakes e salada de frutas.
 

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { assertFails, assertSucceeds, initializeTestEnvironment, type RulesTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, getDocs, setDoc, collection, Timestamp } from 'firebase/firestore';
+import { doc, getDoc, getDocs, setDoc, collection, query, where, Timestamp } from 'firebase/firestore';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createOrderDirect } from '@/lib/direct-orders';
 
@@ -15,6 +15,12 @@ beforeAll(async () => {
     await setDoc(doc(db, 'orders', 'secret'), { status: 'NEW' });
     await setDoc(doc(db, 'users', 'admin-uid'), { role: 'admin' });
     await setDoc(doc(db, 'users', 'staff-uid'), { role: 'staff' });
+    await setDoc(doc(db, 'users', 'driver-uid'), { role: 'driver' });
+    await setDoc(doc(db, 'users', 'other-driver-uid'), { role: 'driver' });
+    await setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { name: 'Motoboy teste', status: 'AVAILABLE', enabled: true });
+    await setDoc(doc(db, 'deliveryDrivers', 'other-driver-uid'), { name: 'Outro motoboy', status: 'AVAILABLE', enabled: true });
+    await setDoc(doc(db, 'deliveries', 'delivery-own'), { orderId: 'secret', driverId: 'driver-uid', status: 'ASSIGNED', customerName: 'Cliente', address: { street: 'Rua A', number: '1', neighborhood: 'Centro' }, totalCents: 1000 });
+    await setDoc(doc(db, 'deliveries', 'delivery-other'), { orderId: 'secret', driverId: 'other-driver-uid', status: 'ASSIGNED', customerName: 'Outro', address: { street: 'Rua B', number: '2', neighborhood: 'Centro' }, totalCents: 1000 });
     await setDoc(doc(db, 'cashRegisters', 'open'), { status: 'OPEN', expectedCashCents: 1000 });
     await setDoc(doc(db, 'cashMovements', 'movement'), { registerId: 'open', type: 'SUPPLY', direction: 'IN', amountCents: 100, cashAmountCents: 100 });
   });
@@ -46,6 +52,17 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'cashRegisters', 'open'), { expectedCashCents: 999999 }, { merge: true }));
     await assertFails(setDoc(doc(db, 'cashMovements', 'forged'), { registerId: 'open', type: 'SALE', direction: 'IN', amountCents: 100, cashAmountCents: 100 }));
     await assertFails(setDoc(doc(db, 'financeEntries', 'order-forged'), { kind: 'INCOME', status: 'PAID', sourceOrderId: 'secret', amountCents: 100 }));
+  });
+  it('entregador só lê seu perfil e suas entregas, sem escrita direta', async () => {
+    const db = env.authenticatedContext('driver-uid').firestore();
+    await assertSucceeds(getDoc(doc(db, 'deliveryDrivers', 'driver-uid')));
+    await assertFails(getDoc(doc(db, 'deliveryDrivers', 'other-driver-uid')));
+    await assertSucceeds(getDoc(doc(db, 'deliveries', 'delivery-own')));
+    await assertFails(getDoc(doc(db, 'deliveries', 'delivery-other')));
+    await assertSucceeds(getDocs(query(collection(db, 'deliveries'), where('driverId', '==', 'driver-uid'))));
+    await assertFails(setDoc(doc(db, 'deliveries', 'delivery-own'), { status: 'DELIVERED' }, { merge: true }));
+    await assertFails(setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { status: 'BUSY' }, { merge: true }));
+    await assertFails(getDoc(doc(db, 'deliverySecrets', 'delivery-own')));
   });
   it('checkout anônimo grava pedido e acompanhamento público juntos, sem expor dados privados', async () => {
     const db = env.unauthenticatedContext().firestore();

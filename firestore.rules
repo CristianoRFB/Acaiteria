@@ -5,6 +5,7 @@ service cloud.firestore {
     function userRole() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
     function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
     function isAdmin() { return userRole() == 'admin'; }
+    function isDriver() { return userRole() == 'driver'; }
     function validMoney(value) { return value is int && value >= 0 && value <= 10000000; }
     function validOrderPayment(data) {
       return data is map
@@ -68,6 +69,13 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if isAdmin(); }
+    match /deliveryDrivers/{uid} { allow read: if isStaff() || (isDriver() && request.auth.uid == uid); allow write: if isAdmin(); }
+    match /deliveries/{id} { allow read: if isStaff() || (isDriver() && resource.data.driverId == request.auth.uid); allow write: if false; }
+    match /deliveryEvents/{id} {
+      allow read: if isStaff() || (isDriver() && get(/databases/$(database)/documents/deliveries/$(resource.data.deliveryId)).data.driverId == request.auth.uid);
+      allow write: if false;
+    }
+    match /deliverySecrets/{id} { allow read, write: if false; }
     match /orderRequests/{id} { allow read, write: if false; }
     match /integrationConfig/{id} { allow read, write: if false; }
     match /orders/{id}/integrationAttempts/{attempt} { allow read: if isStaff(); allow write: if false; }

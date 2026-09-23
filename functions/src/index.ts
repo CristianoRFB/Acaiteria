@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { getAuth } from 'firebase-admin/auth';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
@@ -27,6 +28,7 @@ import {
   type Role,
   type StorePublicConfig,
 } from '../../shared/domain.js';
+import { canTransitionDelivery, deliveryStatusMessage, type DeliveryStatus } from '../../shared/delivery.js';
 
 if (!getApps().length) initializeApp();
 const db = getFirestore();
@@ -72,6 +74,8 @@ function makeOrderNumber(now = new Date(), timeZone = 'America/Sao_Paulo'): stri
   return `#A${day}${randomUUID().replace(/-/g, '').slice(0, 4).toUpperCase()}`;
 }
 function makePublicCode(): string { return randomUUID().replace(/-/g, ''); }
+function makeDeliveryCode(): string { return String(Math.floor(1000 + Math.random() * 9000)); }
+function hashDeliveryCode(code: string): string { return createHash('sha256').update(code).digest('hex'); }
 function requestIdFrom(data: unknown): string { return typeof data === 'object' && data && 'clientRequestId' in data ? String((data as { clientRequestId?: unknown }).clientRequestId).slice(0, 80) : 'unknown'; }
 
 export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB', enforceAppCheck }, async (request) => {
@@ -393,6 +397,7 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
   if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Status inválido.');
   const { orderId, status, reason } = parsed.data;
   const orderRef = db.doc(`orders/${orderId}`);
+  const deliveryEventId = `delivery-${orderId}-${randomUUID()}`;
   await db.runTransaction(async (transaction) => {
     const snapshot = await transaction.get(orderRef);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
@@ -404,6 +409,13 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     let completionRegister: DocumentSnapshot | null = null;
     let completionFinance: DocumentSnapshot | null = null;
     let completionSale: DocumentSnapshot | null = null;
+    const deliveryRef = db.doc(`deliveries/delivery-${orderId}`);
+    let existingDelivery: DocumentSnapshot | null = null;
+    if (status === 'READY' || status === 'CANCELLED' || status === 'COMPLETED') existingDelivery = await transaction.get(deliveryRef);
+    const deliverySecretRef = db.doc(`deliverySecrets/${deliveryRef.id}`);
+    if (status === 'COMPLETED' && snapshot.data()?.fulfillment?.mode === 'DELIVERY' && (!existingDelivery?.exists || existingDelivery.data()?.status !== 'DELIVERED')) {
+      throw new HttpsError('failed-precondition', 'Confirme a entrega com o código do cliente antes de concluir este delivery.');
+    }
     if (status === 'COMPLETED') {
       const totalCents = Number(snapshot.data()?.pricing?.totalCents ?? 0);
       if (!Number.isSafeInteger(totalCents) || totalCents <= 0) throw new HttpsError('failed-precondition', 'O pedido precisa ter um total válido para ser concluído.');
@@ -418,6 +430,32 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     transaction.update(orderRef, { status, updatedAt: FieldValue.serverTimestamp(), statusHistory: FieldValue.arrayUnion({ status, at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, ...(reason ? { reason } : {}) }), ...(status === 'CANCELLED' ? { cancelledAt: FieldValue.serverTimestamp(), cancellationReason: reason || '' } : {}) });
     const publicCode = String(snapshot.data()?.publicCode || orderId);
     transaction.set(db.doc(`publicOrders/${publicCode}`), { status, statusMessage: getCustomerOrderStatusMessage(status, reason), estimatedMinutes: snapshot.data()?.estimatedMinutes ?? 15, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    if (status === 'READY' && snapshot.data()?.fulfillment?.mode === 'DELIVERY') {
+      const data = snapshot.data()!;
+      const code = makeDeliveryCode();
+      const delivery = {
+        orderId,
+        orderNumber: data.orderNumber,
+        publicCode,
+        status: 'READY_FOR_DELIVERY' as const,
+        customerName: data.customer?.name ?? 'Cliente',
+        customerWhatsapp: data.customer?.whatsapp ?? null,
+        address: data.customer?.address ?? null,
+        totalCents: Number(data.pricing?.totalCents ?? 0),
+        estimatedMinutes: data.estimatedMinutes ?? 15,
+        ...(existingDelivery?.exists ? { deliveryCodeHash: FieldValue.delete(), deliveryCodeHint: FieldValue.delete() } : {}),
+        createdAt: existingDelivery?.exists ? existingDelivery.data()?.createdAt ?? FieldValue.serverTimestamp() : FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      };
+      if (existingDelivery?.exists) transaction.set(deliveryRef, delivery, { merge: true });
+      else transaction.create(deliveryRef, delivery);
+      transaction.set(deliverySecretRef, { deliveryId: deliveryRef.id, codeHash: hashDeliveryCode(code), updatedAt: FieldValue.serverTimestamp(), ...(existingDelivery?.exists ? {} : { createdAt: FieldValue.serverTimestamp() }) }, { merge: true });
+      transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', deliveryCode: code, deliveryCodeHint: `${code.slice(0, 2)}••`, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+      transaction.create(db.doc(`deliveryEvents/${deliveryEventId}`), { deliveryId: deliveryRef.id, type: 'CREATED', actorUid: request.auth!.uid, actorRole: role, createdAt: FieldValue.serverTimestamp() });
+    } else if (status === 'CANCELLED' && existingDelivery?.exists && !['DELIVERED', 'CANCELLED'].includes(String(existingDelivery.data()?.status))) {
+      transaction.update(deliveryRef, { status: 'CANCELLED', updatedAt: FieldValue.serverTimestamp() });
+      transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'CANCELLED', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    }
     if (status === 'COMPLETED' && completionRegister && completionFinance && completionSale) {
       const data = snapshot.data()!;
       const totalCents = Number(data.pricing.totalCents);
@@ -584,6 +622,192 @@ export const updateOrderEstimate = onCall({ region, timeoutSeconds: 15, memory: 
     transaction.update(orderRef, { estimatedMinutes, estimatedUpdatedAt: now, updatedAt: now });
     const publicCode = String(snapshot.data()?.publicCode || orderId);
     transaction.set(db.doc(`publicOrders/${publicCode}`), { estimatedMinutes, estimatedUpdatedAt: now, updatedAt: now }, { merge: true });
+  });
+  return { ok: true };
+});
+
+const createDriverSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  phone: z.string().trim().min(8).max(30),
+  email: z.string().email().max(160),
+  password: z.string().min(8).max(128),
+});
+export const createDeliveryDriver = onCall({ region, timeoutSeconds: 20, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin']);
+  const parsed = createDriverSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Dados do motoboy inválidos.');
+  const input = parsed.data;
+  let created;
+  try { created = await getAuth().createUser({ email: input.email, password: input.password, displayName: input.name }); }
+  catch (cause) { throw new HttpsError('already-exists', cause instanceof Error ? cause.message : 'Não foi possível criar o acesso.'); }
+  try {
+    await db.runTransaction(async (transaction) => {
+      const userRef = db.doc(`users/${created.uid}`);
+      const driverRef = db.doc(`deliveryDrivers/${created.uid}`);
+      const existing = await transaction.get(driverRef);
+      if (existing.exists) throw new HttpsError('already-exists', 'Este motoboy já está cadastrado.');
+      const now = FieldValue.serverTimestamp();
+      transaction.set(userRef, { role: 'driver', name: input.name, email: input.email, phone: input.phone, active: true, createdAt: now, updatedAt: now }, { merge: true });
+      transaction.create(driverRef, { userId: created.uid, name: input.name, email: input.email, phone: input.phone, status: 'OFFLINE', enabled: true, createdAt: now, updatedAt: now });
+    });
+  } catch (cause) {
+    try { await getAuth().deleteUser(created.uid); } catch { /* não ocultar a falha original */ }
+    if (cause instanceof HttpsError) throw cause;
+    throw new HttpsError('internal', 'Não foi possível salvar o cadastro do motoboy.');
+  }
+  return { uid: created.uid, email: input.email };
+});
+
+const availabilitySchema = z.object({ status: z.enum(['AVAILABLE', 'OFFLINE']) });
+export const setDriverAvailability = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  const role = await requireRole(request.auth?.uid, ['driver', 'admin']);
+  const parsed = availabilitySchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Disponibilidade inválida.');
+  const uid = request.auth!.uid;
+  const ref = db.doc(`deliveryDrivers/${uid}`);
+  const snapshot = await ref.get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Cadastro de motoboy não encontrado.');
+  if (snapshot.data()?.status === 'BUSY' && parsed.data.status === 'OFFLINE') throw new HttpsError('failed-precondition', 'Conclua a entrega atual antes de ficar offline.');
+  await ref.update({ status: parsed.data.status, updatedAt: FieldValue.serverTimestamp(), ...(role === 'admin' ? { enabled: true } : {}) });
+  return { ok: true, status: parsed.data.status };
+});
+
+const assignDeliverySchema = z.object({ deliveryId: z.string().min(1).max(160), driverId: z.string().min(1).max(128) });
+export const assignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = assignDeliverySchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Entrega ou motoboy inválido.');
+  const { deliveryId, driverId } = parsed.data;
+  const eventId = `delivery-${deliveryId}-${randomUUID()}`;
+  await db.runTransaction(async (transaction) => {
+    const deliveryRef = db.doc(`deliveries/${deliveryId}`);
+    const driverRef = db.doc(`deliveryDrivers/${driverId}`);
+    const delivery = await transaction.get(deliveryRef);
+    const driver = await transaction.get(driverRef);
+    if (!delivery.exists) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Motoboy indisponível.');
+    if (delivery.data()?.status !== 'READY_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'Esta entrega não está aguardando atribuição.');
+    if (driver.data()?.status !== 'AVAILABLE') throw new HttpsError('failed-precondition', 'O motoboy precisa estar disponível.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(deliveryRef, { status: 'ASSIGNED', driverId, driverName: driver.data()?.name ?? 'Motoboy', assignedAt: now, updatedAt: now });
+    transaction.update(driverRef, { status: 'BUSY', updatedAt: now });
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: 'ASSIGNED', actorUid: request.auth!.uid, actorRole: 'staff', note: `Atribuída a ${driver.data()?.name ?? 'motoboy'}`, createdAt: now });
+    const publicCode = String(delivery.data()?.publicCode ?? '');
+    if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'ASSIGNED', updatedAt: now }, { merge: true });
+  });
+  return { ok: true };
+});
+
+const deliveryDecisionSchema = z.object({ deliveryId: z.string().min(1).max(160), decision: z.enum(['ACCEPT', 'REJECT']) });
+export const respondDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['driver']);
+  const parsed = deliveryDecisionSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Decisão inválida.');
+  const { deliveryId, decision } = parsed.data;
+  const uid = request.auth!.uid;
+  const eventId = `delivery-${deliveryId}-${randomUUID()}`;
+  await db.runTransaction(async (transaction) => {
+    const deliveryRef = db.doc(`deliveries/${deliveryId}`);
+    const driverRef = db.doc(`deliveryDrivers/${uid}`);
+    const delivery = await transaction.get(deliveryRef);
+    const driver = await transaction.get(driverRef);
+    if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    if (delivery.data()?.status !== 'ASSIGNED') throw new HttpsError('failed-precondition', 'Esta entrega já foi respondida.');
+    const now = FieldValue.serverTimestamp();
+    const publicCode = String(delivery.data()?.publicCode ?? '');
+    if (decision === 'ACCEPT') {
+      transaction.update(deliveryRef, { status: 'ACCEPTED', acceptedAt: now, updatedAt: now });
+      transaction.update(driverRef, { status: 'BUSY', updatedAt: now });
+      if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'ACCEPTED', updatedAt: now }, { merge: true });
+    } else {
+      transaction.update(deliveryRef, { status: 'READY_FOR_DELIVERY', driverId: null, driverName: null, assignedAt: null, updatedAt: now });
+      transaction.update(driverRef, { status: 'AVAILABLE', updatedAt: now });
+      if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', updatedAt: now }, { merge: true });
+    }
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: decision === 'ACCEPT' ? 'ACCEPTED' : 'DRIVER_REJECTED', actorUid: uid, actorRole: 'driver', createdAt: now });
+  });
+  return { ok: true };
+});
+
+const deliveryProgressSchema = z.object({ deliveryId: z.string().min(1).max(160), status: z.enum(['ON_THE_WAY', 'ARRIVED']) });
+export const progressDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['driver']);
+  const parsed = deliveryProgressSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Status de entrega inválido.');
+  const uid = request.auth!.uid;
+  const { deliveryId, status } = parsed.data;
+  const eventId = `delivery-${deliveryId}-${randomUUID()}`;
+  await db.runTransaction(async (transaction) => {
+    const deliveryRef = db.doc(`deliveries/${deliveryId}`);
+    const driverRef = db.doc(`deliveryDrivers/${uid}`);
+    const delivery = await transaction.get(deliveryRef);
+    const driver = await transaction.get(driverRef);
+    if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    const current = String(delivery.data()?.status) as DeliveryStatus;
+    if (!canTransitionDelivery(current, status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
+    const now = FieldValue.serverTimestamp();
+    transaction.update(deliveryRef, { status, ...(status === 'ON_THE_WAY' ? { startedAt: now } : { arrivedAt: now }), updatedAt: now });
+    const publicCode = String(delivery.data()?.publicCode ?? '');
+    if (status === 'ON_THE_WAY') {
+      transaction.update(db.doc(`orders/${delivery.data()?.orderId}`), { status: 'OUT_FOR_DELIVERY', statusMessage: deliveryStatusMessage(status), updatedAt: now, statusHistory: FieldValue.arrayUnion({ status: 'OUT_FOR_DELIVERY', at: Timestamp.now(), actorUid: uid, actorRole: 'driver' }) });
+      if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { status: 'OUT_FOR_DELIVERY', deliveryStatus: status, statusMessage: deliveryStatusMessage(status), updatedAt: now }, { merge: true });
+    } else if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: status, updatedAt: now }, { merge: true });
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: status, actorUid: uid, actorRole: 'driver', createdAt: now });
+  });
+  return { ok: true };
+});
+
+const confirmDeliverySchema = z.object({ deliveryId: z.string().min(1).max(160), code: z.string().regex(/^\d{4}$/) });
+export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['driver']);
+  const parsed = confirmDeliverySchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Informe o código de 4 dígitos.');
+  const uid = request.auth!.uid;
+  const { deliveryId, code } = parsed.data;
+  const eventId = `delivery-${deliveryId}-${randomUUID()}`;
+  await db.runTransaction(async (transaction) => {
+    const deliveryRef = db.doc(`deliveries/${deliveryId}`);
+    const delivery = await transaction.get(deliveryRef);
+    if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    if (delivery.data()?.status !== 'ARRIVED') throw new HttpsError('failed-precondition', 'A entrega precisa estar no local antes da confirmação.');
+    const secret = await transaction.get(db.doc(`deliverySecrets/${deliveryId}`));
+    if (!secret.exists || String(secret.data()?.codeHash ?? '') !== hashDeliveryCode(code)) throw new HttpsError('permission-denied', 'Código incorreto.');
+    const orderRef = db.doc(`orders/${delivery.data()?.orderId}`);
+    const order = await transaction.get(orderRef);
+    if (!order.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    if (order.data()?.status !== 'OUT_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'O pedido não está em rota.');
+    const totalCents = Number(order.data()?.pricing?.totalCents ?? 0);
+    if (!Number.isSafeInteger(totalCents) || totalCents <= 0) throw new HttpsError('failed-precondition', 'O pedido precisa ter um total válido para ser concluído.');
+    const control = await transaction.get(db.doc('cashControl/main'));
+    const registerId = String(control.data()?.openRegisterId ?? '');
+    if (!registerId) throw new HttpsError('failed-precondition', 'A loja precisa abrir o Caixa antes de concluir a entrega.');
+    const register = await transaction.get(db.doc(`cashRegisters/${registerId}`));
+    if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'A loja precisa abrir o Caixa antes de concluir a entrega.');
+    const financeRef = db.doc(`financeEntries/order-${delivery.data()?.orderId}`);
+    const saleRef = db.doc(`cashMovements/order-${delivery.data()?.orderId}`);
+    const finance = await transaction.get(financeRef);
+    const sale = await transaction.get(saleRef);
+    const driverRef = db.doc(`deliveryDrivers/${uid}`);
+    const driver = await transaction.get(driverRef);
+    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    const now = FieldValue.serverTimestamp();
+    const publicCode = String(delivery.data()?.publicCode ?? '');
+    transaction.update(deliveryRef, { status: 'DELIVERED', deliveredAt: now, updatedAt: now });
+    transaction.update(driverRef, { status: 'AVAILABLE', updatedAt: now });
+    transaction.update(orderRef, { status: 'COMPLETED', statusMessage: getCustomerOrderStatusMessage('COMPLETED'), updatedAt: now, statusHistory: FieldValue.arrayUnion({ status: 'COMPLETED', at: Timestamp.now(), actorUid: uid, actorRole: 'driver', reason: 'Código confirmado na entrega' }) });
+    if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { status: 'COMPLETED', deliveryStatus: 'DELIVERED', statusMessage: getCustomerOrderStatusMessage('COMPLETED'), updatedAt: now }, { merge: true });
+    const paymentMethod = order.data()?.payment?.method === 'PIX' || order.data()?.payment?.method === 'CARD' || order.data()?.payment?.method === 'CASH' ? order.data()?.payment?.method : 'OTHER';
+    if (!finance.exists) transaction.create(financeRef, { kind: 'INCOME', category: 'Vendas de açaí', description: `Pedido ${order.data()?.orderNumber ?? delivery.data()?.orderId}`, amountCents: totalCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: order.data()?.orderNumber ?? null, sourceOrderId: delivery.data()?.orderId, paymentMethod, notes: 'Lançamento criado automaticamente ao confirmar a entrega.', createdAt: now, updatedAt: now });
+    if (!sale.exists) {
+      const cashAmountCents = paymentMethod === 'CASH' ? totalCents : 0;
+      const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+      if (!Number.isSafeInteger(expected) || expected < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa é inválido.');
+      transaction.create(saleRef, { registerId, type: 'SALE', direction: 'IN', amountCents: totalCents, cashAmountCents, paymentMethod, orderNumber: order.data()?.orderNumber ?? null, sourceOrderId: delivery.data()?.orderId, operatorUid: uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: 'Venda registrada ao confirmar a entrega.', createdAt: now });
+      transaction.update(register.ref, { expectedCashCents: expected + cashAmountCents, lastMovementAt: now, updatedAt: now });
+    }
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: 'DELIVERED', actorUid: uid, actorRole: 'driver', createdAt: now });
   });
   return { ok: true };
 });
