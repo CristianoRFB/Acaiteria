@@ -658,6 +658,25 @@ export const createDeliveryDriver = onCall({ region, timeoutSeconds: 20, memory:
   return { uid: created.uid, email: input.email };
 });
 
+const deliveryDriverEnabledSchema = z.object({ driverId: z.string().min(1).max(128), enabled: z.boolean() });
+export const setDeliveryDriverEnabled = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin']);
+  const parsed = deliveryDriverEnabledSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Motoboy ou situação inválida.');
+  const { driverId, enabled } = parsed.data;
+  await db.runTransaction(async (transaction) => {
+    const driverRef = db.doc(`deliveryDrivers/${driverId}`);
+    const userRef = db.doc(`users/${driverId}`);
+    const driver = await transaction.get(driverRef);
+    if (!driver.exists) throw new HttpsError('not-found', 'Motoboy não encontrado.');
+    if (!enabled && driver.data()?.status === 'BUSY') throw new HttpsError('failed-precondition', 'Finalize ou devolva a entrega atual antes de desativar este acesso.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(driverRef, { enabled, status: enabled ? 'OFFLINE' : 'INACTIVE', updatedAt: now });
+    transaction.set(userRef, { active: enabled, updatedAt: now }, { merge: true });
+  });
+  return { ok: true, enabled };
+});
+
 const availabilitySchema = z.object({ status: z.enum(['AVAILABLE', 'OFFLINE']) });
 export const setDriverAvailability = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   const role = await requireRole(request.auth?.uid, ['driver', 'admin']);
@@ -755,6 +774,54 @@ export const progressDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
       if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { status: 'OUT_FOR_DELIVERY', deliveryStatus: status, statusMessage: deliveryStatusMessage(status), updatedAt: now }, { merge: true });
     } else if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: status, updatedAt: now }, { merge: true });
     transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: status, actorUid: uid, actorRole: 'driver', createdAt: now });
+  });
+  return { ok: true };
+});
+
+const deliveryFailureSchema = z.object({ deliveryId: z.string().min(1).max(160), reason: z.string().trim().min(3).max(300) });
+export const reportDeliveryFailure = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['driver']);
+  const parsed = deliveryFailureSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Informe o motivo da falha.');
+  const { deliveryId, reason } = parsed.data;
+  const uid = request.auth!.uid;
+  const eventId = `delivery-${deliveryId}-${randomUUID()}`;
+  await db.runTransaction(async (transaction) => {
+    const deliveryRef = db.doc(`deliveries/${deliveryId}`);
+    const driverRef = db.doc(`deliveryDrivers/${uid}`);
+    const delivery = await transaction.get(deliveryRef);
+    const driver = await transaction.get(driverRef);
+    if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    const current = String(delivery.data()?.status) as DeliveryStatus;
+    if (!['ON_THE_WAY', 'ARRIVED'].includes(current) || !canTransitionDelivery(current, 'DELIVERY_FAILED')) throw new HttpsError('failed-precondition', 'Esta entrega não pode ser marcada como falha agora.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(deliveryRef, { status: 'DELIVERY_FAILED', failureReason: reason, failedAt: now, updatedAt: now });
+    transaction.update(driverRef, { status: 'AVAILABLE', updatedAt: now });
+    const publicCode = String(delivery.data()?.publicCode ?? '');
+    if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'DELIVERY_FAILED', statusMessage: 'A loja está revisando um problema na entrega.', updatedAt: now }, { merge: true });
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: 'DELIVERY_FAILED', actorUid: uid, actorRole: 'driver', note: reason, createdAt: now });
+  });
+  return { ok: true };
+});
+
+const requeueDeliverySchema = z.object({ deliveryId: z.string().min(1).max(160) });
+export const requeueDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = requeueDeliverySchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Entrega inválida.');
+  const { deliveryId } = parsed.data;
+  const eventId = `delivery-${deliveryId}-${randomUUID()}`;
+  await db.runTransaction(async (transaction) => {
+    const deliveryRef = db.doc(`deliveries/${deliveryId}`);
+    const delivery = await transaction.get(deliveryRef);
+    if (!delivery.exists) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    if (delivery.data()?.status !== 'DELIVERY_FAILED') throw new HttpsError('failed-precondition', 'Somente entregas com falha podem voltar para a fila.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(deliveryRef, { status: 'READY_FOR_DELIVERY', driverId: null, driverName: null, assignedAt: null, failureReason: null, failedAt: null, updatedAt: now });
+    const publicCode = String(delivery.data()?.publicCode ?? '');
+    if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', statusMessage: 'A loja está organizando uma nova tentativa de entrega.', updatedAt: now }, { merge: true });
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, type: 'READY_FOR_DELIVERY', actorUid: request.auth!.uid, actorRole: 'staff', note: 'Entrega devolvida à fila após falha.', createdAt: now });
   });
   return { ok: true };
 });
