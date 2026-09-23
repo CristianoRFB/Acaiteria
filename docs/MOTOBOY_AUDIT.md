@@ -48,7 +48,8 @@ Legenda: **OK** = comprovado em teste executado; **PARCIAL** = implementação p
 | Administração | Editar entregador, reassociar, consultar eventos | **PARCIAL** | Implementado em callable/UI; faltou cenário integrado automatizado de edição/reassociação e QA visual. |
 | Cliente | Evitar enumeração e ler link individual | **OK** | Rules emulator: acesso individual permitido; listagem pública negada. |
 | Cliente | Exibir nome/status do entregador | **PARCIAL** | Dados e interface implementados; sem teste visual/autenticado completo no cliente. |
-| Compatibilidade financeira | Venda em dinheiro concorrente/idempotente | **OK** | Emulador comprovou `amountCents`, `cashAmountCents`, saldo esperado e ausência de duplicidade. |
+| Compatibilidade financeira | Venda em dinheiro concorrente/idempotente no callable | **PARCIAL** | Teste de integração passou com fixture que cria `cashRegisters` e `cashControl/main` diretamente; a abertura pela interface não estava coberta. |
+| Compatibilidade financeira | Caixa aberto pela interface → conclusão da entrega | **QUEBRADA** | Reprodução real em 23/09: a UI cria `cashRegisters`, mas não `cashControl/main.openRegisterId`; `confirmDelivery` bloqueia antes de lançar receita ou movimento. |
 | Compatibilidade financeira | Caixa fechado, outras formas de pagamento e reversões em todos os cenários | **PARCIAL** | Requer caixa aberto para concluir; cenários restantes não foram integrados nesta bateria. |
 | Segurança | Código legado nos documentos antigos | **PARCIAL** | Callable de limpeza limitada a 450 por execução; não executada contra Firebase real nem contra cópia de produção. Admin deve abrir a central publicada para concluir a limpeza. |
 | Mobile/PWA | Instalação e push com app fechado | **AUSENTE** | Não há manifest/service worker nem FCM/VAPID. Atualização em tempo real funciona enquanto o painel está aberto, mas não substitui push. |
@@ -56,12 +57,40 @@ Legenda: **OK** = comprovado em teste executado; **PARCIAL** = implementação p
 
 ## Validações executadas
 
-- `npm run ci`: lint, TypeScript, testes de domínio e build — **aprovado**.
+- `npm run ci`: lint, TypeScript, build e **38 testes de aplicação aprovados** no último checkpoint.
 - `npm run test:functions`: **14 testes aprovados**.
 - `npm run test:rules`: **6 testes aprovados** no Firestore Emulator.
 - `npm run test:functions:integration`: **14 testes aprovados** (pedido/outbox, confirmação concorrente, bloqueio de código, cancelamento, reassociação, edição de cadastro e saneamento legado) nos emuladores Auth, Firestore e Functions.
 - `npm audit --omit=dev --audit-level=moderate`: **0 vulnerabilidades de produção**. Instalação completa reportou 7 moderadas em dependências de desenvolvimento; não foi aplicado upgrade automático.
 - O ambiente usa Node 24 apesar do runtime Functions declarado como Node 22; o Firebase Emulator emitiu aviso. Firebase de produção, App Check, FCM e dispositivos reais não foram testados.
+
+## Checkpoint de continuidade — 23/09/2026
+
+**Estado geral: NÃO HOMOLOGADO.** A matriz anterior registra resultados automatizados, mas não substitui esta jornada pela interface nem os gates móveis/produção ainda pendentes.
+
+Base desta retomada: `c64c6e9` em `main`; a árvore estava limpa antes das alterações deste checkpoint.
+
+### Jornada real percorrida no ambiente local
+
+- Loja pública abriu com categorias e produtos; foi possível montar um açaí e concluir um pedido sintético de entrega.
+- O pedido percorreu `Novo → Confirmado → Em preparo → Pronto`; o painel refletiu as mudanças.
+- Foi criado um entregador de teste, ele entrou no portal, ficou disponível, recebeu a corrida, aceitou, confirmou a retirada, iniciou a rota e marcou chegada. A página do entregador exibiu endereço e mapa, mas não revelou o código secreto; esse código apareceu apenas no acompanhamento do cliente.
+- **Bloqueio crítico reproduzido:** ao confirmar a entrega com o código correto, a Function respondeu `A loja precisa abrir o Caixa antes de concluir a entrega` (`failed-precondition`/400), embora a página Caixa mostrasse `Caixa aberto` e R$ 100,00 de saldo inicial. A confirmação não concluiu o pedido nem lançou receita/movimentação.
+- Causa identificada: `lib/cash-register.ts::openCashRegister` cria somente um documento em `cashRegisters`; não atualiza `cashControl/main.openRegisterId`. Já `confirmDelivery` exige esse vínculo. A interface e a Function estão lendo fontes de verdade incompatíveis. **Não contornar manualmente nem declarar o fluxo financeiro aprovado.**
+- Também foi corrigido o cadastro de entregador: depois de a Function criar a conta, `event.currentTarget` era acessado após um `await`, quando já era `null`. A tela mostrava erro apesar do cadastro ter sido efetuado. O teste de componente reproduziu o erro (RED) e passou com a correção (GREEN).
+- O teste usou somente Firebase Emulator/projeto `demo-acai-mais-sabor` e dados sintéticos. O link do Google Maps foi inspecionado, mas não aberto. Nenhuma operação ocorreu em Firebase de produção.
+
+### Como retomar
+
+1. Confira a branch e o estado do repositório; continue do commit publicado mais recente, sem reconstruir as jornadas já implementadas.
+2. Para validação manual, instale dependências (`npm ci`), inicie `npm run emulators` e, em outro terminal, `npm run dev -- --port 3000`. A loja fica em `http://localhost:3000`; painel, em `/admin`. Use somente contas de teste no emulador. Se precisar recriar dados, pare os emuladores persistentes e use `npm run seed:emulator`; configure `SEED_ADMIN_EMAIL` e `SEED_ADMIN_PASSWORD` apenas no ambiente local para criar um admin de teste. O script exige hosts dos emuladores e nunca deve ser executado contra produção.
+3. Corrija a abertura do Caixa para usar a callable `operateCashRegister` (`operation: OPEN`) — e alinhe também venda local, suprimento, sangria e fechamento às operações server-side disponíveis. Garanta criação atômica de `cashRegisters`, `cashMovements` e `cashControl/main`, com idempotência e um único caixa aberto.
+4. Adicione/execute regressões para: caixa aberto pelo fluxo da interface ser aceito por `confirmDelivery`; venda em dinheiro aumentar o esperado exatamente uma vez; PIX/cartão não alterarem dinheiro físico; caixa fechado bloquear a conclusão sem escrita parcial; repetição/concorrência não duplicarem movimento nem receita. Verifique `orders`, `financeEntries/order-{orderId}`, `cashMovements/order-{orderId}`, `cashRegisters` e `cashControl/main` no emulador.
+5. Repita a jornada completa cliente → preparo → atribuição → aceite → retirada → rota → chegada → código → conclusão, e confirme simultaneamente a tela do cliente, a central de entregas, Financeiro e Caixa. Inclua falha, devolução à fila, reassociação, recusa, cancelamento e tentativa de código inválido.
+6. Faça QA visual com viewport 360, 390 e 430 px em cliente, admin e entregador; registre evidência. Não abrir links externos de mapa durante teste com endereços reais.
+7. Rode `npm run ci`, `npm run test:functions`, `npm run test:rules` e `npm run test:functions:integration`. `test:rules` usa o emulador Firestore em 8180 quando já está ativo; a integração inicia seus próprios emuladores, então evite conflito de portas. Atualize esta matriz com evidências e só marque homologado quando nenhum gate crítico estiver pendente.
+
+As credenciais e configurações locais devem permanecer fora do Git. Não copie senhas, códigos de recebimento, `.env.local`, dados do emulador ou tokens privados para este documento.
 
 ## Próximos gates para homologação de mercado
 

@@ -54,11 +54,12 @@ export default function DriversPage() {
     );
   }, []);
   async function create(event: FormEvent<HTMLFormElement>) {
+    const form = event.currentTarget;
     event.preventDefault();
     setBusy(true);
     setError('');
     setNotice('');
-    const data = new FormData(event.currentTarget);
+    const data = new FormData(form);
     const name = String(data.get('name') ?? '').trim();
     const phone = String(data.get('phone') ?? '').trim();
     const email = String(data.get('email') ?? '').trim();
@@ -86,7 +87,7 @@ export default function DriversPage() {
       setNotice(
         `Acesso criado para ${result.data.email}. O entregador já pode entrar pelo portal.`,
       );
-      event.currentTarget.reset();
+      form.reset();
       setOpen(false);
     } catch (cause) {
       setError(
