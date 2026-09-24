@@ -763,7 +763,7 @@ export const assignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256M
     if (delivery.data()?.status !== 'READY_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'Esta entrega não está aguardando atribuição.');
     if (driver.data()?.status !== 'AVAILABLE') throw new HttpsError('failed-precondition', 'O motoboy precisa estar disponível.');
     const now = FieldValue.serverTimestamp();
-    transaction.update(deliveryRef, { status: 'ASSIGNED', driverId, driverIds: FieldValue.arrayUnion(driverId), driverName: driver.data()?.name ?? 'Motoboy', assignedAt: now, updatedAt: now, publicCode: FieldValue.delete() });
+    transaction.update(deliveryRef, { status: 'ASSIGNED', driverId, driverName: driver.data()?.name ?? 'Motoboy', assignedAt: now, updatedAt: now, publicCode: FieldValue.delete() });
     transaction.update(driverRef, { status: 'BUSY', currentDeliveryId: deliveryId, updatedAt: now });
     transaction.update(orderRef, { deliveryStatus: 'ASSIGNED', deliveryUpdatedAt: now, updatedAt: now });
     transaction.set(db.doc(`deliveryDrivers/${driverId}/deliveryHistory/${deliveryId}`), { deliveryId, orderId: orderRef.id, orderNumber: delivery.data()?.orderNumber ?? order.data()?.orderNumber ?? orderRef.id, customerName: delivery.data()?.customerName ?? 'Cliente', status: 'ASSIGNED', updatedAt: now }, { merge: true });
@@ -802,11 +802,11 @@ export const respondDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
       transaction.update(orderRef, { deliveryStatus: 'ACCEPTED', deliveryUpdatedAt: now, updatedAt: now });
       if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'ACCEPTED', updatedAt: now }, { merge: true });
     } else {
-      transaction.update(deliveryRef, { status: 'READY_FOR_DELIVERY', driverId: null, driverName: null, assignedAt: null, updatedAt: now, publicCode: FieldValue.delete() });
+      transaction.update(deliveryRef, { status: 'READY_FOR_DELIVERY', driverId: null, driverName: null, assignedAt: FieldValue.delete(), acceptedAt: FieldValue.delete(), driverIds: FieldValue.delete(), updatedAt: now, publicCode: FieldValue.delete() });
       transaction.set(db.doc(`deliveryDrivers/${uid}/deliveryHistory/${deliveryId}`), { deliveryId, orderId: orderRef.id, orderNumber: delivery.data()?.orderNumber ?? order.data()?.orderNumber ?? orderRef.id, customerName: delivery.data()?.customerName ?? 'Cliente', status: 'DRIVER_REJECTED', updatedAt: now }, { merge: true });
       transaction.update(driverRef, { status: 'AVAILABLE', currentDeliveryId: FieldValue.delete(), updatedAt: now });
       transaction.update(orderRef, { deliveryStatus: 'READY_FOR_DELIVERY', deliveryUpdatedAt: now, updatedAt: now });
-      if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', updatedAt: now }, { merge: true });
+      if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', deliveryDriverName: FieldValue.delete(), updatedAt: now }, { merge: true });
     }
     transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, driverId: uid, type: decision === 'ACCEPT' ? 'ACCEPTED' : 'DRIVER_REJECTED', actorUid: uid, actorRole: 'driver', createdAt: now });
   });
@@ -873,7 +873,7 @@ export const reassignDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
     const driverName = String(newDriver.data()?.name ?? 'Motoboy');
     transaction.update(oldDriverRef, { status: 'AVAILABLE', currentDeliveryId: FieldValue.delete(), updatedAt: now });
     transaction.update(newDriverRef, { status: 'BUSY', currentDeliveryId: deliveryId, updatedAt: now });
-    transaction.update(deliveryRef, { status: 'ASSIGNED', driverId, driverIds: FieldValue.arrayUnion(driverId), driverName, assignedAt: now, updatedAt: now });
+    transaction.update(deliveryRef, { status: 'ASSIGNED', driverId, driverName, assignedAt: now, updatedAt: now, driverIds: FieldValue.delete() });
     transaction.update(orderRef, { deliveryStatus: 'ASSIGNED', deliveryUpdatedAt: now, updatedAt: now });
     for (const [historyDriverId, historyStatus] of [[oldDriverId, 'REASSIGNED'], [driverId, 'ASSIGNED']] as const) {
       transaction.set(db.doc(`deliveryDrivers/${historyDriverId}/deliveryHistory/${deliveryId}`), { deliveryId, orderId: orderRef.id, orderNumber: delivery.data()?.orderNumber ?? order.data()?.orderNumber ?? orderRef.id, customerName: delivery.data()?.customerName ?? 'Cliente', status: historyStatus, updatedAt: now }, { merge: true });
@@ -933,12 +933,18 @@ export const requeueDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     const order = await transaction.get(orderRef);
     if (!order.exists) throw new HttpsError('not-found', 'Pedido vinculado não encontrado.');
     const now = FieldValue.serverTimestamp();
-    transaction.update(deliveryRef, { status: 'READY_FOR_DELIVERY', driverId: null, driverName: null, assignedAt: null, failureReason: null, failedAt: null, updatedAt: now, publicCode: FieldValue.delete() });
+    transaction.update(deliveryRef, {
+      status: 'READY_FOR_DELIVERY', driverId: null, driverName: null,
+      assignedAt: FieldValue.delete(), acceptedAt: FieldValue.delete(),
+      pickedUpAt: FieldValue.delete(), startedAt: FieldValue.delete(), arrivedAt: FieldValue.delete(),
+      failureReason: FieldValue.delete(), failedAt: FieldValue.delete(),
+      driverIds: FieldValue.delete(), updatedAt: now, publicCode: FieldValue.delete(),
+    });
     const previousDriverId = String(delivery.data()?.driverId ?? '');
     if (previousDriverId) transaction.set(db.doc(`deliveryDrivers/${previousDriverId}/deliveryHistory/${deliveryId}`), { deliveryId, orderId: orderRef.id, orderNumber: delivery.data()?.orderNumber ?? order.data()?.orderNumber ?? orderRef.id, customerName: delivery.data()?.customerName ?? 'Cliente', status: 'RETURNED_TO_QUEUE', note: delivery.data()?.failureReason ?? '', updatedAt: now }, { merge: true });
     transaction.update(orderRef, { deliveryStatus: 'READY_FOR_DELIVERY', deliveryFailureReason: FieldValue.delete(), deliveryUpdatedAt: now, updatedAt: now });
     const publicCode = String(order.data()?.publicCode ?? '');
-    if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', statusMessage: 'A loja está organizando uma nova tentativa de entrega.', updatedAt: now }, { merge: true });
+    if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', deliveryDriverName: FieldValue.delete(), statusMessage: 'A loja está organizando uma nova tentativa de entrega.', updatedAt: now }, { merge: true });
     transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, driverId: delivery.data()?.driverId ?? null, type: 'READY_FOR_DELIVERY', actorUid: request.auth!.uid, actorRole: 'staff', note: 'Entrega devolvida à fila após falha.', createdAt: now });
   });
   return { ok: true };

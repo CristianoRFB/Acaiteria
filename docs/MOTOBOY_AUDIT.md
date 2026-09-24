@@ -99,3 +99,49 @@ As credenciais e configurações locais devem permanecer fora do Git. Não copie
 3. Validar visualmente os 11 estados de referência nos três tamanhos móveis; fornecer as imagens ausentes.
 4. Decidir e configurar PWA/FCM (incluindo consentimento de notificações), chaves e regras de produção.
 5. Homologar Firebase/App Check e dinheiro/PIX/cartão com a operação real e conferir devolução/estorno.
+
+## Checkpoint de continuidade — 24/09/2026
+
+**Estado geral: NÃO HOMOLOGADO PARA PRODUÇÃO.** O código passou nos gates automatizados locais abaixo, mas ainda falta QA visual da interface móvel e configuração/validação do Firebase de produção. Nenhuma implantação foi feita.
+
+### Repositório e base
+
+- Repositório: `CristianoRFB/Acaiteria`, branch `main`.
+- HEAD local antes da retomada: `2ec1efa`; sincronizado por fast-forward com o GitHub até `f2a253d` antes das alterações desta sessão.
+- Esta retomada parte do commit publicado `f2a253d`; o histórico da branch registra o commit que acompanha este checkpoint.
+- Arquivos temporários preexistentes (`.tmp-*` e `site-version-*.tar.gz`) foram preservados e não fazem parte das mudanças desta sessão.
+
+### Correções e evidência desta sessão
+
+- Caixa e Financeiro agora usam a callable autenticada `operateCashRegister` para abertura, sangria/suprimento, venda local e fechamento. Isso mantém `cashRegisters`, `cashMovements` e `cashControl/main.openRegisterId` sincronizados; estorno também usa a callable `refundCompletedOrder`.
+- A página Caixa mantém o identificador idempotente da mesma tentativa enquanto o formulário permanece aberto; o backend confirma/fecha transacionalmente e rejeita movimento em caixa que não é o atual.
+- Corrigida a autorização residual de entregadores antigos: presença em `driverIds` legado não concede leitura da entrega/endereço nem de eventos após reassociação. O histórico privado do entregador permanece acessível ao próprio titular.
+- A devolução de falha à fila remove vínculo, nome público e timestamps da tentativa anterior, preservando eventos e histórico. A central administrativa permite cancelar explicitamente um pedido com falha e registrar o motivo.
+- O portal do entregador tem telas funcionais por abas para Início, Pedidos (atual/pendentes/concluídos), Histórico e Perfil; o link de rota inclui complemento e referência do endereço.
+- Um teste de cancelamento inicialmente falhou porque seu fixture usava um ID de entrega não canônico. O fixture passou a usar `delivery-${orderId}`, como o sistema real; a suíte de integração repetida passou.
+
+### Gates automatizados executados
+
+- `npm run ci`: **passou** — lint, typecheck, build e 38 testes da aplicação.
+- `npm run test:functions`: **passou** — 14 testes.
+- `npm run test:rules`: **passou** — 6 testes no emulador Firestore.
+- `npm run test:functions:integration`: **passou** — 21 testes nos emuladores Auth, Firestore e Functions, incluindo atribuição concorrente, dois aceites simultâneos, tela antiga após reassociação, código incorreto/rate limit, confirmação concorrente, requeue e nova atribuição, cancelamento após falha, caixa fechado, vendas locais idempotentes e impactos CASH/PIX/CARD.
+- `git diff --check`: **passou**.
+- `npm audit --omit=dev --audit-level=moderate`: **0 vulnerabilidades de produção**.
+- O build emitiu dois avisos ambientais/não bloqueantes: Functions declara Node 22, mas a máquina executa Node 24; e há chunks client acima de 500 kB.
+- `npm run check:production`: **bloqueado corretamente** — faltam as sete variáveis de configuração Firebase/App Check exigidas; não foram exibidos valores secretos nem feita implantação.
+
+### Limitações que continuam abertas
+
+- QA visual nos viewports de 360, 390 e 430 px não foi executado: o conector do navegador embutido não conseguiu conectar e o repositório não tem Playwright instalado. Não declarar que o layout foi homologado visualmente.
+- Não há script `test:e2e` no `package.json`; os testes de integração cobrem callables/banco, não a jornada completa pelas interfaces de cliente, admin e entregador.
+- Não há manifest/service worker de PWA nem FCM/Web Push em `public`/app; atualizações em tempo real exigem o painel conectado. APK/Capacitor permanece fora do escopo atual.
+- Firebase real, App Check, Maps com endereço real e envio de notificações não foram testados. Não usar dados de cliente real nos próximos testes.
+
+### Próxima retomada
+
+1. Repetir a inspeção de `git status` e preservar os arquivos temporários locais; considerar somente os arquivos rastreados da sessão.
+2. Disponibilizar um backend de navegador/E2E e validar as telas nos tamanhos 360/390/430 px, sem abrir Maps com endereço real.
+3. Provisionar configuração Firebase/App Check de produção por meio seguro e executar `npm run check:production`; continuar sem deploy até homologar operação real e Rules.
+4. Decidir se PWA/push faz parte do próximo escopo. Hoje não está implementado e não deve ser descrito como push.
+5. Registrar novas evidências e revisar este checkpoint; não implantar em produção enquanto os gates acima estiverem abertos. Nunca incluir `.env`, tokens, logs ou os arquivos temporários preexistentes.

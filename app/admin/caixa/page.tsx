@@ -23,7 +23,7 @@ import {
   ReceiptText,
   WalletCards,
 } from 'lucide-react';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 
 import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { AdminShell } from '@/components/admin-shell';
@@ -110,6 +110,18 @@ export default function CashRegisterPage() {
   const [historyStatus, setHistoryStatus] = useState<'ALL' | 'OPEN' | 'CLOSED'>(
     'ALL',
   );
+  const pendingCashRequest = useRef<{ fingerprint: string; id: string } | null>(
+    null,
+  );
+
+  function cashRequestId(operation: string, input: Record<string, unknown>) {
+    const fingerprint = JSON.stringify({ operation, ...input });
+    if (pendingCashRequest.current?.fingerprint === fingerprint)
+      return pendingCashRequest.current.id;
+    const id = crypto.randomUUID();
+    pendingCashRequest.current = { fingerprint, id };
+    return id;
+  }
 
   useEffect(() => {
     if (!role) return undefined;
@@ -208,11 +220,16 @@ export default function CashRegisterPage() {
       const amount = openingAmount.trim() ? parseBRLToCents(openingAmount) : -1;
       if (amount < 0)
         throw new Error('Informe o saldo inicial disponível para troco.');
-      await openCashRegister(getFirebaseClient().db, {
+      const input = {
         initialBalanceCents: amount,
         note: openingNote,
         openingDate: todayKey(),
+      };
+      await openCashRegister({
+        ...input,
+        clientRequestId: cashRequestId('OPEN', input),
       });
+      pendingCashRequest.current = null;
       setAction(null);
       setOpeningAmount('');
       setOpeningNote('');
@@ -233,7 +250,7 @@ export default function CashRegisterPage() {
     resetFeedback();
     setBusy(true);
     try {
-      await recordCashMovement(getFirebaseClient().db, {
+      const input = {
         registerId: current.id,
         type: action,
         amountCents: parseRequiredMoney(
@@ -241,7 +258,12 @@ export default function CashRegisterPage() {
           action === 'WITHDRAWAL' ? 'a sangria' : 'o suprimento',
         ),
         note: movementNote,
+      };
+      await recordCashMovement({
+        ...input,
+        clientRequestId: cashRequestId('MOVEMENT', input),
       });
+      pendingCashRequest.current = null;
       setAction(null);
       setMovementAmount('');
       setMovementNote('');
@@ -266,14 +288,19 @@ export default function CashRegisterPage() {
     resetFeedback();
     setBusy(true);
     try {
-      await recordLocalSale(getFirebaseClient().db, {
+      const input = {
         registerId: current.id,
         amountCents: parseRequiredMoney(localSaleAmount, 'a venda'),
         paymentMethod: localSalePaymentMethod,
         description: localSaleDescription,
         orderNumber: localSaleOrderNumber,
         note: localSaleNote,
+      };
+      await recordLocalSale({
+        ...input,
+        clientRequestId: cashRequestId('LOCAL_SALE', input),
       });
+      pendingCashRequest.current = null;
       setAction(null);
       setLocalSaleAmount('');
       setLocalSaleDescription('');
@@ -298,7 +325,7 @@ export default function CashRegisterPage() {
     try {
       if (!countedCash.trim())
         throw new Error('Informe o valor contado em dinheiro.');
-      await closeCashRegister(getFirebaseClient().db, {
+      await closeCashRegister({
         registerId: current.id,
         countedCashCents,
         note: closingNote,

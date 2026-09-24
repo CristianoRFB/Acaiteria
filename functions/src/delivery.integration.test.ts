@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
 import { getFirestore } from 'firebase-admin/firestore';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor' });
 const auth = getAuth();
@@ -12,6 +12,7 @@ const functionsEndpoint = `http://127.0.0.1:5001/${projectId}/southamerica-east1
 const authEndpoint = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key';
 const testPassword = 'Motoboy-Teste-2026!';
 let adminToken = '';
+let secondAdminToken = '';
 let driverToken = '';
 let driverUid = '';
 
@@ -31,9 +32,8 @@ async function call(name: string, token: string, data: unknown) {
 }
 
 async function createArrivedCashDelivery(driverId: string) {
-  const deliveryId = `delivery-${randomUUID()}`;
   const orderId = `order-${randomUUID()}`;
-  const registerId = `register-${randomUUID()}`;
+  const deliveryId = `delivery-${orderId}`;
   const publicCode = `public-${randomUUID()}`;
   const code = '4827';
   await db.doc(`orders/${orderId}`).set({ status: 'OUT_FOR_DELIVERY', orderNumber: '#QA-1', publicCode, fulfillment: { mode: 'DELIVERY' }, pricing: { totalCents: 2450 }, payment: { method: 'CASH' }, customer: { name: 'Cliente teste' }, updatedAt: new Date() });
@@ -41,9 +41,28 @@ async function createArrivedCashDelivery(driverId: string) {
   await db.doc(`deliveries/${deliveryId}`).set({ orderId, orderNumber: '#QA-1', driverId, driverIds: [driverId], status: 'ARRIVED', customerName: 'Cliente teste', totalCents: 2450 });
   await db.doc(`deliverySecrets/${deliveryId}`).set({ deliveryId, codeHash: createHash('sha256').update(code).digest('hex'), failedCodeAttempts: 0, failedCodeWindowStartedAtMs: Date.now(), failedCodeLockedUntilMs: 0 });
   await db.doc(`deliveryDrivers/${driverId}`).update({ status: 'BUSY', currentDeliveryId: deliveryId });
-  await db.doc(`cashRegisters/${registerId}`).set({ status: 'OPEN', expectedCashCents: 1000, initialBalanceCents: 1000 });
-  await db.doc('cashControl/main').set({ openRegisterId: registerId });
-  return { deliveryId, orderId, registerId, publicCode, code };
+  const opened = await call('operateCashRegister', adminToken, {
+    operation: 'OPEN',
+    clientRequestId: randomUUID(),
+    initialBalanceCents: 1000,
+    openingDate: '2026-09-24',
+    note: 'Abertura de caixa de teste',
+  });
+  if (opened.status !== 200 || typeof opened.body.result?.registerId !== 'string') {
+    throw new Error(opened.body.error?.message ?? 'Não foi possível abrir o caixa de teste.');
+  }
+  return { deliveryId, orderId, registerId: opened.body.result.registerId, publicCode, code };
+}
+
+async function createReadyDelivery() {
+  const deliveryId = `delivery-${randomUUID()}`;
+  const orderId = `order-${randomUUID()}`;
+  const publicCode = `public-${randomUUID()}`;
+  await db.doc(`orders/${orderId}`).set({ status: 'PREPARING', orderNumber: '#QA-READY', publicCode, fulfillment: { mode: 'DELIVERY' }, pricing: { totalCents: 1800 }, payment: { method: 'PIX' }, customer: { name: 'Cliente teste' }, updatedAt: new Date() });
+  await db.doc(`publicOrders/${publicCode}`).set({ publicCode, orderNumber: '#QA-READY', status: 'PREPARING' });
+  await db.doc(`deliveries/${deliveryId}`).set({ orderId, orderNumber: '#QA-READY', status: 'READY_FOR_DELIVERY', customerName: 'Cliente teste', address: { street: 'Rua de teste', number: '10', neighborhood: 'Centro' }, totalCents: 1800 });
+  await db.doc(`deliverySecrets/${deliveryId}`).set({ deliveryId, publicCode, deliveryCode: '3914', codeHash: createHash('sha256').update('3914').digest('hex') });
+  return { deliveryId, orderId, publicCode };
 }
 
 beforeAll(async () => {
@@ -52,13 +71,69 @@ beforeAll(async () => {
     createSignedInUser('admin', `qa-admin-${suffix}@example.test`),
     createSignedInUser('driver', `qa-driver-${suffix}@example.test`),
   ]);
+  const secondAdmin = await createSignedInUser('admin', `qa-admin-second-${suffix}@example.test`);
   adminToken = admin.token;
+  secondAdminToken = secondAdmin.token;
   driverToken = driver.token;
   driverUid = driver.uid;
   process.env.FUNCTIONS_EMULATOR = 'true';
 });
 
+afterEach(async () => {
+  const control = await db.doc('cashControl/main').get();
+  const registerId = String(control.data()?.openRegisterId ?? '');
+  if (!registerId) return;
+  const register = await db.doc(`cashRegisters/${registerId}`).get();
+  if (!register.exists || register.data()?.status !== 'OPEN') return;
+  await call('operateCashRegister', adminToken, {
+    operation: 'CLOSE',
+    registerId,
+    countedCashCents: Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0),
+    note: 'Encerramento automático do teste',
+  });
+});
+
 describe('delivery operations in Firebase Emulator Suite', () => {
+  it('serializes two admins assigning the same ready order and accepts only one winner', async () => {
+    const fixture = await createReadyDelivery();
+    const secondDriver = await createSignedInUser('driver', `qa-driver-race-${randomUUID()}@example.test`);
+    await Promise.all([
+      db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'AVAILABLE', currentDeliveryId: null }),
+      db.doc(`deliveryDrivers/${secondDriver.uid}`).update({ status: 'AVAILABLE' }),
+    ]);
+    const results = await Promise.all([
+      call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driverUid }),
+      call('assignDelivery', secondAdminToken, { deliveryId: fixture.deliveryId, driverId: secondDriver.uid }),
+    ]);
+    expect(results.filter((result) => result.status === 200)).toHaveLength(1);
+    const assigned = (await db.doc(`deliveries/${fixture.deliveryId}`).get()).data();
+    expect(assigned?.status).toBe('ASSIGNED');
+    if (assigned?.status === 'ASSIGNED') {
+      const assignedDriver = String(assigned.driverId);
+      const otherDriver = assignedDriver === driverUid ? secondDriver.uid : driverUid;
+      expect((await db.doc(`deliveryDrivers/${assignedDriver}`).get()).data()?.status).toBe('BUSY');
+      expect((await db.doc(`deliveryDrivers/${otherDriver}`).get()).data()?.status).toBe('AVAILABLE');
+    }
+    const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
+    expect(events.docs.filter((event) => event.data().type === 'ASSIGNED')).toHaveLength(1);
+  }, 20000);
+
+  it('accepts a corrida once when two sessions of the same driver tap aceitar concurrently', async () => {
+    const fixture = await createReadyDelivery();
+    await db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'AVAILABLE', currentDeliveryId: null });
+    expect((await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driverUid })).status).toBe(200);
+
+    const responses = await Promise.all([
+      call('respondDelivery', driverToken, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' }),
+      call('respondDelivery', driverToken, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' }),
+    ]);
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ACCEPTED');
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.currentDeliveryId).toBe(fixture.deliveryId);
+    const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
+    expect(events.docs.filter((event) => event.data().type === 'ACCEPTED')).toHaveLength(1);
+  }, 20000);
+
   it('persists wrong-code attempts, rate-limits after five tries, and never completes the order', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
     const offline = await call('setDriverAvailability', driverToken, { status: 'OFFLINE' });
@@ -78,6 +153,8 @@ describe('delivery operations in Firebase Emulator Suite', () => {
 
   it('completes an arrived delivery and records finance/cash exactly once under concurrent confirmation', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
+    expect((await db.doc('cashControl/main').get()).data()?.openRegisterId).toBe(fixture.registerId);
+    expect((await db.doc(`cashMovements/opening-${fixture.registerId}`).get()).exists).toBe(true);
     const results = await Promise.all([
       call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code }),
       call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code }),
@@ -89,6 +166,126 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).data()?.cashAmountCents).toBe(2450);
     expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.expectedCashCents).toBe(3450);
     expect((await db.doc(`deliveryDrivers/${driverUid}/deliveryHistory/${fixture.deliveryId}`).get()).data()?.status).toBe('DELIVERED');
+  }, 20000);
+
+  it('records a delivery failure, requeues without finance writes, reassigns, and completes with the new driver', async () => {
+    const fixture = await createArrivedCashDelivery(driverUid);
+    const failed = await call('reportDeliveryFailure', driverToken, {
+      deliveryId: fixture.deliveryId,
+      reason: 'Cliente não estava no endereço; pedido retornou à loja.',
+    });
+    expect(failed.status).toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()).toMatchObject({ status: 'DELIVERY_FAILED', failureReason: 'Cliente não estava no endereço; pedido retornou à loja.' });
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('AVAILABLE');
+    expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('OUT_FOR_DELIVERY');
+    expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
+    expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
+
+    const requeued = await call('requeueDelivery', adminToken, { deliveryId: fixture.deliveryId });
+    expect(requeued.status).toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()).toMatchObject({ status: 'READY_FOR_DELIVERY', driverId: null, driverName: null });
+    expect((await db.doc(`deliveryDrivers/${driverUid}/deliveryHistory/${fixture.deliveryId}`).get()).data()?.status).toBe('RETURNED_TO_QUEUE');
+    expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).not.toBe('COMPLETED');
+
+    const nextDriver = await createSignedInUser('driver', `qa-driver-retry-${randomUUID()}@example.test`);
+    await db.doc(`deliveryDrivers/${nextDriver.uid}`).update({ status: 'AVAILABLE' });
+    expect((await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: nextDriver.uid })).status).toBe(200);
+    expect((await call('respondDelivery', nextDriver.token, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' })).status).toBe(200);
+    for (const status of ['PICKED_UP', 'ON_THE_WAY', 'ARRIVED']) {
+      expect((await call('progressDelivery', nextDriver.token, { deliveryId: fixture.deliveryId, status })).status).toBe(200);
+    }
+    expect((await call('confirmDelivery', nextDriver.token, { deliveryId: fixture.deliveryId, code: fixture.code })).status).toBe(200);
+    expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('COMPLETED');
+    expect((await db.doc(`deliveryDrivers/${nextDriver.uid}`).get()).data()?.status).toBe('AVAILABLE');
+    expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).data()?.amountCents).toBe(2450);
+    expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).data()?.cashAmountCents).toBe(2450);
+    const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
+    expect(events.docs.map((event) => event.data().type)).toEqual(expect.arrayContaining(['DELIVERY_FAILED', 'READY_FOR_DELIVERY', 'ASSIGNED', 'PICKED_UP', 'ON_THE_WAY', 'ARRIVED', 'DELIVERED']));
+  }, 30000);
+
+  it('lets the admin cancel a failed delivery while retaining failure history and avoiding finance entries', async () => {
+    const fixture = await createArrivedCashDelivery(driverUid);
+    expect((await call('reportDeliveryFailure', driverToken, { deliveryId: fixture.deliveryId, reason: 'Cliente recusou o pedido.' })).status).toBe(200);
+    const cancelled = await call('updateOrderStatus', adminToken, { orderId: fixture.orderId, status: 'CANCELLED', reason: 'Cancelado após revisão da falha.' });
+    expect(cancelled.status).toBe(200);
+    expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('CANCELLED');
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('CANCELLED');
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('AVAILABLE');
+    expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
+    expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
+    const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
+    expect(events.docs.map((event) => event.data().type)).toEqual(expect.arrayContaining(['DELIVERY_FAILED', 'CANCELLED']));
+  }, 20000);
+
+  it('records local cash sales once and keeps Pix and card out of physical cash', async () => {
+    const opened = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN',
+      clientRequestId: randomUUID(),
+      initialBalanceCents: 2000,
+      openingDate: '2026-09-24',
+      note: 'Abertura para teste de formas de pagamento',
+    });
+    expect(opened.status).toBe(200);
+    const registerId = String(opened.body.result?.registerId);
+    const saleId = randomUUID();
+    const sale = {
+      operation: 'LOCAL_SALE',
+      clientRequestId: saleId,
+      registerId,
+      amountCents: 1550,
+      paymentMethod: 'CASH',
+      description: 'Venda em dinheiro de teste',
+    };
+    const duplicateCashSale = await Promise.all([
+      call('operateCashRegister', adminToken, sale),
+      call('operateCashRegister', adminToken, sale),
+    ]);
+    expect(duplicateCashSale.every((result) => result.status === 200)).toBe(true);
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(3550);
+    expect((await db.doc(`cashMovements/local-${saleId}`).get()).data()?.cashAmountCents).toBe(1550);
+    expect((await db.doc(`financeEntries/local-${saleId}`).get()).data()?.amountCents).toBe(1550);
+
+    for (const [paymentMethod, amountCents] of [['PIX', 2300], ['CARD', 3100]] as const) {
+      const clientRequestId = randomUUID();
+      const result = await call('operateCashRegister', adminToken, {
+        operation: 'LOCAL_SALE', clientRequestId, registerId, amountCents,
+        paymentMethod, description: `Venda ${paymentMethod} de teste`,
+      });
+      expect(result.status).toBe(200);
+      expect((await db.doc(`cashMovements/local-${clientRequestId}`).get()).data()?.cashAmountCents).toBe(0);
+    }
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(3550);
+  }, 20000);
+
+  it('blocks delivery completion after cash closure without partially changing order, delivery, or finance', async () => {
+    const fixture = await createArrivedCashDelivery(driverUid);
+    const closed = await call('operateCashRegister', adminToken, {
+      operation: 'CLOSE',
+      registerId: fixture.registerId,
+      countedCashCents: 1000,
+    });
+    expect(closed.status).toBe(200);
+
+    const confirmation = await call('confirmDelivery', driverToken, {
+      deliveryId: fixture.deliveryId,
+      code: fixture.code,
+    });
+    expect(confirmation.status).not.toBe(200);
+    expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('OUT_FOR_DELIVERY');
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ARRIVED');
+    expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
+    expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('BUSY');
+  }, 20000);
+
+  it('records completed Pix delivery in finance without increasing physical cash', async () => {
+    const fixture = await createArrivedCashDelivery(driverUid);
+    await db.doc(`orders/${fixture.orderId}`).update({ payment: { method: 'PIX' } });
+    const result = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code });
+    expect(result.status).toBe(200);
+    expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).data()).toMatchObject({ amountCents: 2450, paymentMethod: 'PIX' });
+    expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).data()?.cashAmountCents).toBe(0);
+    expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.expectedCashCents).toBe(1000);
   }, 20000);
 
   it('cancelling an assigned delivery frees its driver and updates both tracking records', async () => {
@@ -122,6 +319,9 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('AVAILABLE');
     expect((await db.doc(`deliveryDrivers/${newDriver.uid}`).get()).data()?.currentDeliveryId).toBe(deliveryId);
     expect((await db.doc(`deliveries/${deliveryId}`).get()).data()?.status).toBe('ASSIGNED');
+    expect((await call('respondDelivery', driverToken, { deliveryId, decision: 'ACCEPT' })).status).not.toBe(200);
+    expect((await call('progressDelivery', driverToken, { deliveryId, status: 'PICKED_UP' })).status).not.toBe(200);
+    expect((await db.doc(`deliveries/${deliveryId}`).get()).data()?.driverId).toBe(newDriver.uid);
     expect((await db.doc(`deliveryDrivers/${driverUid}/deliveryHistory/${deliveryId}`).get()).data()?.status).toBe('REASSIGNED');
     const edited = await call('updateDeliveryDriver', adminToken, { driverId: newDriver.uid, name: 'Motoboy Editado', phone: '17988887777', email: `edited-${suffix}@example.test` });
     expect(edited.status).toBe(200);

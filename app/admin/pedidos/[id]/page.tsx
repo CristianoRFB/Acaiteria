@@ -140,7 +140,7 @@ export default function OrderDetailPage() {
     setNotice('');
     try {
       if (completedCancellation) {
-        await refundCompletedOrder(getFirebaseClient().db, { orderId: order.id, reason: reason! });
+        await refundCompletedOrder({ orderId: order.id, reason: reason! });
         setNotice('Pedido estornado e cancelado. O financeiro e o Caixa foram atualizados juntos.');
       } else if (needsFinalize) {
         // A resposta pública já foi dada: registra o aceite privado antes da transição.

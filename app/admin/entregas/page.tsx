@@ -72,6 +72,8 @@ export default function DeliveriesPage() {
   const [notice, setNotice] = useState('');
   const [eventDeliveryId, setEventDeliveryId] = useState<string | null>(null);
   const [events, setEvents] = useState<DeliveryEventRow[]>([]);
+  const [cancelDeliveryId, setCancelDeliveryId] = useState<string | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
 
   useEffect(() => {
     if (!hasFirebaseConfig || !role || !['admin', 'staff'].includes(role))
@@ -217,6 +219,29 @@ export default function DeliveriesPage() {
       setBusyId(null);
     }
   }
+  async function cancelFailedDelivery(delivery: DeliveryRow) {
+    if (cancelReason.trim().length < 3) {
+      setError('Explique brevemente o motivo do cancelamento.');
+      return;
+    }
+    setBusyId(delivery.id);
+    setError('');
+    setNotice('');
+    try {
+      await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({
+        orderId: delivery.orderId,
+        status: 'CANCELLED',
+        reason: cancelReason.trim(),
+      });
+      setCancelDeliveryId(null);
+      setCancelReason('');
+      setNotice('Pedido cancelado; a falha e seu histórico foram preservados.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível cancelar o pedido.');
+    } finally {
+      setBusyId(null);
+    }
+  }
   async function reassign(deliveryId: string) {
     const driverId = selectedDriver[deliveryId];
     if (!driverId) { setError('Escolha o novo motoboy disponível.'); return; }
@@ -348,16 +373,64 @@ export default function DeliveriesPage() {
                     {delivery.failureReason || 'Motivo não informado'}
                   </p>
                 </div>
-                <Button
-                  disabled={busyId === delivery.id}
-                  onClick={() => void requeue(delivery.id)}
-                  className="min-h-11 rounded-full bg-brand text-white"
-                >
-                  {busyId === delivery.id
-                    ? 'Recolocando…'
-                    : 'Recolocar na fila'}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    disabled={busyId === delivery.id}
+                    onClick={() => void requeue(delivery.id)}
+                    className="min-h-11 rounded-full bg-brand text-white"
+                  >
+                    {busyId === delivery.id ? 'Salvando…' : 'Recolocar na fila'}
+                  </Button>
+                  {cancelDeliveryId !== delivery.id && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busyId === delivery.id}
+                      onClick={() => {
+                        setCancelDeliveryId(delivery.id);
+                        setCancelReason('');
+                      }}
+                      className="min-h-11 rounded-full border-red-200 text-red-800"
+                    >
+                      Cancelar pedido
+                    </Button>
+                  )}
+                </div>
               </div>
+              {cancelDeliveryId === delivery.id && (
+                <div className="mt-4 border-t border-red-100 pt-4">
+                  <label className="block text-sm font-bold text-red-900">
+                    Motivo do cancelamento
+                    <textarea
+                      value={cancelReason}
+                      onChange={(event) => setCancelReason(event.target.value)}
+                      maxLength={300}
+                      rows={2}
+                      className="mt-2 w-full rounded-xl border border-red-200 bg-white p-3 text-sm"
+                      placeholder="Ex.: cliente pediu para cancelar após a falha"
+                    />
+                  </label>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      disabled={busyId === delivery.id || cancelReason.trim().length < 3}
+                      onClick={() => void cancelFailedDelivery(delivery)}
+                      className="min-h-10 rounded-full bg-red-700 text-white"
+                    >
+                      {busyId === delivery.id ? 'Cancelando…' : 'Confirmar cancelamento'}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busyId === delivery.id}
+                      onClick={() => setCancelDeliveryId(null)}
+                      className="min-h-10 rounded-full"
+                    >
+                      Voltar
+                    </Button>
+                  </div>
+                </div>
+              )}
             </article>
           ))}
         </section>

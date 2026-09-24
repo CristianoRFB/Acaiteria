@@ -108,9 +108,14 @@ export default function DriverDeliveryPage() {
       </main>
     );
   const address = delivery.address
-    ? `${delivery.address.street}, ${delivery.address.number} - ${delivery.address.neighborhood}`
+    ? [
+        `${delivery.address.street}, ${delivery.address.number}`,
+        delivery.address.complement,
+        delivery.address.neighborhood,
+        delivery.address.reference ? `Referência: ${delivery.address.reference}` : undefined,
+      ].filter(Boolean).join(', ')
     : 'Endereço não informado';
-  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`;
+  const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`;
   const canAccept = delivery.status === 'ASSIGNED';
   const canPickup = delivery.status === 'ACCEPTED';
   const canStart = delivery.status === 'PICKED_UP';
