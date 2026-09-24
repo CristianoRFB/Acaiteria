@@ -146,3 +146,31 @@ As credenciais e configurações locais devem permanecer fora do Git. Não copie
 3. Provisionar configuração Firebase/App Check de produção por meio seguro e executar `npm run check:production`; continuar sem deploy até homologar operação real e Rules.
 4. Decidir se PWA/push faz parte do próximo escopo. Hoje não está implementado e não deve ser descrito como push.
 5. Registrar novas evidências e revisar este checkpoint; não implantar em produção enquanto os gates acima estiverem abertos. Nunca incluir `.env`, tokens, logs ou os arquivos temporários preexistentes.
+
+## Checkpoint adicional — 24/09/2026
+
+**Estado: NÃO HOMOLOGADO.** Esta rodada encontrou e corrigiu uma falha na sincronização de acesso do entregador. A verificação cobre regras, callables e persistência em emuladores; não substitui a homologação visual, de produção ou em aparelho físico.
+
+### Correção e regressões acrescentadas
+
+- `setDeliveryDriverEnabled` atualiza Firestore e reconcilia `Firebase Auth` com o estado mais recente, verificando novamente o estado persistido para evitar deixar as contas divergentes após alterações administrativas concorrentes. Uma falha de Auth é reportada explicitamente; as autorizações de backend e Firestore continuam bloqueadas pelo estado de usuário/entregador.
+- Antes da correção, desativar um cadastro mudava `users.active` e `deliveryDrivers.enabled`, mas não desativava a conta no Firebase Auth. A nova integração comprova desativar/reativar, bloquear disponibilidade/atribuição após desativação e impedir desativação durante uma corrida.
+- Cobertura ampliada para tentativa do código correto por outro entregador, replay após entrega concluída, código após cancelamento, criação/login de novo entregador sem gravar senha no Firestore, link público incorreto, isolamento de dados administrativos/financeiros do entregador, toggles concorrentes por dois admins e falha sem conta Auth correspondente.
+
+### Validações executadas nesta rodada
+
+- `npm run ci`: **passou** — lint, typecheck, build e 38 testes da aplicação.
+- `npm run test:functions`: **passou** — 14 testes.
+- `npm run test:rules`: **passou** — 6 testes no Firestore Emulator.
+- `npm run test:functions:integration`: **passou** — 25 testes nos emuladores Auth, Firestore e Functions.
+- `git diff --check`: **passou**.
+- O build continua avisando sobre chunks client acima de 500 kB; o emulador continua avisando que a máquina está em Node 24 enquanto Functions declara Node 22.
+
+### Gates ainda abertos
+
+- Sem QA visual/E2E nas interfaces nos viewports de 360/390/430 px; sem teste em aparelho físico. Nesta rodada, `npm run dev -- --port 3000` iniciou corretamente, mas o navegador embutido não encontrou um backend de conexão; nenhum layout foi marcado como aprovado visualmente.
+- Firebase de produção e App Check não foram configurados/verificados; nenhuma implantação foi feita.
+- PWA/FCM/Web Push continuam inexistentes; a tela aberta recebe atualizações em tempo real, mas não há comprovação de notificação com o app fechado.
+- Não foi feita homologação operacional de dinheiro, estorno, PIX/cartão ou mapas com endereço real.
+
+Próximo passo: retomar a validação de navegador/aparelho e os gates de produção descritos acima; preservar os arquivos não rastreados existentes e nunca registrar credenciais, códigos de recebimento ou dados pessoais reais.

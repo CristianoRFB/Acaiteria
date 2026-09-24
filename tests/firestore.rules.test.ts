@@ -29,6 +29,7 @@ beforeAll(async () => {
     await setDoc(doc(db, 'deliveryEvents', 'event-own'), { deliveryId: 'delivery-own', type: 'ASSIGNED' });
     await setDoc(doc(db, 'deliveryEvents', 'event-other'), { deliveryId: 'delivery-other', type: 'ASSIGNED' });
     await setDoc(doc(db, 'deliveryEvents', 'event-history'), { deliveryId: 'delivery-history', type: 'REASSIGNED' });
+    await setDoc(doc(db, 'financeEntries', 'sensitive'), { kind: 'INCOME', amountCents: 12345, status: 'PAID' });
     await setDoc(doc(db, 'cashRegisters', 'open'), { status: 'OPEN', expectedCashCents: 1000 });
     await setDoc(doc(db, 'cashMovements', 'movement'), { registerId: 'open', type: 'SUPPLY', direction: 'IN', amountCents: 100, cashAmountCents: 100 });
   });
@@ -48,6 +49,7 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDocs(collection(db, 'orders', 'secret', 'integrationAttempts')));
     await assertSucceeds(setDoc(doc(db, 'publicOrders', publicCode), { publicCode, status: 'NEW', orderNumber: `#${publicCode}`, items: [{ productId: 'copo', quantity: 1 }], pricing: { totalCents: 1000 }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
     await assertSucceeds(getDoc(doc(db, 'publicOrders', publicCode)));
+    await assertFails(getDoc(doc(db, 'publicOrders', `${publicCode}-wrong`)));
     await assertFails(getDocs(collection(db, 'publicOrders')));
     await assertSucceeds(setDoc(doc(db, 'orders', `request-${Date.now()}`), { publicCode, orderNumber: `#${publicCode}`, status: 'NEW', customer: { name: 'Cliente', whatsapp: '5517999999999' }, items: [{ productId: 'copo', quantity: 1 }], pricing: { subtotalCents: 1000, deliveryFeeCents: 0, totalCents: 1000 }, payment: { method: 'PIX', needsChange: false }, fulfillment: { mode: 'PICKUP' }, createdAt: Timestamp.now(), updatedAt: Timestamp.now() }));
     const invalidPublicCode = `invalid-${Date.now()}`;
@@ -67,6 +69,7 @@ describe('Firestore Rules deny by default', () => {
     const db = env.authenticatedContext('driver-uid').firestore();
     await assertSucceeds(getDoc(doc(db, 'deliveryDrivers', 'driver-uid')));
     await assertFails(getDoc(doc(db, 'deliveryDrivers', 'other-driver-uid')));
+    await assertFails(getDoc(doc(db, 'users', 'admin-uid')));
     await assertSucceeds(getDoc(doc(db, 'deliveries', 'delivery-own')));
     await assertFails(getDoc(doc(db, 'deliveries', 'delivery-history')));
     await assertSucceeds(getDoc(doc(db, 'deliveryDrivers', 'driver-uid', 'deliveryHistory', 'delivery-history')));
@@ -79,6 +82,10 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'deliveries', 'delivery-own'), { status: 'DELIVERED' }, { merge: true }));
     await assertFails(setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { status: 'BUSY' }, { merge: true }));
     await assertFails(getDoc(doc(db, 'deliverySecrets', 'delivery-own')));
+    await assertFails(getDoc(doc(db, 'financeEntries', 'sensitive')));
+    await assertFails(getDoc(doc(db, 'cashRegisters', 'open')));
+    await assertFails(getDoc(doc(db, 'cashMovements', 'movement')));
+    await assertFails(setDoc(doc(db, 'users', 'driver-uid'), { role: 'admin' }, { merge: true }));
   });
   it('conta desativada perde acesso Firestore mesmo com sessão ainda válida', async () => {
     const db = env.authenticatedContext('inactive-driver-uid').firestore();

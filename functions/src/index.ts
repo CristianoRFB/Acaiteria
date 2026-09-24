@@ -675,6 +675,12 @@ export const setDeliveryDriverEnabled = onCall({ region, timeoutSeconds: 15, mem
   const parsed = deliveryDriverEnabledSchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', 'Motoboy ou situação inválida.');
   const { driverId, enabled } = parsed.data;
+  try { await getAuth().getUser(driverId); }
+  catch (cause) {
+    if (cause && typeof cause === 'object' && 'code' in cause && cause.code === 'auth/user-not-found') throw new HttpsError('not-found', 'A conta de acesso deste motoboy não existe.');
+    logger.error('Não foi possível validar a conta Auth do motoboy.', { driverId, cause });
+    throw new HttpsError('unavailable', 'Não foi possível validar a conta de acesso do motoboy.');
+  }
   await db.runTransaction(async (transaction) => {
     const driverRef = db.doc(`deliveryDrivers/${driverId}`);
     const userRef = db.doc(`users/${driverId}`);
@@ -685,7 +691,29 @@ export const setDeliveryDriverEnabled = onCall({ region, timeoutSeconds: 15, mem
     transaction.update(driverRef, { enabled, status: enabled ? 'OFFLINE' : 'INACTIVE', updatedAt: now });
     transaction.set(userRef, { active: enabled, updatedAt: now }, { merge: true });
   });
-  return { ok: true, enabled };
+
+  // Auth and Firestore cannot share one transaction. Firestore remains the
+  // authorization source; reconcile Auth to the latest persisted state and
+  // retry if another admin changed the status concurrently.
+  const driverRef = db.doc(`deliveryDrivers/${driverId}`);
+  const userRef = db.doc(`users/${driverId}`);
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const [driver, user] = await Promise.all([driverRef.get(), userRef.get()]);
+    if (!driver.exists) throw new HttpsError('not-found', 'Motoboy não encontrado.');
+    const shouldBeDisabled = driver.data()?.enabled === false || user.data()?.active === false;
+    try {
+      const authUser = await getAuth().getUser(driverId);
+      if (authUser.disabled !== shouldBeDisabled) await getAuth().updateUser(driverId, { disabled: shouldBeDisabled });
+    } catch (cause) {
+      logger.error('Não foi possível sincronizar o status Auth do motoboy.', { driverId, shouldBeDisabled, cause });
+      throw new HttpsError('unavailable', 'O cadastro foi atualizado, mas não foi possível sincronizar o acesso. Tente novamente.');
+    }
+    const [latestDriver, latestUser] = await Promise.all([driverRef.get(), userRef.get()]);
+    const latestShouldBeDisabled = latestDriver.data()?.enabled === false || latestUser.data()?.active === false;
+    if (latestDriver.exists && latestShouldBeDisabled === shouldBeDisabled) return { ok: true, enabled: !shouldBeDisabled };
+  }
+  logger.warn('O status Auth do motoboy mudou durante tentativas concorrentes de atualização.', { driverId });
+  throw new HttpsError('aborted', 'O status mudou ao mesmo tempo em outra sessão. Atualize a tela e tente novamente.');
 });
 
 const updateDeliveryDriverSchema = z.object({ driverId: z.string().min(1).max(128), name: z.string().trim().min(2).max(80), phone: z.string().trim().min(8).max(30), email: z.string().trim().email().max(160) });

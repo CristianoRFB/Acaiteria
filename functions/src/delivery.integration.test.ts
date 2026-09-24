@@ -136,6 +136,10 @@ describe('delivery operations in Firebase Emulator Suite', () => {
 
   it('persists wrong-code attempts, rate-limits after five tries, and never completes the order', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
+    const otherDriver = await createSignedInUser('driver', `qa-driver-wrong-owner-${randomUUID()}@example.test`);
+    const wrongOwner = await call('confirmDelivery', otherDriver.token, { deliveryId: fixture.deliveryId, code: fixture.code });
+    expect(wrongOwner.status).not.toBe(200);
+    expect((await db.doc(`deliverySecrets/${fixture.deliveryId}`).get()).data()?.failedCodeAttempts).toBe(0);
     const offline = await call('setDriverAvailability', driverToken, { status: 'OFFLINE' });
     expect(offline.status).not.toBe(200);
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('BUSY');
@@ -166,6 +170,9 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).data()?.cashAmountCents).toBe(2450);
     expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.expectedCashCents).toBe(3450);
     expect((await db.doc(`deliveryDrivers/${driverUid}/deliveryHistory/${fixture.deliveryId}`).get()).data()?.status).toBe('DELIVERED');
+    const replayedCode = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code });
+    expect(replayedCode.status).not.toBe(200);
+    expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.expectedCashCents).toBe(3450);
   }, 20000);
 
   it('records a delivery failure, requeues without finance writes, reassigns, and completes with the new driver', async () => {
@@ -213,6 +220,9 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('AVAILABLE');
     expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
     expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
+    const confirmationAfterCancellation = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code });
+    expect(confirmationAfterCancellation.status).not.toBe(200);
+    expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('CANCELLED');
     const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
     expect(events.docs.map((event) => event.data().type)).toEqual(expect.arrayContaining(['DELIVERY_FAILED', 'CANCELLED']));
   }, 20000);
@@ -326,6 +336,92 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const edited = await call('updateDeliveryDriver', adminToken, { driverId: newDriver.uid, name: 'Motoboy Editado', phone: '17988887777', email: `edited-${suffix}@example.test` });
     expect(edited.status).toBe(200);
     expect((await db.doc(`deliveryDrivers/${newDriver.uid}`).get()).data()).toMatchObject({ name: 'Motoboy Editado', phone: '17988887777' });
+  }, 30000);
+
+  it('disables and re-enables a driver through Auth, user status, and assignment eligibility', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-toggle-${randomUUID()}@example.test`);
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ status: 'AVAILABLE' });
+    const fixture = await createReadyDelivery();
+
+    const disabled = await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false });
+    expect(disabled.status).toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: false, status: 'INACTIVE' });
+    expect((await db.doc(`users/${driver.uid}`).get()).data()?.active).toBe(false);
+    expect((await auth.getUser(driver.uid)).disabled).toBe(true);
+    expect((await call('setDriverAvailability', driver.token, { status: 'AVAILABLE' })).status).not.toBe(200);
+    expect((await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driver.uid })).status).not.toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('READY_FOR_DELIVERY');
+
+    const reenabled = await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: true });
+    expect(reenabled.status).toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: true, status: 'OFFLINE' });
+    expect((await db.doc(`users/${driver.uid}`).get()).data()?.active).toBe(true);
+    expect((await auth.getUser(driver.uid)).disabled).toBe(false);
+    expect((await call('setDriverAvailability', driver.token, { status: 'AVAILABLE' })).status).toBe(200);
+    expect((await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driver.uid })).status).toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.driverId).toBe(driver.uid);
+    expect((await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false })).status).not.toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: true, status: 'BUSY', currentDeliveryId: fixture.deliveryId });
+  }, 30000);
+
+  it('keeps Auth aligned when two admins toggle the same driver concurrently', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-toggle-race-${randomUUID()}@example.test`);
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ status: 'OFFLINE' });
+    const results = await Promise.all([
+      call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false }),
+      call('setDeliveryDriverEnabled', secondAdminToken, { driverId: driver.uid, enabled: true }),
+    ]);
+    expect(results.map((result) => result.status)).toEqual([200, 200]);
+
+    const [driverRecord, userRecord, authRecord] = await Promise.all([
+      db.doc(`deliveryDrivers/${driver.uid}`).get(),
+      db.doc(`users/${driver.uid}`).get(),
+      auth.getUser(driver.uid),
+    ]);
+    const enabled = driverRecord.data()?.enabled === true && userRecord.data()?.active === true;
+    expect(driverRecord.data()?.enabled).toBe(userRecord.data()?.active);
+    expect(authRecord.disabled).toBe(!enabled);
+  }, 30000);
+
+  it('does not partially disable a driver record without a matching Auth account', async () => {
+    const driverId = `missing-auth-${randomUUID()}`;
+    await db.doc(`deliveryDrivers/${driverId}`).set({ userId: driverId, status: 'AVAILABLE', enabled: true });
+    await db.doc(`users/${driverId}`).set({ role: 'driver', active: true });
+
+    const result = await call('setDeliveryDriverEnabled', adminToken, { driverId, enabled: false });
+    expect(result.status).not.toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driverId}`).get()).data()).toMatchObject({ enabled: true, status: 'AVAILABLE' });
+    expect((await db.doc(`users/${driverId}`).get()).data()?.active).toBe(true);
+  }, 20000);
+
+  it('creates a driver access that can authenticate without storing its initial password in Firestore', async () => {
+    const suffix = randomUUID();
+    const email = `qa-driver-created-${suffix}@example.test`;
+    const password = `QA-${randomUUID()}!`;
+    const created = await call('createDeliveryDriver', adminToken, {
+      name: 'Motoboy Criado QA',
+      phone: '17999990002',
+      email,
+      password,
+    });
+    expect(created.status).toBe(200);
+    const uid = String(created.body.result?.uid);
+    expect((await auth.getUser(uid)).email).toBe(email);
+    expect((await db.doc(`users/${uid}`).get()).data()).toMatchObject({ role: 'driver', active: true, phone: '17999990002' });
+    const driverRecord = (await db.doc(`deliveryDrivers/${uid}`).get()).data();
+    expect(driverRecord).toMatchObject({ enabled: true, status: 'OFFLINE', phone: '17999990002' });
+    expect(JSON.stringify(driverRecord)).not.toContain(password);
+    expect(JSON.stringify((await db.doc(`users/${uid}`).get()).data())).not.toContain(password);
+
+    const login = await fetch(authEndpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email, password, returnSecureToken: true }),
+    });
+    const loginResult = await login.json() as { idToken?: string };
+    expect(login.ok).toBe(true);
+    expect(typeof loginResult.idToken).toBe('string');
+    expect((await call('setDriverAvailability', String(loginResult.idToken), { status: 'AVAILABLE' })).status).toBe(200);
   }, 30000);
 
   it('removes legacy tracking tokens from old delivery documents', async () => {
