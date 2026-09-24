@@ -148,6 +148,7 @@ export default function CheckoutPage() {
     }
   }
 
+  if (!cart.hydrated) return <main className="min-h-screen bg-[#fffaf5]"><PublicHeader /><div className="mx-auto grid max-w-lg place-items-center px-6 py-24 text-center"><span className="grid size-20 animate-pulse place-items-center rounded-full bg-[#fff0f5] text-[#82204f]"><Clock3 className="size-8" /></span><p className="mt-6 text-sm font-bold text-[#826a75]" role="status" aria-live="polite">Restaurando seu carrinho…</p></div></main>;
   if (!cart.items.length) return <main className="min-h-screen bg-[#fffaf5]"><PublicHeader /><div className="mx-auto max-w-lg px-6 py-24 text-center"><h1 className="text-3xl font-black">Carrinho vazio</h1><p className="mt-2 text-sm text-[#826a75]">Adicione um produto antes de ir ao checkout.</p><Button className="mt-6 rounded-full bg-[#82204f] text-white" render={<a href="/" />}>Ver cardápio</Button></div></main>;
 
   return <main className="min-h-screen min-w-0 bg-[#fffaf5] pb-12 text-[#2b1722]">

@@ -235,3 +235,30 @@ Próximo passo: retomar a validação de navegador/aparelho e os gates de produ�
 - Firebase de produção/App Check, implantação dos índices, Maps real e notificações não foram homologados. Nenhum deploy foi feito.
 - PWA/FCM/Web Push continuam inexistentes; não descrever atualizações enquanto a tela está fechada como notificações entregues.
 - O estado permanece **NÃO HOMOLOGADO** até fechar os gates visuais/E2E e externos sem falhas reproduzíveis. Preservar arquivos temporários locais e nunca registrar credenciais, códigos ou dados pessoais reais.
+
+## Checkpoint adicional — 24/09/2026 — responsividade local e hidratação do checkout
+
+**Estado: NÃO HOMOLOGADO PARA PRODUÇÃO.** Uma rodada de QA manual no navegador local cobriu os fluxos públicos principais em telas estreitas e encontrou uma condição transitória no checkout. A correção foi isolada, ganhou teste de regressão e passou pela CI; não houve login, pedido enviado, acesso a dados reais nem implantação.
+
+### Verificações e correção
+
+- Conferidos visualmente início/cardápio, configuração do açaí, carrinho e checkout em viewports de 360, 390 e 430 px. Configurador e checkout mantiveram `scrollWidth` igual à largura do cliente em cada tamanho; a navegação horizontal das categorias permanece contida na própria faixa. Carrinho e controles de quantidade foram exercitados apenas com estado local de teste, e a quantidade/preço total atualizaram corretamente.
+- As rotas protegidas de entregas/admin e do entregador redirecionaram para login sem sessão. Não foram usadas credenciais nem tentada autenticação; portanto, os fluxos visuais autenticados de administração e entrega seguem sem homologação E2E.
+- Durante a restauração de um carrinho persistido, o checkout podia mostrar por um instante “Carrinho vazio” antes de o `CartProvider` hidratar o estado salvo. A tela agora mostra um estado acessível “Restaurando seu carrinho…” enquanto `cart.hydrated` for falso e só avalia o estado vazio depois disso. Um teste JSDOM reproduz a ordem de renderização e protege contra regressão.
+- Nenhum pedido foi submetido e nenhum endereço real foi aberto em Maps. Dados de clientes, códigos e segredos não foram usados ou copiados.
+
+### Validações desta rodada
+
+- `npm run ci`: **passou** — lint, typecheck, 39 testes da aplicação em 10 arquivos e build do frontend.
+- `npm run build:firebase`: **passou** após a correção — frontend, Functions e preparação do servidor Firebase.
+- `npm run test:functions`: **14 testes passaram** no checkpoint `98f3538`; nenhum arquivo de backend/Functions foi alterado depois desse checkpoint.
+- `npm run test:rules`: **7 testes passaram** no checkpoint `98f3538`; as regras Firebase não foram alteradas depois desse checkpoint.
+- `npm run test:functions:integration`: **31 testes passaram** nesta revisão; a primeira tentativa precisou liberar um emulador Firestore local órfão na porta 8180, depois confirmado como processo do mesmo projeto demo.
+- `git diff --check`: **passou**. Permanecem os avisos não bloqueantes de chunks do cliente maiores que 500 kB e de classificação dinâmica de rotas pelo vinext.
+
+### Gates ainda abertos
+
+- Não há suíte de navegador E2E automatizada instalada/configurada; a QA de viewport foi manual. Admin e entregador autenticados não percorreram um fluxo completo no navegador, e nenhum aparelho físico foi homologado.
+- Firebase de produção, App Check, índices efetivamente implantados, Maps com endereço de teste autorizado e notificações não foram verificados. Nenhum deploy foi feito.
+- PWA/FCM/Web Push continuam fora da implementação atual. Atualização em tempo real com a tela conectada não significa notificação entregue com o app fechado.
+- A auditoria ampla do goal continua aberta até fechar os gates operacionais e externos sem falhas reproduzíveis. Preservar arquivos temporários locais não rastreados; não os adicionar ao commit.
