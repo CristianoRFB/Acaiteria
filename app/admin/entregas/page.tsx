@@ -1,6 +1,6 @@
 'use client';
 
-import { collection, getDocs, limit, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, getDocs, limit, onSnapshot, orderBy, query, Timestamp, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import {
   CheckCircle2,
@@ -37,6 +37,7 @@ interface DriverRow {
   phone?: string;
   status?: DeliveryDriverStatus;
   enabled?: boolean;
+  currentDeliveryId?: string | null;
 }
 interface DeliveryEventRow { id: string; type?: string; actorRole?: string; note?: string; createdAt?: { toDate?: () => Date } }
 
@@ -63,6 +64,7 @@ const statusTone: Record<DeliveryStatus, string> = {
 export default function DeliveriesPage() {
   const { role } = useAuth();
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
+  const [deliveredToday, setDeliveredToday] = useState(0);
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [selectedDriver, setSelectedDriver] = useState<Record<string, string>>(
     {},
@@ -79,22 +81,40 @@ export default function DeliveriesPage() {
     if (!hasFirebaseConfig || !role || !['admin', 'staff'].includes(role))
       return undefined;
     const db = getFirebaseClient().db;
-    const stopDeliveries = onSnapshot(
-      query(collection(db, 'deliveries'), limit(200)),
+    const combineDeliverySnapshots = (active: DeliveryRow[], failedRows: DeliveryRow[]) => {
+      const byId = new Map([...active, ...failedRows].map((delivery) => [delivery.id, delivery]));
+      setDeliveries([...byId.values()]);
+    };
+    let activeRows: DeliveryRow[] = [];
+    let failedRows: DeliveryRow[] = [];
+    const stopActiveDeliveries = onSnapshot(
+      query(collection(db, 'deliveries'), where('status', 'in', activeStatuses), orderBy('updatedAt', 'desc')),
       (snapshot) => {
-        setDeliveries(
-          snapshot.docs.map(
-            (item) => ({ id: item.id, ...item.data() }) as DeliveryRow,
-          ),
-        );
+        activeRows = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryRow);
+        combineDeliverySnapshots(activeRows, failedRows);
       },
       () =>
         setError(
           'Não foi possível carregar as entregas. Tente atualizar a página.',
-        ),
+      ),
+    );
+    const stopFailedDeliveries = onSnapshot(
+      query(collection(db, 'deliveries'), where('status', '==', 'DELIVERY_FAILED'), orderBy('updatedAt', 'desc')),
+      (snapshot) => {
+        failedRows = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryRow);
+        combineDeliverySnapshots(activeRows, failedRows);
+      },
+      () => setError('Não foi possível carregar entregas com falha.'),
+    );
+    const todayInBrazil = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
+    const startOfToday = new Date(`${todayInBrazil}T00:00:00.000-03:00`);
+    const stopDeliveredToday = onSnapshot(
+      query(collection(db, 'deliveries'), where('status', '==', 'DELIVERED'), where('deliveredAt', '>=', Timestamp.fromDate(startOfToday)), orderBy('deliveredAt', 'desc')),
+      (snapshot) => setDeliveredToday(snapshot.size),
+      () => setError('Não foi possível carregar o total de entregas concluídas hoje.'),
     );
     const stopDrivers = onSnapshot(
-      query(collection(db, 'deliveryDrivers'), limit(200)),
+      query(collection(db, 'deliveryDrivers'), where('enabled', '==', true), where('status', '==', 'AVAILABLE'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
         setDrivers(
           snapshot.docs.map(
@@ -105,7 +125,9 @@ export default function DeliveriesPage() {
       () => setError('Não foi possível carregar os motoboys cadastrados.'),
     );
     return () => {
-      stopDeliveries();
+      stopActiveDeliveries();
+      stopFailedDeliveries();
+      stopDeliveredToday();
       stopDrivers();
     };
   }, [role]);
@@ -161,13 +183,12 @@ export default function DeliveriesPage() {
       route: deliveries.filter((item) =>
         ['ON_THE_WAY', 'ARRIVED'].includes(item.status),
       ).length,
-      delivered: deliveries.filter((item) => item.status === 'DELIVERED')
-        .length,
+      delivered: deliveredToday,
     }),
-    [deliveries],
+    [deliveries, deliveredToday],
   );
   const availableDrivers = drivers.filter(
-    (driver) => driver.enabled !== false && driver.status === 'AVAILABLE',
+    (driver) => driver.enabled === true && driver.status === 'AVAILABLE' && !driver.currentDeliveryId,
   );
 
   async function assign(deliveryId: string) {

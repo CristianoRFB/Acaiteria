@@ -15,6 +15,7 @@ let adminToken = '';
 let secondAdminToken = '';
 let driverToken = '';
 let driverUid = '';
+let driverEmail = '';
 
 async function createSignedInUser(role: 'admin' | 'driver', email: string) {
   const user = await auth.createUser({ email, password: testPassword, displayName: role });
@@ -23,7 +24,18 @@ async function createSignedInUser(role: 'admin' | 'driver', email: string) {
   const response = await fetch(authEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password: testPassword, returnSecureToken: true }) });
   const result = await response.json() as { idToken?: string; error?: { message?: string } };
   if (!response.ok || !result.idToken) throw new Error(result.error?.message ?? 'Não foi possível iniciar a sessão do emulador.');
-  return { uid: user.uid, token: result.idToken };
+  return { uid: user.uid, email, token: result.idToken };
+}
+
+async function signInWithPassword(email: string) {
+  const response = await fetch(authEndpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ email, password: testPassword, returnSecureToken: true }),
+  });
+  const result = await response.json() as { idToken?: string; error?: { message?: string } };
+  if (!response.ok || !result.idToken) throw new Error(result.error?.message ?? 'Não foi possível abrir uma segunda sessão no emulador.');
+  return result.idToken;
 }
 
 async function call(name: string, token: string, data: unknown) {
@@ -76,6 +88,7 @@ beforeAll(async () => {
   secondAdminToken = secondAdmin.token;
   driverToken = driver.token;
   driverUid = driver.uid;
+  driverEmail = driver.email;
   process.env.FUNCTIONS_EMULATOR = 'true';
 });
 
@@ -123,9 +136,10 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     await db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'AVAILABLE', currentDeliveryId: null });
     expect((await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driverUid })).status).toBe(200);
 
+    const secondSessionToken = await signInWithPassword(driverEmail);
     const responses = await Promise.all([
       call('respondDelivery', driverToken, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' }),
-      call('respondDelivery', driverToken, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' }),
+      call('respondDelivery', secondSessionToken, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' }),
     ]);
     expect(responses.filter((response) => response.status === 200)).toHaveLength(1);
     expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ACCEPTED');
@@ -134,6 +148,58 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(events.docs.filter((event) => event.data().type === 'ACCEPTED')).toHaveLength(1);
   }, 20000);
 
+  it('rejects assignment and driver mutations when the current-delivery pointer is inconsistent', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-stale-pointer-${randomUUID()}@example.test`);
+    const activeDeliveryId = `delivery-active-${randomUUID()}`;
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ status: 'AVAILABLE', currentDeliveryId: activeDeliveryId });
+    await db.doc(`deliveries/${activeDeliveryId}`).set({ status: 'ASSIGNED', driverId: driver.uid, orderId: `order-${randomUUID()}` });
+    const next = await createReadyDelivery();
+
+    const assignment = await call('assignDelivery', adminToken, { deliveryId: next.deliveryId, driverId: driver.uid });
+    expect(assignment.status).not.toBe(200);
+    expect((await db.doc(`deliveries/${next.deliveryId}`).get()).data()?.status).toBe('READY_FOR_DELIVERY');
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ status: 'AVAILABLE', currentDeliveryId: activeDeliveryId });
+
+    const availability = await call('setDriverAvailability', driver.token, { status: 'AVAILABLE' });
+    expect(availability.status).not.toBe(200);
+    const disable = await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false });
+    expect(disable.status).not.toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: true, status: 'AVAILABLE', currentDeliveryId: activeDeliveryId });
+  }, 20000);
+
+  it('rejects accepting or advancing another delivery when the driver pointer changed', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-other-run-${randomUUID()}@example.test`);
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ status: 'AVAILABLE', currentDeliveryId: null });
+    const fixture = await createReadyDelivery();
+    expect((await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driver.uid })).status).toBe(200);
+
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ currentDeliveryId: 'different-delivery' });
+    const accept = await call('respondDelivery', driver.token, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' });
+    expect(accept.status).not.toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ASSIGNED');
+
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ currentDeliveryId: fixture.deliveryId });
+    expect((await call('respondDelivery', driver.token, { deliveryId: fixture.deliveryId, decision: 'ACCEPT' })).status).toBe(200);
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ currentDeliveryId: 'different-delivery' });
+    const advance = await call('progressDelivery', driver.token, { deliveryId: fixture.deliveryId, status: 'PICKED_UP' });
+    expect(advance.status).not.toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ACCEPTED');
+  }, 20000);
+
+  it('does not let a driver mutate a delivery that is not the current linked run', async () => {
+    const fixture = await createArrivedCashDelivery(driverUid);
+    await db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'BUSY', currentDeliveryId: 'another-current-delivery' });
+
+    const failure = await call('reportDeliveryFailure', driverToken, { deliveryId: fixture.deliveryId, reason: 'Teste de vínculo inconsistente.' });
+    const confirmation = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code });
+    expect(failure.status).not.toBe(200);
+    expect(confirmation.status).not.toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ARRIVED');
+    expect((await db.doc(`deliverySecrets/${fixture.deliveryId}`).get()).data()?.failedCodeAttempts).toBe(0);
+    expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
+    expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
+  });
+
   it('persists wrong-code attempts, rate-limits after five tries, and never completes the order', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
     const otherDriver = await createSignedInUser('driver', `qa-driver-wrong-owner-${randomUUID()}@example.test`);
@@ -141,8 +207,10 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(wrongOwner.status).not.toBe(200);
     expect((await db.doc(`deliverySecrets/${fixture.deliveryId}`).get()).data()?.failedCodeAttempts).toBe(0);
     const offline = await call('setDriverAvailability', driverToken, { status: 'OFFLINE' });
+    const available = await call('setDriverAvailability', driverToken, { status: 'AVAILABLE' });
     expect(offline.status).not.toBe(200);
-    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('BUSY');
+    expect(available.status).not.toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()).toMatchObject({ status: 'BUSY', currentDeliveryId: fixture.deliveryId });
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const response = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: '0000' });
       expect(response.status).not.toBe(200);

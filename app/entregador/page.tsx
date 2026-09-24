@@ -1,6 +1,6 @@
 'use client';
 
-import { collection, doc, limit, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import {
   Bike,
@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import { deliveryStatusLabels, driverStatusLabels, type DeliveryDriverStatus, type DeliveryRecord } from '@/shared/delivery';
 
-interface DriverProfile { name?: string; phone?: string; email?: string; status?: DeliveryDriverStatus; enabled?: boolean }
+interface DriverProfile { name?: string; phone?: string; email?: string; status?: DeliveryDriverStatus; enabled?: boolean; currentDeliveryId?: string | null }
 interface DeliveryRow extends DeliveryRecord { id: string }
 interface DriverHistoryRow { id: string; orderNumber?: string; customerName?: string; status?: string; note?: string; updatedAt?: { toDate?: () => Date } }
 type DriverTab = 'HOME' | 'ORDERS' | 'HISTORY' | 'PROFILE';
@@ -49,12 +49,18 @@ export default function DriverHomePage() {
       () => setError('Não foi possível carregar seu perfil.'),
     );
     const stopDeliveries = onSnapshot(
-      query(collection(db, 'deliveries'), where('driverId', '==', user.uid), limit(100)),
+      query(
+        collection(db, 'deliveries'),
+        where('driverId', '==', user.uid),
+        where('status', 'in', activeDeliveryStatuses),
+        orderBy('updatedAt', 'desc'),
+        limit(100),
+      ),
       (snapshot) => setDeliveries(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryRow)),
       () => setError('Não foi possível carregar suas entregas.'),
     );
     const stopHistory = onSnapshot(
-      query(collection(db, 'deliveryDrivers', user.uid, 'deliveryHistory'), limit(100)),
+      query(collection(db, 'deliveryDrivers', user.uid, 'deliveryHistory'), orderBy('updatedAt', 'desc'), limit(100)),
       (snapshot) => setHistoryRows(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DriverHistoryRow)),
       () => setError('Não foi possível carregar seu histórico.'),
     );
@@ -66,8 +72,8 @@ export default function DriverHomePage() {
   }, [loading, role, user]);
 
   const current = useMemo(
-    () => deliveries.find((item) => inProgressStatuses.includes(item.status)),
-    [deliveries],
+    () => deliveries.find((item) => item.id === profile?.currentDeliveryId && inProgressStatuses.includes(item.status)),
+    [deliveries, profile?.currentDeliveryId],
   );
   const pending = useMemo(
     () => deliveries.filter((item) => item.status === 'ASSIGNED'),
@@ -102,9 +108,9 @@ export default function DriverHomePage() {
   }
 
   const name = profile?.name ?? user.displayName ?? 'Entregador';
-  const available = profile?.status === 'AVAILABLE';
+  const available = profile?.status === 'AVAILABLE' && !profile.currentDeliveryId;
   const orderDeliveries = orderFilter === 'CURRENT'
-    ? deliveries.filter((item) => activeDeliveryStatuses.includes(item.status))
+    ? deliveries.filter((item) => inProgressStatuses.includes(item.status))
     : deliveries.filter((item) => item.status === 'ASSIGNED');
   const completedOrders = history.filter((item) => item.status === 'DELIVERED');
   const ordersEmpty = orderFilter === 'DONE' ? completedOrders.length === 0 : orderDeliveries.length === 0;
@@ -129,7 +135,7 @@ export default function DriverHomePage() {
           <>
             <section className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
               <div><h1 className="text-2xl font-black">Olá, {name.split(' ')[0]}!</h1><span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabels[profile?.status ?? 'OFFLINE']}</span></div>
-              <Button disabled={busy || profile?.status === 'BUSY'} onClick={() => void toggleAvailability()} className={`min-h-11 w-full rounded-full px-5 sm:w-fit ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
+              <Button disabled={busy || profile?.status === 'BUSY' || Boolean(profile?.currentDeliveryId)} onClick={() => void toggleAvailability()} className={`min-h-11 w-full rounded-full px-5 sm:w-fit ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
             </section>
 
             {current ? (
@@ -182,7 +188,7 @@ export default function DriverHomePage() {
               <span className={`mt-4 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabels[profile?.status ?? 'OFFLINE']}</span>
             </div>
             <div className="mt-4 rounded-3xl border border-[#e5e1ed] bg-white p-5"><p className="text-sm font-bold text-[#6f6878]">Status atual</p><p className="mt-2 font-black">{available ? 'Disponível para novas entregas' : profile?.status === 'BUSY' ? 'Você está em uma entrega' : 'Você não está recebendo entregas'}</p></div>
-            <Button disabled={busy || profile?.status === 'BUSY'} onClick={() => void toggleAvailability()} className={`mt-4 min-h-12 w-full rounded-full ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
+            <Button disabled={busy || profile?.status === 'BUSY' || Boolean(profile?.currentDeliveryId)} onClick={() => void toggleAvailability()} className={`mt-4 min-h-12 w-full rounded-full ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
             <button onClick={() => void signOut(getFirebaseClient().auth)} className="mt-3 min-h-12 w-full rounded-2xl border border-[#e5e1ed] bg-white px-4 text-left font-black text-red-700">Sair da conta</button>
           </section>
         )}

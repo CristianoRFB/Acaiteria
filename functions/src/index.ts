@@ -686,7 +686,9 @@ export const setDeliveryDriverEnabled = onCall({ region, timeoutSeconds: 15, mem
     const userRef = db.doc(`users/${driverId}`);
     const driver = await transaction.get(driverRef);
     if (!driver.exists) throw new HttpsError('not-found', 'Motoboy não encontrado.');
-    if (!enabled && driver.data()?.status === 'BUSY') throw new HttpsError('failed-precondition', 'Finalize ou devolva a entrega atual antes de desativar este acesso.');
+    if (driver.data()?.status === 'BUSY' || driver.data()?.currentDeliveryId) {
+      throw new HttpsError('failed-precondition', 'Finalize ou devolva a entrega atual antes de alterar este acesso.');
+    }
     const now = FieldValue.serverTimestamp();
     transaction.update(driverRef, { enabled, status: enabled ? 'OFFLINE' : 'INACTIVE', updatedAt: now });
     transaction.set(userRef, { active: enabled, updatedAt: now }, { merge: true });
@@ -755,13 +757,24 @@ export const setDriverAvailability = onCall({ region, timeoutSeconds: 15, memory
     const snapshot = await transaction.get(ref);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Cadastro de motoboy não encontrado.');
     if (role === 'driver' && snapshot.data()?.enabled !== true) throw new HttpsError('permission-denied', 'Seu acesso de entregador está desativado.');
-    if ((snapshot.data()?.status === 'BUSY' || snapshot.data()?.currentDeliveryId) && parsed.data.status === 'OFFLINE') throw new HttpsError('failed-precondition', 'Conclua ou devolva a entrega atual antes de ficar offline.');
+    if (snapshot.data()?.status === 'BUSY' || snapshot.data()?.currentDeliveryId) {
+      throw new HttpsError('failed-precondition', 'Conclua ou devolva a entrega atual antes de alterar sua disponibilidade.');
+    }
     transaction.update(ref, { status: parsed.data.status, updatedAt: FieldValue.serverTimestamp(), ...(role === 'admin' ? { enabled: true } : {}) });
   });
   return { ok: true, status: parsed.data.status };
 });
 
 const assignDeliverySchema = z.object({ deliveryId: z.string().min(1).max(160), driverId: z.string().min(1).max(128) });
+
+function assertCurrentDriverDelivery(driver: DocumentSnapshot, deliveryId: string) {
+  const data = driver.data();
+  if (!driver.exists || data?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+  if (data.status !== 'BUSY' || data.currentDeliveryId !== deliveryId) {
+    throw new HttpsError('failed-precondition', 'Esta não é a entrega atual vinculada ao seu acesso. Atualize a tela ou peça ajuda à loja.');
+  }
+}
+
 export const sanitizeLegacyDeliveryLinks = onCall({ region, timeoutSeconds: 30, memory: '256MiB', enforceAppCheck }, async (request) => {
   await requireRole(request.auth?.uid, ['admin']);
   const legacy = await db.collection('deliveries').where('publicCode', '!=', null).limit(450).get();
@@ -789,7 +802,7 @@ export const assignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256M
     if (!order.exists || order.data()?.fulfillment?.mode !== 'DELIVERY') throw new HttpsError('failed-precondition', 'O pedido vinculado à entrega não é válido.');
     if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Motoboy indisponível.');
     if (delivery.data()?.status !== 'READY_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'Esta entrega não está aguardando atribuição.');
-    if (driver.data()?.status !== 'AVAILABLE') throw new HttpsError('failed-precondition', 'O motoboy precisa estar disponível.');
+    if (driver.data()?.status !== 'AVAILABLE' || driver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O motoboy precisa estar disponível e sem outra entrega vinculada.');
     const now = FieldValue.serverTimestamp();
     transaction.update(deliveryRef, { status: 'ASSIGNED', driverId, driverName: driver.data()?.name ?? 'Motoboy', assignedAt: now, updatedAt: now, publicCode: FieldValue.delete() });
     transaction.update(driverRef, { status: 'BUSY', currentDeliveryId: deliveryId, updatedAt: now });
@@ -816,7 +829,7 @@ export const respondDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     const delivery = await transaction.get(deliveryRef);
     const driver = await transaction.get(driverRef);
     if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
-    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    assertCurrentDriverDelivery(driver, deliveryId);
     if (delivery.data()?.status !== 'ASSIGNED') throw new HttpsError('failed-precondition', 'Esta entrega já foi respondida.');
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
     const order = await transaction.get(orderRef);
@@ -855,7 +868,7 @@ export const progressDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
     const delivery = await transaction.get(deliveryRef);
     const driver = await transaction.get(driverRef);
     if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
-    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    assertCurrentDriverDelivery(driver, deliveryId);
     const current = String(delivery.data()?.status) as DeliveryStatus;
     if (!canTransitionDelivery(current, status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
@@ -894,8 +907,8 @@ export const reassignDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
     const newDriver = await transaction.get(newDriverRef);
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
     const order = await transaction.get(orderRef);
-    if (!oldDriver.exists || oldDriver.data()?.currentDeliveryId !== deliveryId) throw new HttpsError('failed-precondition', 'O vínculo do motoboy atual está inconsistente.');
-    if (!newDriver.exists || newDriver.data()?.enabled !== true || newDriver.data()?.status !== 'AVAILABLE') throw new HttpsError('failed-precondition', 'O novo motoboy precisa estar disponível.');
+    if (!oldDriver.exists || oldDriver.data()?.status !== 'BUSY' || oldDriver.data()?.currentDeliveryId !== deliveryId) throw new HttpsError('failed-precondition', 'O vínculo do motoboy atual está inconsistente.');
+    if (!newDriver.exists || newDriver.data()?.enabled !== true || newDriver.data()?.status !== 'AVAILABLE' || newDriver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O novo motoboy precisa estar disponível e sem outra entrega vinculada.');
     if (!order.exists) throw new HttpsError('not-found', 'Pedido vinculado não encontrado.');
     const now = FieldValue.serverTimestamp();
     const driverName = String(newDriver.data()?.name ?? 'Motoboy');
@@ -927,7 +940,7 @@ export const reportDeliveryFailure = onCall({ region, timeoutSeconds: 15, memory
     const delivery = await transaction.get(deliveryRef);
     const driver = await transaction.get(driverRef);
     if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
-    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
+    assertCurrentDriverDelivery(driver, deliveryId);
     const current = String(delivery.data()?.status) as DeliveryStatus;
     if (!['PICKED_UP', 'ON_THE_WAY', 'ARRIVED'].includes(current) || !canTransitionDelivery(current, 'DELIVERY_FAILED')) throw new HttpsError('failed-precondition', 'Esta entrega não pode ser marcada como falha agora.');
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
@@ -992,6 +1005,9 @@ export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     const deliveryRef = db.doc(`deliveries/${deliveryId}`);
     const delivery = await transaction.get(deliveryRef);
     if (!delivery.exists || delivery.data()?.driverId !== uid) throw new HttpsError('not-found', 'Entrega não encontrada.');
+    const driverRef = db.doc(`deliveryDrivers/${uid}`);
+    const driver = await transaction.get(driverRef);
+    assertCurrentDriverDelivery(driver, deliveryId);
     if (delivery.data()?.status !== 'ARRIVED') throw new HttpsError('failed-precondition', 'A entrega precisa estar no local antes da confirmação.');
     const secretRef = db.doc(`deliverySecrets/${deliveryId}`);
     const secret = await transaction.get(secretRef);
@@ -1029,9 +1045,6 @@ export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     const saleRef = db.doc(`cashMovements/order-${delivery.data()?.orderId}`);
     const finance = await transaction.get(financeRef);
     const sale = await transaction.get(saleRef);
-    const driverRef = db.doc(`deliveryDrivers/${uid}`);
-    const driver = await transaction.get(driverRef);
-    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Seu acesso de entregador está desativado.');
     const now = FieldValue.serverTimestamp();
     const publicCode = String(order.data()?.publicCode ?? '');
     transaction.update(deliveryRef, { status: 'DELIVERED', deliveredAt: now, updatedAt: now, publicCode: FieldValue.delete() });

@@ -174,3 +174,35 @@ As credenciais e configurações locais devem permanecer fora do Git. Não copie
 - Não foi feita homologação operacional de dinheiro, estorno, PIX/cartão ou mapas com endereço real.
 
 Próximo passo: retomar a validação de navegador/aparelho e os gates de produção descritos acima; preservar os arquivos não rastreados existentes e nunca registrar credenciais, códigos de recebimento ou dados pessoais reais.
+
+## Checkpoint adicional — 24/09/2026 — integridade de corrida e consultas móveis
+
+**Estado: NÃO HOMOLOGADO PARA PRODUÇÃO.** Esta rodada encontrou uma brecha reproduzível de concorrência e inconsistências nas listas do entregador/admin. Corrigido e testado em emuladores; QA visual, aparelhos e ambiente real continuam pendentes.
+
+### Achados e correções
+
+- `setDriverAvailability` aceitava `AVAILABLE` enquanto o perfil ainda estava `BUSY`. Como `assignDelivery` confiava apenas no status, uma chamada direta podia sobrescrever `currentDeliveryId` e atribuir duas corridas ao mesmo entregador. A disponibilidade agora não pode ser alterada enquanto o perfil estiver ocupado **ou** mantiver um vínculo de corrida.
+- `assignDelivery` e `reassignDelivery` agora recusam perfis com status/vínculo incompatíveis ou uma entrega já vinculada. A desativação administrativa também não altera perfis que ainda tenham corrida vinculada.
+- Aceite/recusa, avanço de etapa, registro de falha e confirmação do código agora exigem, dentro da mesma transação, que o entregador ativo esteja `BUSY` e que `currentDeliveryId` corresponda exatamente à entrega solicitada.
+- As regressões de concorrência usam duas sessões Firebase Auth independentes do mesmo entregador. Novos testes cobrem disponibilidade adulterada, vínculo inconsistente, mutação de outra corrida e bloqueio de efeitos financeiros/código nesses casos.
+- Na aba Pedidos do entregador, “Atual” deixou de repetir itens “Pendentes”; a corrida em andamento é resolvida pelo identificador vinculado no perfil. Listeners agora pedem apenas entregas ativas e histórico ordenado por atualização.
+- A central admin passou a consultar entregas ativas, falhas e concluídas hoje separadamente, com ordenação temporal e sem truncar a fila operacional. “Entregues hoje” usa `deliveredAt` desde a meia-noite de `America/Sao_Paulo`, em vez de contar entregas de uma amostra arbitrária. A lista de atribuição retorna apenas entregadores ativos/disponíveis e sem corrida vinculada.
+- Foram adicionados índices compostos de Firestore para essas consultas. Antes de publicar código que use as novas consultas, publicar também `firestore.indexes.json`.
+
+### Validações desta rodada
+
+- `npm run ci`: **passou** — lint, typecheck, build e 38 testes da aplicação.
+- `npm run test:functions`: **passou** — 14 testes.
+- `npm run test:rules`: **passou** — 6 testes no Firestore Emulator.
+- `npm run test:functions:integration`: **passou** — 28 testes nos emuladores Auth, Firestore e Functions, cobrindo as novas regressões e os fluxos existentes de pedido/caixa/entrega.
+- `npm run build:firebase`: **passou** após os ajustes finais de UI, consulta diária e índices; preparação Firebase compilou o frontend e as Functions.
+- `git diff --check`: **passou** antes da última atualização deste documento; repetido ao fechar o checkpoint.
+- Na primeira tentativa de integração, a porta 8180 estava ocupada por um processo órfão do Firestore Emulator após `test:rules`. O processo Java foi confirmado pelo caminho/linha de comando do emulador local e pelo processo pai já encerrado; somente esse processo foi finalizado. A nova execução de integração terminou com sucesso.
+- Permanecem os avisos não bloqueantes já registrados: runtime local Node 24 versus Functions Node 22 e chunk cliente acima de 500 kB.
+
+### Limitações e próximos gates
+
+- Não houve QA visual nos tamanhos 360/390/430 px nesta rodada. O conector do navegador embutido não encontrou backend, e não há Playwright/E2E configurado; telas e responsividade permanecem sem homologação visual.
+- Firebase real, índices implantados, App Check, Maps com endereço real, notificações e aparelhos físicos não foram testados. Nenhuma implantação foi feita.
+- Não há PWA/FCM/Web Push; atividade em tempo real depende da tela conectada. APK/Capacitor permanece fora do escopo atual.
+- O relatório global continua aberto até executar a validação visual/E2E e as etapas restantes para produção sem falhas reproduzíveis. Nunca incluir `.env`, tokens, códigos de recebimento ou os arquivos temporários locais preexistentes.
