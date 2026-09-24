@@ -76,7 +76,7 @@ export interface DeliveryRecord {
 export interface DeliveryEvent {
   id: string;
   deliveryId: string;
-  type: DeliveryStatus | 'CREATED' | 'DRIVER_REJECTED';
+  type: DeliveryStatus | 'CREATED' | 'DRIVER_REJECTED' | 'CODE_REJECTED';
   actorUid?: string;
   actorRole?: string;
   note?: string;

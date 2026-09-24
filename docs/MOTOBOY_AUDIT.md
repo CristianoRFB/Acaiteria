@@ -118,6 +118,7 @@ As credenciais e configurações locais devem permanecer fora do Git. Não copie
 - Corrigida a autorização residual de entregadores antigos: presença em `driverIds` legado não concede leitura da entrega/endereço nem de eventos após reassociação. O histórico privado do entregador permanece acessível ao próprio titular.
 - A devolução de falha à fila remove vínculo, nome público e timestamps da tentativa anterior, preservando eventos e histórico. A central administrativa permite cancelar explicitamente um pedido com falha e registrar o motivo.
 - O portal do entregador tem telas funcionais por abas para Início, Pedidos (atual/pendentes/concluídos), Histórico e Perfil; o link de rota inclui complemento e referência do endereço.
+- O modelo compartilhado `DeliveryEvent` agora inclui `CODE_REJECTED`, que é emitido pelo backend ao rejeitar uma tentativa de código.
 - Um teste de cancelamento inicialmente falhou porque seu fixture usava um ID de entrega não canônico. O fixture passou a usar `delivery-${orderId}`, como o sistema real; a suíte de integração repetida passou.
 
 ### Gates automatizados executados
