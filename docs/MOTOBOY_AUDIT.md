@@ -206,3 +206,32 @@ Próximo passo: retomar a validação de navegador/aparelho e os gates de produ�
 - Firebase real, índices implantados, App Check, Maps com endereço real, notificações e aparelhos físicos não foram testados. Nenhuma implantação foi feita.
 - Não há PWA/FCM/Web Push; atividade em tempo real depende da tela conectada. APK/Capacitor permanece fora do escopo atual.
 - O relatório global continua aberto até executar a validação visual/E2E e as etapas restantes para produção sem falhas reproduzíveis. Nunca incluir `.env`, tokens, códigos de recebimento ou os arquivos temporários locais preexistentes.
+
+## Checkpoint adicional — 24/09/2026 — privacidade do rastreio e concorrência admin
+
+**Estado: NÃO HOMOLOGADO PARA PRODUÇÃO.** A revisão de segurança encontrou uma leitura autenticada indevida no espelho público de rastreio; a correção e os testes de regressão passaram. Isso não conclui a auditoria integral descrita no goal.
+
+### Achados e correções
+
+- O `get` público de `/publicOrders/{id}` agora exige uma sessão anônima e o identificador `publicCode` correspondente, salvo para staff. Antes, qualquer usuário autenticado que obtivesse o link podia consultar diretamente o documento inteiro, incluindo código de recebimento e dica, embora a interface de entregador não os exibisse.
+- As regras de Firestore agora comprovam os dois lados: o link de cliente anônimo continua lendo seu próprio rastreio; entregador autenticado não lê nem lista documentos públicos. A integração também confirma que a callable de consulta para entregadores não retorna código nem dica.
+- Corrigida a atribuição de auditoria em `requeueDelivery`: eventos agora registram o papel real do ator (incluindo admin) em vez de registrar sempre `staff`.
+- Acrescentado teste de duas atribuições concorrentes do mesmo pedido para o mesmo entregador: apenas uma operação vence e é criado um único evento de atribuição.
+- Atribuição e reatribuição agora conferem na mesma transação se a conta de usuário do destino existe, mantém o papel `driver` e não está desativada; antes, um perfil operacional inconsistente poderia receber uma corrida sem conseguir entrar no app. Duas regressões verificam que pedido e vínculo atual ficam intactos quando essa conta está inativa.
+
+### Validações desta rodada
+
+- `npm run ci`: **passou** — lint, typecheck, build e 38 testes da aplicação.
+- `npm run test:functions`: **passou** — 14 testes.
+- `npm run test:rules`: **passou** — 7 testes no Firestore Emulator.
+- `npm run test:functions:integration`: **passou** — 31 testes nos emuladores Auth, Firestore e Functions.
+- `npm run build:firebase`: **passou** — frontend, Functions e preparação do servidor Firebase.
+- `git diff --check`: **passou**.
+- Permanecem os avisos de ambiente já documentados: runtime local Node 24 versus Node 22 declarado para Functions e chunk cliente acima de 500 kB.
+
+### Gates ainda abertos
+
+- QA visual/E2E nas interfaces em 360/390/430 px e aparelho físico continua sem execução; os testes acima cobrem app unitário, Rules e integração de backend, não comprovam a jornada integral pelo navegador.
+- Firebase de produção/App Check, implantação dos índices, Maps real e notificações não foram homologados. Nenhum deploy foi feito.
+- PWA/FCM/Web Push continuam inexistentes; não descrever atualizações enquanto a tela está fechada como notificações entregues.
+- O estado permanece **NÃO HOMOLOGADO** até fechar os gates visuais/E2E e externos sem falhas reproduzíveis. Preservar arquivos temporários locais e nunca registrar credenciais, códigos ou dados pessoais reais.

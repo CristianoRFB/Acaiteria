@@ -64,7 +64,7 @@ service cloud.firestore {
       allow update, delete: if isStaff();
     }
     match /publicOrders/{id} {
-      allow get: if isStaff() || resource.data.publicCode == id;
+      allow get: if isStaff() || (!signedIn() && resource.data.publicCode == id);
       allow list: if isStaff();
       allow create: if isStaff() || (!signedIn() && validPublicOrder(request.resource.data, id));
       allow update: if isStaff() || (!signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']));

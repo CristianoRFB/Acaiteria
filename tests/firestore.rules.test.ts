@@ -18,6 +18,7 @@ beforeAll(async () => {
     await setDoc(doc(db, 'users', 'driver-uid'), { role: 'driver' });
     await setDoc(doc(db, 'users', 'other-driver-uid'), { role: 'driver' });
     await setDoc(doc(db, 'users', 'inactive-driver-uid'), { role: 'driver', active: false });
+    await setDoc(doc(db, 'publicOrders', 'customer-tracking-code'), { publicCode: 'customer-tracking-code', status: 'OUT_FOR_DELIVERY', deliveryCode: '4827' });
     await setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { name: 'Motoboy teste', status: 'AVAILABLE', enabled: true });
     await setDoc(doc(db, 'deliveryDrivers', 'other-driver-uid'), { name: 'Outro motoboy', status: 'AVAILABLE', enabled: true });
     await setDoc(doc(db, 'deliveryDrivers', 'inactive-driver-uid'), { name: 'Motoboy inativo', status: 'OFFLINE', enabled: false });
@@ -82,6 +83,7 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'deliveries', 'delivery-own'), { status: 'DELIVERED' }, { merge: true }));
     await assertFails(setDoc(doc(db, 'deliveryDrivers', 'driver-uid'), { status: 'BUSY' }, { merge: true }));
     await assertFails(getDoc(doc(db, 'deliverySecrets', 'delivery-own')));
+    await assertFails(getDoc(doc(db, 'publicOrders', 'customer-tracking-code')));
     await assertFails(getDoc(doc(db, 'financeEntries', 'sensitive')));
     await assertFails(getDoc(doc(db, 'cashRegisters', 'open')));
     await assertFails(getDoc(doc(db, 'cashMovements', 'movement')));
@@ -92,6 +94,14 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDoc(doc(db, 'deliveryDrivers', 'inactive-driver-uid')));
     await assertFails(getDoc(doc(db, 'deliveries', 'delivery-inactive')));
     await assertFails(getDoc(doc(db, 'orders', 'secret')));
+  });
+  it('acompanhamento público funciona sem sessão, mas link não expõe código a sessão de entregador', async () => {
+    const anonymousDb = env.unauthenticatedContext().firestore();
+    const driverDb = env.authenticatedContext('driver-uid').firestore();
+    const trackingRef = doc(anonymousDb, 'publicOrders', 'customer-tracking-code');
+    await assertSucceeds(getDoc(trackingRef));
+    await assertFails(getDoc(doc(driverDb, 'publicOrders', 'customer-tracking-code')));
+    await assertFails(getDocs(collection(driverDb, 'publicOrders')));
   });
   it('checkout anônimo grava pedido e acompanhamento público juntos, sem expor dados privados', async () => {
     const db = env.unauthenticatedContext().firestore();

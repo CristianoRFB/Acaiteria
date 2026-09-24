@@ -794,13 +794,15 @@ export const assignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256M
   await db.runTransaction(async (transaction) => {
     const deliveryRef = db.doc(`deliveries/${deliveryId}`);
     const driverRef = db.doc(`deliveryDrivers/${driverId}`);
+    const driverUserRef = db.doc(`users/${driverId}`);
     const delivery = await transaction.get(deliveryRef);
     const driver = await transaction.get(driverRef);
+    const driverUser = await transaction.get(driverUserRef);
     if (!delivery.exists) throw new HttpsError('not-found', 'Entrega não encontrada.');
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
     const order = await transaction.get(orderRef);
     if (!order.exists || order.data()?.fulfillment?.mode !== 'DELIVERY') throw new HttpsError('failed-precondition', 'O pedido vinculado à entrega não é válido.');
-    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('failed-precondition', 'Motoboy indisponível.');
+    if (!driver.exists || driver.data()?.enabled !== true || !driverUser.exists || driverUser.data()?.role !== 'driver' || driverUser.data()?.active === false) throw new HttpsError('failed-precondition', 'Motoboy indisponível.');
     if (delivery.data()?.status !== 'READY_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'Esta entrega não está aguardando atribuição.');
     if (driver.data()?.status !== 'AVAILABLE' || driver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O motoboy precisa estar disponível e sem outra entrega vinculada.');
     const now = FieldValue.serverTimestamp();
@@ -903,12 +905,14 @@ export const reassignDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
     if (!oldDriverId || oldDriverId === driverId) throw new HttpsError('invalid-argument', 'Escolha um motoboy diferente do atual.');
     const oldDriverRef = db.doc(`deliveryDrivers/${oldDriverId}`);
     const newDriverRef = db.doc(`deliveryDrivers/${driverId}`);
+    const newDriverUserRef = db.doc(`users/${driverId}`);
     const oldDriver = await transaction.get(oldDriverRef);
     const newDriver = await transaction.get(newDriverRef);
+    const newDriverUser = await transaction.get(newDriverUserRef);
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
     const order = await transaction.get(orderRef);
     if (!oldDriver.exists || oldDriver.data()?.status !== 'BUSY' || oldDriver.data()?.currentDeliveryId !== deliveryId) throw new HttpsError('failed-precondition', 'O vínculo do motoboy atual está inconsistente.');
-    if (!newDriver.exists || newDriver.data()?.enabled !== true || newDriver.data()?.status !== 'AVAILABLE' || newDriver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O novo motoboy precisa estar disponível e sem outra entrega vinculada.');
+    if (!newDriver.exists || newDriver.data()?.enabled !== true || !newDriverUser.exists || newDriverUser.data()?.role !== 'driver' || newDriverUser.data()?.active === false || newDriver.data()?.status !== 'AVAILABLE' || newDriver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O novo motoboy precisa estar disponível e sem outra entrega vinculada.');
     if (!order.exists) throw new HttpsError('not-found', 'Pedido vinculado não encontrado.');
     const now = FieldValue.serverTimestamp();
     const driverName = String(newDriver.data()?.name ?? 'Motoboy');
@@ -960,7 +964,7 @@ export const reportDeliveryFailure = onCall({ region, timeoutSeconds: 15, memory
 
 const requeueDeliverySchema = z.object({ deliveryId: z.string().min(1).max(160) });
 export const requeueDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
-  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const role = await requireRole(request.auth?.uid, ['admin', 'staff']);
   const parsed = requeueDeliverySchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', 'Entrega inválida.');
   const { deliveryId } = parsed.data;
@@ -986,7 +990,7 @@ export const requeueDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     transaction.update(orderRef, { deliveryStatus: 'READY_FOR_DELIVERY', deliveryFailureReason: FieldValue.delete(), deliveryUpdatedAt: now, updatedAt: now });
     const publicCode = String(order.data()?.publicCode ?? '');
     if (publicCode) transaction.set(db.doc(`publicOrders/${publicCode}`), { deliveryStatus: 'READY_FOR_DELIVERY', deliveryDriverName: FieldValue.delete(), statusMessage: 'A loja está organizando uma nova tentativa de entrega.', updatedAt: now }, { merge: true });
-    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, driverId: delivery.data()?.driverId ?? null, type: 'READY_FOR_DELIVERY', actorUid: request.auth!.uid, actorRole: 'staff', note: 'Entrega devolvida à fila após falha.', createdAt: now });
+    transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, driverId: delivery.data()?.driverId ?? null, type: 'READY_FOR_DELIVERY', actorUid: request.auth!.uid, actorRole: role, note: 'Entrega devolvida à fila após falha.', createdAt: now });
   });
   return { ok: true };
 });

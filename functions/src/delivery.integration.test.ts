@@ -49,7 +49,7 @@ async function createArrivedCashDelivery(driverId: string) {
   const publicCode = `public-${randomUUID()}`;
   const code = '4827';
   await db.doc(`orders/${orderId}`).set({ status: 'OUT_FOR_DELIVERY', orderNumber: '#QA-1', publicCode, fulfillment: { mode: 'DELIVERY' }, pricing: { totalCents: 2450 }, payment: { method: 'CASH' }, customer: { name: 'Cliente teste' }, updatedAt: new Date() });
-  await db.doc(`publicOrders/${publicCode}`).set({ publicCode, orderNumber: '#QA-1', status: 'OUT_FOR_DELIVERY', deliveryStatus: 'ARRIVED' });
+  await db.doc(`publicOrders/${publicCode}`).set({ publicCode, orderNumber: '#QA-1', status: 'OUT_FOR_DELIVERY', deliveryStatus: 'ARRIVED', deliveryCode: code, deliveryCodeHint: `${code.slice(0, 2)}••` });
   await db.doc(`deliveries/${deliveryId}`).set({ orderId, orderNumber: '#QA-1', driverId, driverIds: [driverId], status: 'ARRIVED', customerName: 'Cliente teste', totalCents: 2450 });
   await db.doc(`deliverySecrets/${deliveryId}`).set({ deliveryId, codeHash: createHash('sha256').update(code).digest('hex'), failedCodeAttempts: 0, failedCodeWindowStartedAtMs: Date.now(), failedCodeLockedUntilMs: 0 });
   await db.doc(`deliveryDrivers/${driverId}`).update({ status: 'BUSY', currentDeliveryId: deliveryId });
@@ -131,6 +131,35 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(events.docs.filter((event) => event.data().type === 'ASSIGNED')).toHaveLength(1);
   }, 20000);
 
+  it('handles a duplicate assign click for the same order and driver exactly once', async () => {
+    const fixture = await createReadyDelivery();
+    await db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'AVAILABLE', currentDeliveryId: null });
+    const attempts = await Promise.all([
+      call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driverUid }),
+      call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driverUid }),
+    ]);
+
+    expect(attempts.filter((attempt) => attempt.status === 200)).toHaveLength(1);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()).toMatchObject({ status: 'ASSIGNED', driverId: driverUid });
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()).toMatchObject({ status: 'BUSY', currentDeliveryId: fixture.deliveryId });
+    const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
+    expect(events.docs.filter((event) => event.data().type === 'ASSIGNED')).toHaveLength(1);
+  }, 20000);
+
+  it('does not assign a delivery to a driver whose user account was deactivated separately', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-inactive-user-${randomUUID()}@example.test`);
+    const fixture = await createReadyDelivery();
+    await Promise.all([
+      db.doc(`deliveryDrivers/${driver.uid}`).update({ status: 'AVAILABLE' }),
+      db.doc(`users/${driver.uid}`).update({ active: false }),
+    ]);
+
+    const assigned = await call('assignDelivery', adminToken, { deliveryId: fixture.deliveryId, driverId: driver.uid });
+    expect(assigned.status).not.toBe(200);
+    expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()).toMatchObject({ status: 'READY_FOR_DELIVERY' });
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ status: 'AVAILABLE' });
+  }, 20000);
+
   it('accepts a corrida once when two sessions of the same driver tap aceitar concurrently', async () => {
     const fixture = await createReadyDelivery();
     await db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'AVAILABLE', currentDeliveryId: null });
@@ -203,6 +232,10 @@ describe('delivery operations in Firebase Emulator Suite', () => {
   it('persists wrong-code attempts, rate-limits after five tries, and never completes the order', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
     const otherDriver = await createSignedInUser('driver', `qa-driver-wrong-owner-${randomUUID()}@example.test`);
+    const tracking = await call('getPublicOrder', driverToken, { publicCode: fixture.publicCode });
+    expect(tracking.status).toBe(200);
+    expect(tracking.body.result).not.toHaveProperty('deliveryCode');
+    expect(tracking.body.result).not.toHaveProperty('deliveryCodeHint');
     const wrongOwner = await call('confirmDelivery', otherDriver.token, { deliveryId: fixture.deliveryId, code: fixture.code });
     expect(wrongOwner.status).not.toBe(200);
     expect((await db.doc(`deliverySecrets/${fixture.deliveryId}`).get()).data()?.failedCodeAttempts).toBe(0);
@@ -261,6 +294,8 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()).toMatchObject({ status: 'READY_FOR_DELIVERY', driverId: null, driverName: null });
     expect((await db.doc(`deliveryDrivers/${driverUid}/deliveryHistory/${fixture.deliveryId}`).get()).data()?.status).toBe('RETURNED_TO_QUEUE');
     expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).not.toBe('COMPLETED');
+    const requeueEvent = (await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get()).docs.find((event) => event.data().type === 'READY_FOR_DELIVERY');
+    expect(requeueEvent?.data()?.actorRole).toBe('admin');
 
     const nextDriver = await createSignedInUser('driver', `qa-driver-retry-${randomUUID()}@example.test`);
     await db.doc(`deliveryDrivers/${nextDriver.uid}`).update({ status: 'AVAILABLE' });
@@ -405,6 +440,25 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(edited.status).toBe(200);
     expect((await db.doc(`deliveryDrivers/${newDriver.uid}`).get()).data()).toMatchObject({ name: 'Motoboy Editado', phone: '17988887777' });
   }, 30000);
+
+  it('does not reassign an active delivery to a driver whose user account is inactive', async () => {
+    const newDriver = await createSignedInUser('driver', `qa-driver-inactive-reassign-${randomUUID()}@example.test`);
+    const orderId = `order-${randomUUID()}`;
+    const deliveryId = `delivery-${orderId}`;
+    await db.doc(`orders/${orderId}`).set({ status: 'PREPARING', orderNumber: '#QA-INACTIVE-REASSIGN', fulfillment: { mode: 'DELIVERY' }, pricing: { totalCents: 1200 }, updatedAt: new Date() });
+    await db.doc(`deliveries/${deliveryId}`).set({ orderId, orderNumber: '#QA-INACTIVE-REASSIGN', driverId: driverUid, driverName: 'Anterior', status: 'ACCEPTED' });
+    await Promise.all([
+      db.doc(`deliveryDrivers/${driverUid}`).update({ status: 'BUSY', currentDeliveryId: deliveryId }),
+      db.doc(`deliveryDrivers/${newDriver.uid}`).update({ status: 'AVAILABLE' }),
+      db.doc(`users/${newDriver.uid}`).update({ active: false }),
+    ]);
+
+    const reassigned = await call('reassignDelivery', adminToken, { deliveryId, driverId: newDriver.uid });
+    expect(reassigned.status).not.toBe(200);
+    expect((await db.doc(`deliveries/${deliveryId}`).get()).data()).toMatchObject({ status: 'ACCEPTED', driverId: driverUid });
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()).toMatchObject({ status: 'BUSY', currentDeliveryId: deliveryId });
+    expect((await db.doc(`deliveryDrivers/${newDriver.uid}`).get()).data()).toMatchObject({ status: 'AVAILABLE' });
+  }, 20000);
 
   it('disables and re-enables a driver through Auth, user status, and assignment eligibility', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-toggle-${randomUUID()}@example.test`);
