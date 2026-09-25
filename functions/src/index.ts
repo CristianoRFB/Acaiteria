@@ -266,11 +266,13 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
     const registerRef = db.doc(`cashRegisters/${input.clientRequestId}`);
     const openingRef = db.doc(`cashMovements/opening-${input.clientRequestId}`);
     const controlRef = db.doc('cashControl/main');
+    const requestFingerprint = JSON.stringify({ initialBalanceCents: input.initialBalanceCents, openingDate: input.openingDate, note: input.note?.trim() || null });
+    let idempotent = false;
     await db.runTransaction(async (transaction) => {
       const existing = await transaction.get(registerRef);
       if (existing.exists) {
-        if (existing.data()?.openingRequestId === input.clientRequestId && existing.data()?.operatorUid === uid) return;
-        throw new HttpsError('already-exists', 'Esta tentativa de abertura já foi utilizada.');
+        if (existing.data()?.openingRequestId === input.clientRequestId && existing.data()?.operatorUid === uid && existing.data()?.requestFingerprint === requestFingerprint) { idempotent = true; return; }
+        throw new HttpsError('already-exists', 'Esta tentativa de abertura já foi registrada com outros dados. Confira o caixa antes de iniciar outra tentativa.');
       }
       const control = await transaction.get(controlRef);
       const openId = String(control.data()?.openRegisterId ?? '');
@@ -279,31 +281,36 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
         if (openRegister.exists && openRegister.data()?.status === 'OPEN') throw new HttpsError('failed-precondition', 'Já existe um caixa aberto.');
       }
       const now = FieldValue.serverTimestamp();
-      transaction.create(registerRef, { status: 'OPEN', operatorUid: uid, operatorEmail: email, openingRequestId: input.clientRequestId, openingDate: input.openingDate, initialBalanceCents: input.initialBalanceCents, expectedCashCents: input.initialBalanceCents, note: input.note?.trim() || null, openedAt: now, updatedAt: now });
+      transaction.create(registerRef, { status: 'OPEN', operatorUid: uid, operatorEmail: email, openingRequestId: input.clientRequestId, requestFingerprint, openingDate: input.openingDate, initialBalanceCents: input.initialBalanceCents, expectedCashCents: input.initialBalanceCents, note: input.note?.trim() || null, openedAt: now, updatedAt: now });
       transaction.create(openingRef, { registerId: registerRef.id, type: 'OPENING', direction: 'IN', amountCents: input.initialBalanceCents, cashAmountCents: input.initialBalanceCents, operatorUid: uid, operatorEmail: email, note: input.note?.trim() || 'Saldo inicial do caixa.', createdAt: now });
       transaction.set(controlRef, { openRegisterId: registerRef.id, updatedAt: now }, { merge: true });
     });
-    return { registerId: registerRef.id, idempotent: false };
+    return { registerId: registerRef.id, idempotent };
   }
 
   if (input.operation === 'MOVEMENT') {
     const registerRef = db.doc(`cashRegisters/${input.registerId}`);
     const movementRef = db.doc(`cashMovements/manual-${input.clientRequestId}`);
     const controlRef = db.doc('cashControl/main');
+    const requestFingerprint = JSON.stringify({ registerId: input.registerId, type: input.type, amountCents: input.amountCents, note: input.note.trim() });
+    let idempotent = false;
     await db.runTransaction(async (transaction) => {
       const existingMovement = await transaction.get(movementRef);
-      if (existingMovement.exists) return;
+      if (existingMovement.exists) {
+        if (existingMovement.data()?.clientRequestId === input.clientRequestId && existingMovement.data()?.requestFingerprint === requestFingerprint) { idempotent = true; return; }
+        throw new HttpsError('already-exists', 'Esta movimentação já foi registrada com outros dados. Confira o caixa antes de tentar novamente.');
+      }
       const register = await transaction.get(registerRef);
       if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Este caixa não está aberto para novas movimentações.');
       const control = await transaction.get(controlRef);
       if (String(control.data()?.openRegisterId ?? '') !== input.registerId) throw new HttpsError('failed-precondition', 'Este não é o caixa aberto atual.');
       const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
-      if (!Number.isSafeInteger(expected) || (input.type === 'WITHDRAWAL' && input.amountCents > expected)) throw new HttpsError('failed-precondition', 'A sangria não pode ser maior que o dinheiro esperado no caixa.');
+      if (!Number.isSafeInteger(expected) || expected < 0 || (input.type === 'WITHDRAWAL' && input.amountCents > expected)) throw new HttpsError('failed-precondition', 'A sangria não pode ser maior que o dinheiro esperado no caixa.');
       const now = FieldValue.serverTimestamp();
-      transaction.create(movementRef, { registerId: input.registerId, type: input.type, direction: input.type === 'SUPPLY' ? 'IN' : 'OUT', amountCents: input.amountCents, cashAmountCents: input.amountCents, operatorUid: uid, operatorEmail: email, note: input.note.trim(), createdAt: now });
+      transaction.create(movementRef, { registerId: input.registerId, type: input.type, direction: input.type === 'SUPPLY' ? 'IN' : 'OUT', amountCents: input.amountCents, cashAmountCents: input.amountCents, clientRequestId: input.clientRequestId, requestFingerprint, operatorUid: uid, operatorEmail: email, note: input.note.trim(), createdAt: now });
       transaction.update(registerRef, { expectedCashCents: expected + (input.type === 'SUPPLY' ? input.amountCents : -input.amountCents), lastMovementAt: now, updatedAt: now });
     });
-    return { movementId: movementRef.id };
+    return { movementId: movementRef.id, idempotent };
   }
 
   if (input.operation === 'LOCAL_SALE') {
@@ -311,11 +318,15 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
     const financeRef = db.doc(`financeEntries/local-${input.clientRequestId}`);
     const registerRef = db.doc(`cashRegisters/${input.registerId}`);
     const controlRef = db.doc('cashControl/main');
+    const requestFingerprint = JSON.stringify({ registerId: input.registerId, amountCents: input.amountCents, paymentMethod: input.paymentMethod, description: input.description.trim(), orderNumber: input.orderNumber?.trim() || null, note: input.note?.trim() || null });
     let idempotent = false;
     await db.runTransaction(async (transaction) => {
       const existingSale = await transaction.get(saleRef);
       const existingFinance = await transaction.get(financeRef);
       if (existingSale.exists) {
+        if (existingSale.data()?.clientRequestId !== input.clientRequestId || existingSale.data()?.requestFingerprint !== requestFingerprint) {
+          throw new HttpsError('already-exists', 'Esta venda já foi registrada com outros dados. Confira o Caixa e o Financeiro antes de iniciar outra tentativa.');
+        }
         idempotent = true;
         if (!existingFinance.exists) {
           const saleData = existingSale.data()!;
@@ -343,7 +354,7 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
       if (String(control.data()?.openRegisterId ?? '') !== input.registerId) throw new HttpsError('failed-precondition', 'Este não é o Caixa aberto atual.');
       const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
       const cashAmountCents = input.paymentMethod === 'CASH' ? input.amountCents : 0;
-      if (!Number.isSafeInteger(expected) || !Number.isSafeInteger(cashAmountCents)) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa é inválido.');
+      if (!Number.isSafeInteger(expected) || expected < 0 || !Number.isSafeInteger(cashAmountCents)) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa é inválido.');
       const now = FieldValue.serverTimestamp();
       transaction.create(saleRef, {
         registerId: input.registerId,
@@ -354,6 +365,8 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
         paymentMethod: input.paymentMethod,
         orderNumber: input.orderNumber?.trim() || null,
         sourceLocalSaleId: input.clientRequestId,
+        clientRequestId: input.clientRequestId,
+        requestFingerprint,
         operatorUid: uid,
         operatorEmail: email,
         note: input.description.trim(),
@@ -382,20 +395,26 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
   const registerRef = db.doc(`cashRegisters/${input.registerId}`);
   const closingRef = db.doc(`cashMovements/closing-${input.registerId}`);
   const controlRef = db.doc('cashControl/main');
+  const requestFingerprint = JSON.stringify({ registerId: input.registerId, countedCashCents: input.countedCashCents, note: input.note?.trim() || null });
   let differenceCents = 0;
   await db.runTransaction(async (transaction) => {
     const register = await transaction.get(registerRef);
     const closing = await transaction.get(closingRef);
-    if (closing.exists && register.exists && register.data()?.status === 'CLOSED') return;
+    if (closing.exists && register.exists && register.data()?.status === 'CLOSED') {
+      if (closing.data()?.requestFingerprint !== requestFingerprint) throw new HttpsError('already-exists', 'O fechamento já foi registrado com outros valores. Confira o histórico antes de tentar novamente.');
+      differenceCents = Number(closing.data()?.differenceCents ?? 0);
+      return;
+    }
     if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Este caixa já está fechado ou não foi encontrado.');
     const control = await transaction.get(controlRef);
     if (String(control.data()?.openRegisterId ?? '') !== input.registerId) throw new HttpsError('failed-precondition', 'Este não é o caixa aberto atual.');
     const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+    if (!Number.isSafeInteger(expected) || expected < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa está inválido. Revise as movimentações antes de fechar.');
     differenceCents = input.countedCashCents - expected;
     if (differenceCents !== 0 && !input.note?.trim()) throw new HttpsError('invalid-argument', 'Explique a diferença antes de confirmar o fechamento.');
     const now = FieldValue.serverTimestamp();
     transaction.update(registerRef, { status: 'CLOSED', closedAt: now, countedCashCents: input.countedCashCents, differenceCents, closingNote: input.note?.trim() || null, updatedAt: now });
-    transaction.create(closingRef, { registerId: input.registerId, type: 'CLOSING', direction: 'OUT', amountCents: 0, cashAmountCents: 0, operatorUid: uid, operatorEmail: email, note: input.note?.trim() || 'Fechamento conferido.', createdAt: now });
+    transaction.create(closingRef, { registerId: input.registerId, type: 'CLOSING', direction: 'OUT', amountCents: 0, cashAmountCents: 0, countedCashCents: input.countedCashCents, differenceCents, requestFingerprint, operatorUid: uid, operatorEmail: email, note: input.note?.trim() || 'Fechamento conferido.', createdAt: now });
     transaction.set(controlRef, { openRegisterId: null, updatedAt: now }, { merge: true });
   });
   return { differenceCents };

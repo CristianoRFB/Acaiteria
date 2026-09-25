@@ -341,15 +341,28 @@ describe('delivery operations in Firebase Emulator Suite', () => {
   }, 20000);
 
   it('records local cash sales once and keeps Pix and card out of physical cash', async () => {
+    const openingRequestId = randomUUID();
     const opened = await call('operateCashRegister', adminToken, {
       operation: 'OPEN',
-      clientRequestId: randomUUID(),
+      clientRequestId: openingRequestId,
       initialBalanceCents: 2000,
       openingDate: '2026-09-24',
       note: 'Abertura para teste de formas de pagamento',
     });
     expect(opened.status).toBe(200);
     const registerId = String(opened.body.result?.registerId);
+    const openingReplay = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN', clientRequestId: openingRequestId, initialBalanceCents: 2000,
+      openingDate: '2026-09-24', note: 'Abertura para teste de formas de pagamento',
+    });
+    expect(openingReplay.status).toBe(200);
+    expect(openingReplay.body.result?.idempotent).toBe(true);
+    const changedOpeningReplay = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN', clientRequestId: openingRequestId, initialBalanceCents: 5000,
+      openingDate: '2026-09-24', note: 'Abertura para teste de formas de pagamento',
+    });
+    expect(changedOpeningReplay.status).not.toBe(200);
+
     const saleId = randomUUID();
     const sale = {
       operation: 'LOCAL_SALE',
@@ -364,6 +377,9 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       call('operateCashRegister', adminToken, sale),
     ]);
     expect(duplicateCashSale.every((result) => result.status === 200)).toBe(true);
+    const changedSaleReplay = await call('operateCashRegister', adminToken, { ...sale, amountCents: 9999 });
+    expect(changedSaleReplay.status).not.toBe(200);
+    expect(changedSaleReplay.body.error?.status).toBe('ALREADY_EXISTS');
     expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(3550);
     expect((await db.doc(`cashMovements/local-${saleId}`).get()).data()?.cashAmountCents).toBe(1550);
     expect((await db.doc(`financeEntries/local-${saleId}`).get()).data()?.amountCents).toBe(1550);
@@ -378,6 +394,50 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       expect((await db.doc(`cashMovements/local-${clientRequestId}`).get()).data()?.cashAmountCents).toBe(0);
     }
     expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(3550);
+
+    const movementId = randomUUID();
+    const supply = { operation: 'MOVEMENT', clientRequestId: movementId, registerId, type: 'SUPPLY', amountCents: 500, note: 'Reforço para teste' };
+    expect((await call('operateCashRegister', adminToken, supply)).status).toBe(200);
+    expect((await call('operateCashRegister', adminToken, supply)).status).toBe(200);
+    const changedSupplyReplay = await call('operateCashRegister', adminToken, { ...supply, amountCents: 700 });
+    expect(changedSupplyReplay.status).not.toBe(200);
+    expect(changedSupplyReplay.body.error?.status).toBe('ALREADY_EXISTS');
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(4050);
+  }, 20000);
+
+  it('blocks overdraft, requires an explanation for a cash difference, and preserves the first close', async () => {
+    const openingRequestId = randomUUID();
+    const opened = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN', clientRequestId: openingRequestId, initialBalanceCents: 1000,
+      openingDate: '2026-09-25', note: 'Abertura para conferir fechamento',
+    });
+    expect(opened.status).toBe(200);
+    const registerId = String(opened.body.result?.registerId);
+    const overdraftId = randomUUID();
+    const overdraft = await call('operateCashRegister', adminToken, {
+      operation: 'MOVEMENT', clientRequestId: overdraftId, registerId,
+      type: 'WITHDRAWAL', amountCents: 1001, note: 'Tentativa acima do saldo',
+    });
+    expect(overdraft.status).not.toBe(200);
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(1000);
+    expect((await db.doc(`cashMovements/manual-${overdraftId}`).get()).exists).toBe(false);
+
+    const unexplained = await call('operateCashRegister', adminToken, {
+      operation: 'CLOSE', registerId, countedCashCents: 900,
+    });
+    expect(unexplained.status).not.toBe(200);
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.status).toBe('OPEN');
+
+    const close = { operation: 'CLOSE', registerId, countedCashCents: 900, note: 'Falta de R$ 1,00 conferida' };
+    const firstClose = await call('operateCashRegister', adminToken, close);
+    expect(firstClose.status).toBe(200);
+    expect(firstClose.body.result?.differenceCents).toBe(-100);
+    const replay = await call('operateCashRegister', adminToken, close);
+    expect(replay.status).toBe(200);
+    expect(replay.body.result?.differenceCents).toBe(-100);
+    const changedReplay = await call('operateCashRegister', adminToken, { ...close, countedCashCents: 950 });
+    expect(changedReplay.status).not.toBe(200);
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()).toMatchObject({ status: 'CLOSED', countedCashCents: 900, differenceCents: -100 });
   }, 20000);
 
   it('blocks delivery completion after cash closure without partially changing order, delivery, or finance', async () => {
@@ -388,6 +448,12 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       countedCashCents: 1000,
     });
     expect(closed.status).toBe(200);
+    const repeatedClose = await call('operateCashRegister', adminToken, { operation: 'CLOSE', registerId: fixture.registerId, countedCashCents: 1000 });
+    expect(repeatedClose.status).toBe(200);
+    const alteredClose = await call('operateCashRegister', adminToken, { operation: 'CLOSE', registerId: fixture.registerId, countedCashCents: 900 });
+    expect(alteredClose.status).not.toBe(200);
+    expect(alteredClose.body.error?.status).toBe('ALREADY_EXISTS');
+    expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.countedCashCents).toBe(1000);
 
     const confirmation = await call('confirmDelivery', driverToken, {
       deliveryId: fixture.deliveryId,

@@ -9,14 +9,14 @@ Na revisão dos fluxos de pedido foi encontrado um bypass: o cliente Firebase ai
 
 Pedidos legados sem comprovante de preço do servidor agora precisam ser conferidos contra catálogo, tamanho, adicionais, disponibilidade, modalidade e taxa atuais. Se os valores coincidirem, a conferência é registrada; se divergirem, o avanço fica bloqueado até a loja corrigir o pedido e o cliente aceitar a nova proposta. Conclusão/estorno e confirmação de entrega também recusam pedidos sem preço validado pelo servidor.
 
-No Financeiro, uma chave de repetição agora também fica vinculada ao conteúdo do lançamento. Reenviar os mesmos dados é idempotente; reutilizar a chave com valor ou descrição diferentes é recusado, evitando que a tela informe sucesso enquanto deixa de gravar a alteração.
+No Financeiro, uma chave de repetição agora também fica vinculada ao conteúdo do lançamento. Reenviar os mesmos dados é idempotente; reutilizar a chave com valor ou descrição diferentes é recusado, evitando que a tela informe sucesso enquanto deixa de gravar a alteração. A mesma proteção foi aplicada às operações do Caixa (abertura, movimentação, venda local e fechamento): reenvio idêntico é seguro, mas uma tentativa alterada com a mesma chave é recusada sem sobrescrever o primeiro registro.
 
 Verificações executadas nesta retomada, em Firebase Emulator com projeto demo e sem importar os dados locais:
 
 - `npm run ci` — passou: lint, typecheck, 39 testes do app e build.
 - `npm run test:functions` — passou: 14 testes unitários.
 - `npm run test:rules` — passou: 6 testes das Rules.
-- `npm run test:functions:integration` — passou: 37 testes de pedidos, entregas e Financeiro.
+- `npm run test:functions:integration` — passou: 38 testes de pedidos, entregas, Financeiro e Caixa.
 - O build emitiu apenas avisos de bundle cliente acima de 500 kB; não impediu a compilação.
 
 Isso valida código e fluxos automatizados no emulador, não substitui um pedido real de homologação nem comprova o projeto Firebase publicado.
