@@ -440,6 +440,87 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`cashRegisters/${registerId}`).get()).data()).toMatchObject({ status: 'CLOSED', countedCashCents: 900, differenceCents: -100 });
   }, 20000);
 
+  it('refuses pickup completion against an invalid expected cash balance without partial writes', async () => {
+    const opened = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN', clientRequestId: randomUUID(), initialBalanceCents: 1000,
+      openingDate: '2026-09-25', note: 'Abertura para validar saldo legado',
+    });
+    expect(opened.status).toBe(200);
+    const registerId = String(opened.body.result?.registerId);
+    const registerRef = db.doc(`cashRegisters/${registerId}`);
+    const orderId = `order-${randomUUID()}`;
+    const publicCode = `public-${randomUUID()}`;
+    await db.doc(`orders/${orderId}`).set({
+      status: 'READY', orderNumber: '#QA-BALANCE', publicCode,
+      fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX' },
+      pricing: { subtotalCents: 1800, deliveryFeeCents: 0, totalCents: 1800 },
+      pricingVerification: { status: 'VERIFIED', source: 'SERVER' },
+    });
+    await db.doc(`publicOrders/${publicCode}`).set({ publicCode, status: 'READY' });
+    await registerRef.update({ expectedCashCents: -1 });
+
+    try {
+      const result = await call('updateOrderStatus', adminToken, { orderId, status: 'COMPLETED' });
+      expect(result.status).not.toBe(200);
+      expect(result.body.error?.status).toBe('FAILED_PRECONDITION');
+      expect((await db.doc(`orders/${orderId}`).get()).data()?.status).toBe('READY');
+      expect((await db.doc(`financeEntries/order-${orderId}`).get()).exists).toBe(false);
+      expect((await db.doc(`cashMovements/order-${orderId}`).get()).exists).toBe(false);
+    } finally {
+      await registerRef.update({ expectedCashCents: 1000 });
+    }
+  }, 20000);
+
+  it('refuses to confirm a delivery against an invalid expected cash balance without partial writes', async () => {
+    const fixture = await createArrivedCashDelivery(driverUid);
+    const registerRef = db.doc(`cashRegisters/${fixture.registerId}`);
+    await registerRef.update({ expectedCashCents: -1 });
+
+    try {
+      const result = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code });
+      expect(result.status).not.toBe(200);
+      expect(result.body.error?.status).toBe('FAILED_PRECONDITION');
+      expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('OUT_FOR_DELIVERY');
+      expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ARRIVED');
+      expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
+      expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
+    } finally {
+      await registerRef.update({ expectedCashCents: 1000 });
+    }
+  }, 20000);
+
+  it('refuses to refund against an invalid expected cash balance without partial writes', async () => {
+    const opened = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN', clientRequestId: randomUUID(), initialBalanceCents: 1000,
+      openingDate: '2026-09-25', note: 'Abertura para validar estorno',
+    });
+    expect(opened.status).toBe(200);
+    const registerId = String(opened.body.result?.registerId);
+    const registerRef = db.doc(`cashRegisters/${registerId}`);
+    const orderId = `order-${randomUUID()}`;
+    const publicCode = `public-${randomUUID()}`;
+    await db.doc(`orders/${orderId}`).set({
+      status: 'COMPLETED', orderNumber: '#QA-REFUND-BALANCE', publicCode,
+      fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX' },
+      pricing: { subtotalCents: 1800, deliveryFeeCents: 0, totalCents: 1800 },
+      pricingVerification: { status: 'VERIFIED', source: 'SERVER' },
+    });
+    await db.doc(`publicOrders/${publicCode}`).set({ publicCode, status: 'COMPLETED' });
+    await db.doc(`cashMovements/order-${orderId}`).set({ registerId, amountCents: 1800, cashAmountCents: 0, paymentMethod: 'PIX', sourceOrderId: orderId });
+    await registerRef.update({ expectedCashCents: -1 });
+
+    try {
+      const result = await call('refundCompletedOrder', adminToken, { orderId, reason: 'Teste de saldo inconsistente' });
+      expect(result.status).not.toBe(200);
+      expect(result.body.error?.status).toBe('FAILED_PRECONDITION');
+      expect((await db.doc(`orders/${orderId}`).get()).data()?.status).toBe('COMPLETED');
+      expect((await db.doc(`cashMovements/refund-${orderId}`).get()).exists).toBe(false);
+      expect((await db.doc(`financeEntries/refund-${orderId}`).get()).exists).toBe(false);
+    } finally {
+      await registerRef.update({ expectedCashCents: 1000 });
+    }
+  }, 20000);
+
   it('blocks delivery completion after cash closure without partially changing order, delivery, or finance', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
     const closed = await call('operateCashRegister', adminToken, {

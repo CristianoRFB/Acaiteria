@@ -11,12 +11,14 @@ Pedidos legados sem comprovante de preço do servidor agora precisam ser conferi
 
 No Financeiro, uma chave de repetição agora também fica vinculada ao conteúdo do lançamento. Reenviar os mesmos dados é idempotente; reutilizar a chave com valor ou descrição diferentes é recusado, evitando que a tela informe sucesso enquanto deixa de gravar a alteração. A mesma proteção foi aplicada às operações do Caixa (abertura, movimentação, venda local e fechamento): reenvio idêntico é seguro, mas uma tentativa alterada com a mesma chave é recusada sem sobrescrever o primeiro registro.
 
+Conclusão de pedidos, confirmação de delivery e estorno também validam o saldo esperado do Caixa antes de gravar. Se um saldo antigo/inconsistente for negativo ou inválido, a transação inteira é recusada sem concluir pedido nem gravar venda, estorno ou lançamento parcial.
+
 Verificações executadas nesta retomada, em Firebase Emulator com projeto demo e sem importar os dados locais:
 
 - `npm run ci` — passou: lint, typecheck, 39 testes do app e build.
 - `npm run test:functions` — passou: 14 testes unitários.
 - `npm run test:rules` — passou: 6 testes das Rules.
-- `npm run test:functions:integration` — passou: 38 testes de pedidos, entregas, Financeiro e Caixa.
+- `npm run test:functions:integration` — passou: 41 testes de pedidos, entregas, Financeiro e Caixa.
 - O build emitiu apenas avisos de bundle cliente acima de 500 kB; não impediu a compilação.
 
 Isso valida código e fluxos automatizados no emulador, não substitui um pedido real de homologação nem comprova o projeto Firebase publicado.
@@ -37,7 +39,7 @@ Isso valida código e fluxos automatizados no emulador, não substitui um pedido
 |---|---|---|
 | Autenticação e papéis | Passou | Funções administrativas exigem `admin` ou `staff`; Financeiro exige `admin`. |
 | Pedidos e preços | Corrigido nesta retomada | O checkout passa pelo backend; pedidos legados exigem validação canônica antes de avançar, concluir ou gerar financeiro. |
-| Caixa | Passou | Operações usam função autenticada, caixa aberto e transação. |
+| Caixa | Passou | Operações autenticadas validam reenvios e recusam saldos inconsistentes sem gravações parciais. |
 | Financeiro | Passou | Manual e automático passam pelo backend; exclusão direta bloqueada. |
 | Cliente e acompanhamento | Passou | Leitura pública fica limitada ao espelho/código; resposta de edição aceita somente decisão pendente. |
 | Banco e consultas | Passou | Consultas críticas têm limite/filtros; a visão comercial usa consulta mensal indexada. |

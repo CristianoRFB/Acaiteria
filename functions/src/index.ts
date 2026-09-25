@@ -495,6 +495,7 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     let completionRegister: DocumentSnapshot | null = null;
     let completionFinance: DocumentSnapshot | null = null;
     let completionSale: DocumentSnapshot | null = null;
+    let completionExpectedCashCents = 0;
     const deliveryRef = db.doc(`deliveries/delivery-${orderId}`);
     let existingDelivery: DocumentSnapshot | null = null;
     if (status === 'READY' || status === 'CANCELLED' || status === 'COMPLETED') existingDelivery = await transaction.get(deliveryRef);
@@ -513,6 +514,8 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
       if (!registerId) throw new HttpsError('failed-precondition', 'Abra o Caixa antes de concluir o pedido.');
       completionRegister = await transaction.get(db.doc(`cashRegisters/${registerId}`));
       if (!completionRegister.exists || completionRegister.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Abra o Caixa antes de concluir o pedido.');
+      completionExpectedCashCents = Number(completionRegister.data()?.expectedCashCents ?? completionRegister.data()?.initialBalanceCents ?? 0);
+      if (!Number.isSafeInteger(completionExpectedCashCents) || completionExpectedCashCents < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa está inválido. Revise as movimentações antes de concluir o pedido.');
       completionFinance = await transaction.get(db.doc(`financeEntries/order-${orderId}`));
       completionSale = await transaction.get(db.doc(`cashMovements/order-${orderId}`));
     }
@@ -560,9 +563,8 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
       if (!completionFinance.exists) transaction.create(db.doc(`financeEntries/order-${orderId}`), { kind: 'INCOME', category: 'Vendas de açaí', description: `Pedido ${data.orderNumber}`, amountCents: totalCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: data.orderNumber, sourceOrderId: orderId, paymentMethod, notes: 'Lançamento criado automaticamente ao concluir o pedido.', createdAt: now, updatedAt: now });
       if (!completionSale.exists) {
         const cashAmountCents = paymentMethod === 'CASH' ? totalCents : 0;
-        const expected = Number(completionRegister.data()?.expectedCashCents ?? completionRegister.data()?.initialBalanceCents ?? 0);
         transaction.create(db.doc(`cashMovements/order-${orderId}`), { registerId: completionRegister.id, type: 'SALE', direction: 'IN', amountCents: totalCents, cashAmountCents, paymentMethod, orderNumber: data.orderNumber, sourceOrderId: orderId, operatorUid: request.auth!.uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: 'Venda registrada atomicamente ao concluir o pedido.', createdAt: now });
-        transaction.update(completionRegister.ref, { expectedCashCents: expected + cashAmountCents, lastMovementAt: now, updatedAt: now });
+        transaction.update(completionRegister.ref, { expectedCashCents: completionExpectedCashCents + cashAmountCents, lastMovementAt: now, updatedAt: now });
       }
     }
   });
@@ -597,6 +599,8 @@ export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory:
     if (!registerId) throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar o estorno.');
     const register = await transaction.get(db.doc(`cashRegisters/${registerId}`));
     if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar o estorno.');
+    const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+    if (!Number.isSafeInteger(expected) || expected < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa está inválido. Revise as movimentações antes de registrar o estorno.');
     const data = snapshot.data()!;
     const saleData = sale.data()!;
     const amountCents = Number(saleData.amountCents ?? data.pricing?.totalCents ?? 0);
@@ -607,7 +611,6 @@ export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory:
     transaction.set(db.doc(`publicOrders/${String(data.publicCode || orderId)}`), { status: 'CANCELLED', statusMessage: getCustomerOrderStatusMessage('CANCELLED', reason), updatedAt: now }, { merge: true });
     transaction.create(refundRef, { registerId, type: 'REFUND', direction: 'OUT', amountCents, cashAmountCents, paymentMethod: saleData.paymentMethod ?? 'OTHER', orderNumber: data.orderNumber, sourceOrderId: orderId, operatorUid: request.auth!.uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: `Estorno: ${reason}`, createdAt: now });
     if (!finance.exists) transaction.create(financeRef, { kind: 'EXPENSE', category: 'Estornos', description: `Estorno do pedido ${data.orderNumber}`, amountCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: data.orderNumber, sourceOrderId: orderId, paymentMethod: saleData.paymentMethod ?? 'OTHER', notes: reason, createdAt: now, updatedAt: now });
-    const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
     if (cashAmountCents > expected) throw new HttpsError('failed-precondition', 'O estorno em dinheiro supera o saldo esperado do caixa.');
     transaction.update(register.ref, { expectedCashCents: expected - cashAmountCents, lastMovementAt: now, updatedAt: now });
   });
@@ -1137,6 +1140,8 @@ export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     const saleRef = db.doc(`cashMovements/order-${delivery.data()?.orderId}`);
     const finance = await transaction.get(financeRef);
     const sale = await transaction.get(saleRef);
+    const expectedCashCents = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
+    if (!Number.isSafeInteger(expectedCashCents) || expectedCashCents < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa está inválido. Revise as movimentações antes de confirmar a entrega.');
     const now = FieldValue.serverTimestamp();
     const publicCode = String(order.data()?.publicCode ?? '');
     transaction.update(deliveryRef, { status: 'DELIVERED', deliveredAt: now, updatedAt: now, publicCode: FieldValue.delete() });
@@ -1148,10 +1153,8 @@ export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     if (!finance.exists) transaction.create(financeRef, { kind: 'INCOME', category: 'Vendas de açaí', description: `Pedido ${order.data()?.orderNumber ?? delivery.data()?.orderId}`, amountCents: totalCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: order.data()?.orderNumber ?? null, sourceOrderId: delivery.data()?.orderId, paymentMethod, notes: 'Lançamento criado automaticamente ao confirmar a entrega.', createdAt: now, updatedAt: now });
     if (!sale.exists) {
       const cashAmountCents = paymentMethod === 'CASH' ? totalCents : 0;
-      const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
-      if (!Number.isSafeInteger(expected) || expected < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa é inválido.');
       transaction.create(saleRef, { registerId, type: 'SALE', direction: 'IN', amountCents: totalCents, cashAmountCents, paymentMethod, orderNumber: order.data()?.orderNumber ?? null, sourceOrderId: delivery.data()?.orderId, operatorUid: uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: 'Venda registrada ao confirmar a entrega.', createdAt: now });
-      transaction.update(register.ref, { expectedCashCents: expected + cashAmountCents, lastMovementAt: now, updatedAt: now });
+      transaction.update(register.ref, { expectedCashCents: expectedCashCents + cashAmountCents, lastMovementAt: now, updatedAt: now });
     }
     transaction.create(db.doc(`deliveryEvents/${eventId}`), { deliveryId, driverId: uid, type: 'DELIVERED', actorUid: uid, actorRole: 'driver', createdAt: now });
   });
