@@ -23,6 +23,15 @@ Verificações executadas nesta retomada, em Firebase Emulator com projeto demo 
 
 Isso valida código e fluxos automatizados no emulador, não substitui um pedido real de homologação nem comprova o projeto Firebase publicado.
 
+## Revalidação após o pull — 25/09/2026
+
+- O checkout foi atualizado até `bc7e5a2` (`main` alinhada com `origin/main`).
+- `npm run check:production` foi executado nesta máquina e continua bloqueando a publicação: falta somente `NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY`. O arquivo `.env.production.local` existe localmente; seus valores não devem ser enviados ao GitHub.
+- `functions/.env` não existe localmente. Criá-lo a partir de `functions/.env.example`, configurar `ENFORCE_APP_CHECK=true` somente depois de registrar o domínio no App Check e preencher a chave pública do frontend.
+- Nenhum deploy de Hosting, Functions, Rules ou índices foi feito nesta revalidação.
+- A inspeção visual confirmou o cardápio público e que `/entregador` exige login. Não foi feito login nem executada uma jornada autenticada completa de pedido → atribuição → entrega → caixa/financeiro; não declarar essa jornada homologada.
+- O processo local não criou pedido nem fez cobrança. O ambiente local/emulador não comprova que o Firebase de produção esteja pronto.
+
 ## Correções aplicadas
 
 - O checkout usa a callable `createOrder`, que recalcula catálogo, preços, taxa e disponibilidade no servidor. Escrita direta de pedidos e do espelho público foi removida das Rules.
@@ -62,7 +71,10 @@ Isso valida código e fluxos automatizados no emulador, não substitui um pedido
 - Publicar Rules, índices, Functions e frontend como uma versão coordenada. A proteção nova nega gravações diretas de pedidos, finanças, caixa, perfis e entregadores; um frontend antigo não terá compatibilidade operacional com essas Rules.
 - Confirmar App Check no ambiente de produção e habilitar faturamento/Cloud Functions no plano Firebase apropriado (o uso pode exigir Blaze); nenhum deploy foi feito nesta retomada.
 - O projeto Firebase de produção `food-5fb44` e o alvo `.firebaserc` estão configurados.
-- Neste ambiente, `.env.production.local` e `functions/.env` não estão presentes: `npm run check:production` aponta ausência das sete variáveis públicas obrigatórias de Firebase/App Check. Rules, índices, Functions e Hosting não foram publicados nesta retomada.
+- Nesta máquina, `npm run check:production` aponta a ausência de `NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY`; `functions/.env` também precisa ser criado/configurado localmente. Não versionar esses arquivos nem seus segredos. Rules, índices, Functions e Hosting ainda precisam ser publicados em uma implantação coordenada, após homologação.
 - A integração Saipos permanece desativada até existir contrato oficial de pedidos, credencial de homologação, mapeamentos reais e adapter homologado.
+- O checkout registra a forma de pagamento escolhida, mas esta auditoria não homologou captura/liquidação por um gateway online. Até escolher e homologar um provedor em sandbox, vender apenas com o fluxo de cobrança manual confirmado pela loja.
+- O código está configurado para a operação da Açaí + Sabor e não evidencia isolamento multiempresa (`tenantId`). Uma oferta SaaS hospedada para várias lojas exige isolamento de dados e autorização por empresa; uma implantação separada por cliente precisa de configuração e validação próprias.
+- A marcação de produção depende ainda de uma jornada autenticada completa com contas de teste, cenário de falha/estorno e reconciliação do caixa, além da confirmação operacional de endereço, contato, horário, cardápio, preços, taxas, área de entrega e políticas da loja.
 - O ranking de produtos considera itens detalhados dos pedidos online; vendas locais entram no faturamento, ticket e canais, mas precisam de itemização própria para aparecerem como produto.
 - Antes de cobrar clientes reais, executar um pedido sandbox ponta a ponta com o provedor escolhido e confirmar os índices no projeto Firebase de produção.
