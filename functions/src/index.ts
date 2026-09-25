@@ -209,20 +209,30 @@ export const saveFinanceEntry = onCall({ region, timeoutSeconds: 15, memory: '25
   const parsed = financeEntrySchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Lançamento financeiro inválido.');
   const input = parsed.data;
+  const requestFingerprint = JSON.stringify({
+    kind: input.kind,
+    category: input.category,
+    description: input.description,
+    amountCents: input.amountCents,
+    date: input.date,
+    status: input.status,
+    orderNumber: input.orderNumber || null,
+    notes: input.notes || null,
+  });
   const entryRef = input.id ? db.doc(`financeEntries/${input.id}`) : db.doc(`financeEntries/manual-${input.clientRequestId}`);
   let idempotent = false;
   await db.runTransaction(async (transaction) => {
     const existing = await transaction.get(entryRef);
     if (input.id && !existing.exists) throw new HttpsError('not-found', 'Lançamento não encontrado.');
     if (!input.id && existing.exists) {
-      if (existing.data()?.clientRequestId === input.clientRequestId) { idempotent = true; return; }
-      throw new HttpsError('already-exists', 'Esta tentativa de lançamento já foi utilizada.');
+      if (existing.data()?.clientRequestId === input.clientRequestId && existing.data()?.requestFingerprint === requestFingerprint) { idempotent = true; return; }
+      throw new HttpsError('already-exists', 'Esta tentativa já foi registrada com outros dados. Confira a lista antes de criar outro lançamento.');
     }
     if (existing.exists && (existing.data()?.sourceOrderId || existing.data()?.sourceLocalSaleId)) throw new HttpsError('failed-precondition', 'Lançamentos automáticos não podem ser editados manualmente.');
     const now = FieldValue.serverTimestamp();
     const updatedByUid = request.auth!.uid;
     const updatedByEmail = typeof request.auth?.token.email === 'string' ? request.auth.token.email : null;
-    const entry = { kind: input.kind, category: input.category, description: input.description, amountCents: input.amountCents, date: input.date, status: input.status, orderNumber: input.orderNumber || null, notes: input.notes || null, clientRequestId: input.clientRequestId, updatedByUid, updatedByEmail, updatedAt: now };
+    const entry = { kind: input.kind, category: input.category, description: input.description, amountCents: input.amountCents, date: input.date, status: input.status, orderNumber: input.orderNumber || null, notes: input.notes || null, clientRequestId: input.clientRequestId, requestFingerprint, updatedByUid, updatedByEmail, updatedAt: now };
     if (existing.exists) transaction.update(entryRef, entry);
     else transaction.create(entryRef, { ...entry, createdByUid: updatedByUid, createdAt: now });
   });

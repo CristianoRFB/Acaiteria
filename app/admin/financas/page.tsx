@@ -178,8 +178,11 @@ export default function FinancesPage() {
       setEditing(null);
       setFinanceRequestId(null);
       setNotice(editing ? 'Lançamento atualizado.' : 'Lançamento adicionado ao caixa.');
-    } catch {
-      setError('Não foi possível salvar o lançamento. Confira sua conexão e tente novamente.');
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : '';
+      setError(message.includes('registrada com outros dados')
+        ? `${message} Se não encontrar esse lançamento na lista, feche e abra o formulário para iniciar outra tentativa.`
+        : message || 'Não foi possível salvar o lançamento. Confira sua conexão e tente novamente.');
     } finally {
       setSaving(false);
     }
