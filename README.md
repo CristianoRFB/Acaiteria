@@ -80,13 +80,13 @@ Sistema de pedidos da Açaí + Sabor, em Santa Fé do Sul. O cliente pode escolh
 3. O motoboy inicia a rota, abre a navegação, marca a chegada e pede o código ao cliente. O backend valida o hash do código e conclui pedido, entrega, Caixa e Finanças na mesma transação.
 4. O motoboy nunca consegue ler o código secreto, alterar documentos diretamente ou consultar entregas de outro profissional. A operação de mapa usa um link de navegação; não há rastreamento contínuo ou GPS em segundo plano.
 
-O módulo de entregas exige as Cloud Functions e as regras do Firestore publicadas. Salário, comissão, carteira, Pix para motoboy, ranking, gamificação, roteirização avançada e APK nativo ficam fora do escopo atual.
+Checkout, confirmação de pedidos, edição com aceite do cliente, Financeiro, Caixa e entregas usam Cloud Functions para validar dados e manter as gravações financeiras atômicas. As Cloud Functions e as Rules atuais precisam estar publicadas juntas. Salário, comissão, carteira, Pix para motoboy, ranking, gamificação, roteirização avançada e APK nativo ficam fora do escopo atual.
 
 ## Tecnologia e operação
 
 - React, TypeScript, Vinext/Vite e Tailwind, com layout responsivo para celular e computador.
 - Firebase Authentication para acesso administrativo e Cloud Firestore para catálogo, pedidos, configurações, promoções e finanças.
-- Funcionamento compatível com o plano gratuito: o fluxo básico continua operando no Firestore; o módulo de entregas usa Cloud Functions para atribuição, código de recebimento e conclusão financeira atômica.
+- O frontend usa Firestore para leitura em tempo real; operações que criam pedidos ou alteram status, caixa, finanças e entregas passam por Cloud Functions autenticadas no servidor. O uso de Cloud Functions pode exigir o plano Blaze do Firebase e faturamento habilitado; confira os custos e limites do projeto antes de publicar.
 - Notificações operacionais no painel e fluxo de WhatsApp configurável pela loja.
 - Cardápio com combinados, monte seu copo, milk-shakes, sorvetes, bebidas, shakes e salada de frutas.
 
@@ -99,6 +99,8 @@ npm run dev
 ```
 
 Abra `http://localhost:3000`. Para usar Firebase, preencha em `.env.local` as variáveis `NEXT_PUBLIC_FIREBASE_*`; não publique arquivos de ambiente ou credenciais.
+
+Para testar checkout, painel e operações financeiras sem apontar para dados reais, configure `NEXT_PUBLIC_USE_FIREBASE_EMULATORS=true` com o projeto demo, compile as Functions (`npm --prefix functions run build`) e inicie Auth, Firestore e Functions Emulator sem importar dados locais. Não use credenciais de produção nos testes.
 
 ## Verificação antes da entrega
 

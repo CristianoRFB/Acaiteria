@@ -1,11 +1,27 @@
 # Auditoria de segurança e prontidão comercial
 
-Data: 16/09/2026  
+Data: 25/09/2026
 Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e visão comercial.
+
+## Retomada de QA — 25/09/2026
+
+Na revisão dos fluxos de pedido foi encontrado um bypass: o cliente Firebase ainda podia gravar pedidos/status e alguns documentos financeiros diretamente, evitando validações que já existiam nas Cloud Functions. A escrita direta foi bloqueada nas Rules e as telas de checkout, pedidos, notificações e Financeiro foram direcionadas às funções autenticadas do backend. A resposta do cliente a uma proposta de edição continua limitada à decisão pendente.
+
+Pedidos legados sem comprovante de preço do servidor agora precisam ser conferidos contra catálogo, tamanho, adicionais, disponibilidade, modalidade e taxa atuais. Se os valores coincidirem, a conferência é registrada; se divergirem, o avanço fica bloqueado até a loja corrigir o pedido e o cliente aceitar a nova proposta. Conclusão/estorno e confirmação de entrega também recusam pedidos sem preço validado pelo servidor.
+
+Verificações executadas nesta retomada, em Firebase Emulator com projeto demo e sem importar os dados locais:
+
+- `npm run ci` — passou: lint, typecheck, 39 testes do app e build.
+- `npm run test:functions` — passou: 14 testes unitários.
+- `npm run test:rules` — passou: 6 testes das Rules.
+- `npm run test:functions:integration` — passou: 33 testes de pedidos e entregas.
+- O build emitiu apenas avisos de bundle cliente acima de 500 kB; não impediu a compilação.
+
+Isso valida código e fluxos automatizados no emulador, não substitui um pedido real de homologação nem comprova o projeto Firebase publicado.
 
 ## Correções aplicadas
 
-- O checkout em plano Spark mantém a gravação direta do pedido e do espelho público, mas agora valida formato, limites, pagamento, endereço, quantidade de itens e totais antes do batch atômico. Alteração de itens/preços, status, previsão e estorno continuam restritos ao painel autenticado.
+- O checkout usa a callable `createOrder`, que recalcula catálogo, preços, taxa e disponibilidade no servidor. Escrita direta de pedidos e do espelho público foi removida das Rules.
 - Quando a gravação do checkout perde a conexão depois do envio, o mesmo `clientRequestId` é reutilizado para evitar duplicação; se o envio não for confirmado, o formulário permanece preservado e o cliente recebe a alternativa de contato pelo WhatsApp.
 - Edição e mudança de situação do Financeiro passaram para funções autenticadas. Lançamentos automáticos vinculados a pedido ou venda local não podem ser editados nem apagados pelo painel.
 - O registro de venda local continua transacional: Caixa e Financeiro são gravados juntos, com idempotência e efeito correto por forma de pagamento.
@@ -18,7 +34,7 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 | Área | Resultado | Observação |
 |---|---|---|
 | Autenticação e papéis | Passou | Funções administrativas exigem `admin` ou `staff`; Financeiro exige `admin`. |
-| Pedidos e preços | Passou | O checkout recalcula catálogo, preço e taxa no cliente antes do batch; limites e totais inconsistentes são rejeitados pelas validações e Rules. |
+| Pedidos e preços | Corrigido nesta retomada | O checkout passa pelo backend; pedidos legados exigem validação canônica antes de avançar, concluir ou gerar financeiro. |
 | Caixa | Passou | Operações usam função autenticada, caixa aberto e transação. |
 | Financeiro | Passou | Manual e automático passam pelo backend; exclusão direta bloqueada. |
 | Cliente e acompanhamento | Passou | Leitura pública fica limitada ao espelho/código; resposta de edição aceita somente decisão pendente. |
@@ -39,6 +55,8 @@ Escopo: painel administrativo, pedidos, Financeiro, Caixa, regras do Firestore e
 
 ## Risco residual antes de produção
 
+- Publicar Rules, índices, Functions e frontend como uma versão coordenada. A proteção nova nega gravações diretas de pedidos, finanças, caixa, perfis e entregadores; um frontend antigo não terá compatibilidade operacional com essas Rules.
+- Confirmar App Check no ambiente de produção e habilitar faturamento/Cloud Functions no plano Firebase apropriado (o uso pode exigir Blaze); nenhum deploy foi feito nesta retomada.
 - O projeto Firebase de produção `food-5fb44` e o alvo `.firebaserc` foram configurados; `.env.production.local` foi preparado com a configuração pública do app, mas ainda falta a chave reCAPTCHA v3 do App Check.
 - O Firebase CLI desta máquina não possui conta autenticada; por isso Rules, índices, Functions e Hosting ainda não foram publicados.
 - A integração Saipos permanece desativada até existir contrato oficial de pedidos, credencial de homologação, mapeamentos reais e adapter homologado.

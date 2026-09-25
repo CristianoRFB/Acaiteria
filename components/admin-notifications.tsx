@@ -1,6 +1,7 @@
 'use client';
 
 import { collection, limit, onSnapshot, query, where, type Timestamp } from 'firebase/firestore';
+import { httpsCallable } from 'firebase/functions';
 import { Bell, Check, ExternalLink, Loader2, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -9,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import type { OrderStatus } from '@/shared/domain';
 import { formatBRL } from '@/shared/domain';
-import { updateOrderStatusDirect } from '@/lib/direct-orders';
 
 interface NewOrder {
   id: string;
@@ -47,7 +47,8 @@ export function AdminNotifications() {
     setMessage('');
     try {
       const reason = status === 'CANCELLED' ? 'Recusado pela loja' : undefined;
-      await updateOrderStatusDirect(getFirebaseClient().db, orderId, status, reason);
+      if (status === 'CONFIRMED') await httpsCallable(getFirebaseClient().functions, 'verifyOrderPricing')({ orderId });
+      await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId, status, ...(reason ? { reason } : {}) });
       setMessage(status === 'CONFIRMED' ? 'Pedido aceito.' : 'Pedido recusado.');
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : 'Não foi possível atualizar o pedido.');

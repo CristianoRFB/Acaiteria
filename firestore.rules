@@ -7,37 +7,6 @@ service cloud.firestore {
     function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
     function isAdmin() { return userRole() == 'admin'; }
     function isDriver() { return userRole() == 'driver'; }
-    function validMoney(value) { return value is int && value >= 0 && value <= 10000000; }
-    function validOrderPayment(data) {
-      return data is map
-        && data.method in ['PIX', 'CARD', 'CASH']
-        && data.needsChange is bool
-        && (data.method == 'CASH' || (!data.needsChange && !data.keys().hasAny(['changeForCents'])))
-        && (!data.needsChange || (data.method == 'CASH' && data.changeForCents is int && validMoney(data.changeForCents)));
-    }
-    function validOrderFulfillment(data) { return data is map && data.mode in ['PICKUP', 'DELIVERY']; }
-    function validOrderPricing(data) {
-      return data is map
-        && validMoney(data.subtotalCents)
-        && validMoney(data.deliveryFeeCents)
-        && validMoney(data.totalCents)
-        && data.totalCents == data.subtotalCents + data.deliveryFeeCents;
-    }
-    function validOrderItems(data) { return data is list && data.size() > 0 && data.size() <= 30; }
-    function validOrderCustomer(data) {
-      return data is map
-        && data.name is string && data.name.size() >= 2 && data.name.size() <= 80
-        && data.whatsapp is string && data.whatsapp.size() >= 8 && data.whatsapp.size() <= 30;
-    }
-    function validPublicOrder(data, id) {
-      return data.publicCode == id
-        && data.publicCode is string && data.publicCode.size() >= 8 && data.publicCode.size() <= 64
-        && data.orderNumber is string && data.orderNumber.size() >= 3 && data.orderNumber.size() <= 80
-        && data.status == 'NEW'
-        && validOrderItems(data.items)
-        && data.pricing is map && validMoney(data.pricing.totalCents)
-        && validOrderFulfillment(data.fulfillment);
-    }
     function validProduct(data) { return data.name is string && data.slug is string && data.description is string && data.active is bool && data.categoryId is string && data.productType in ['CUSTOMIZABLE', 'SIMPLE'] && data.displayOrder is int && data.sizes is list && data.modifierGroupIds is list; }
     match /storePublicConfig/{id} { allow read: if true; allow create, update, delete: if isAdmin(); }
     match /storePrivateConfig/{id} { allow read, write: if isAdmin(); }
@@ -46,34 +15,28 @@ service cloud.firestore {
     match /modifierGroups/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
     match /modifiers/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
     match /promotions/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
-    match /financeEntries/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /cashControl/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /cashRegisters/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /cashMovements/{id} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /financeEntries/{id} {
+      allow read: if isStaff();
+      allow write: if false;
+    }
+    match /cashControl/{id} { allow read: if isStaff(); allow write: if false; }
+    match /cashRegisters/{id} { allow read: if isStaff(); allow write: if false; }
+    match /cashMovements/{id} { allow read: if isStaff(); allow write: if false; }
     match /orders/{id} {
       allow read: if isStaff();
-      allow create: if isStaff() || (!signedIn()
-        && request.resource.data.status == 'NEW'
-        && request.resource.data.publicCode is string
-        && request.resource.data.orderNumber is string
-        && validOrderCustomer(request.resource.data.customer)
-        && validOrderItems(request.resource.data.items)
-        && validOrderPricing(request.resource.data.pricing)
-        && validOrderPayment(request.resource.data.payment)
-        && validOrderFulfillment(request.resource.data.fulfillment));
-      allow update, delete: if isStaff();
+      allow create, update, delete: if false;
     }
     match /publicOrders/{id} {
       allow get: if isStaff() || (!signedIn() && resource.data.publicCode == id);
       allow list: if isStaff();
-      allow create: if isStaff() || (!signedIn() && validPublicOrder(request.resource.data, id));
-      allow update: if isStaff() || (!signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']));
+      allow create: if false;
+      allow update: if !signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']);
       allow delete: if false;
     }
-    match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if isAdmin(); }
+    match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if false; }
     match /deliveryDrivers/{uid} {
       allow read: if isStaff() || (isDriver() && request.auth.uid == uid);
-      allow write: if isAdmin();
+      allow write: if false;
       match /deliveryHistory/{deliveryId} {
         allow read: if isStaff() || (isDriver() && request.auth.uid == uid);
         allow write: if false;

@@ -20,7 +20,7 @@ import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
-import { finalizeOrderEditDirect, updateOrderDetailsDirect, updateOrderEstimateDirect, updateOrderStatusDirect, type CustomerEditDecision, type PublicOrderEditProposal } from '@/lib/direct-orders';
+import type { CustomerEditDecision, PublicOrderEditProposal } from '@/lib/direct-orders';
 import { useCatalog } from '@/components/providers';
 import {
   calculateCartPreview,
@@ -44,13 +44,14 @@ interface FullOrder {
     address?: Record<string, string>;
   };
   items: PricedItem[];
-  fulfillment: { mode: string; deliveryFeePending?: boolean };
+  fulfillment: { mode: string; zoneId?: string; deliveryFeePending?: boolean };
   payment: { method: string; changeForCents?: number };
   pricing: {
     subtotalCents: number;
     deliveryFeeCents: number;
     totalCents: number;
   };
+  pricingVerification?: { status?: string; source?: string };
   status: OrderStatus;
   publicCode?: string;
   estimatedMinutes?: number;
@@ -142,17 +143,12 @@ export default function OrderDetailPage() {
       if (completedCancellation) {
         await refundCompletedOrder({ orderId: order.id, reason: reason! });
         setNotice('Pedido estornado e cancelado. O financeiro e o Caixa foram atualizados juntos.');
-      } else if (needsFinalize) {
-        // A resposta pública já foi dada: registra o aceite privado antes da transição.
-        await finalizeOrderEditDirect(getFirebaseClient().db, order.id, 'ACCEPTED');
       } else {
-        // Delivery status changes go through the callable so the delivery record,
-        // receipt code and public tracking mirror are created atomically.
-        if (order.fulfillment.mode === 'DELIVERY' && (status === 'READY' || status === 'CANCELLED' || status === 'COMPLETED')) {
-          await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId: order.id, status, ...(reason ? { reason } : {}) });
-        } else {
-          await updateOrderStatusDirect(getFirebaseClient().db, order.id, status, reason);
+        if (needsFinalize) {
+          // The customer's public response is finalized privately before the status transition.
+          await httpsCallable(getFirebaseClient().functions, 'finalizeOrderEdit')({ orderId: order.id, decision: 'ACCEPTED' });
         }
+        await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId: order.id, status, ...(reason ? { reason } : {}) });
         setNotice(status === 'COMPLETED' ? 'Pedido concluído e registrado em Finanças e no Caixa.' : status === 'CANCELLED' ? 'Pedido cancelado.' : status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
       }
       setCancelOpen(false);
@@ -207,7 +203,7 @@ export default function OrderDetailPage() {
       }
       if (editFulfillmentMode === 'DELIVERY' && (!customer.address?.street || !customer.address.number || !customer.address.neighborhood)) throw new Error('Preencha o endereço para delivery.');
       const changeForCents = editPaymentMethod === 'CASH' && editChangeFor.trim() ? parseCurrencyToCents(editChangeFor) : null;
-      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } });
+      await httpsCallable(getFirebaseClient().functions, 'updateOrderDetails')({ orderId: order.id, customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode, ...(order.fulfillment.zoneId ? { zoneId: order.fulfillment.zoneId } : {}) }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } });
       setEditOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
@@ -247,7 +243,7 @@ export default function OrderDetailPage() {
     setBusy(true); setItemsError(''); setError('');
     try {
       calculateCartPreview(itemDrafts, catalog);
-      await updateOrderDetailsDirect(getFirebaseClient().db, order.id, { customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } }, catalog);
+      await httpsCallable(getFirebaseClient().functions, 'updateOrderDetails')({ orderId: order.id, customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP', ...(order.fulfillment.zoneId ? { zoneId: order.fulfillment.zoneId } : {}) } });
       setItemsOpen(false);
     } catch (cause) {
       setItemsError(cause instanceof Error ? cause.message : 'Confira os itens e tente novamente.');
@@ -256,7 +252,7 @@ export default function OrderDetailPage() {
   async function finalizeEdit(decision: CustomerEditDecision) {
     if (!order) return;
     setBusy(true); setError('');
-    try { await finalizeOrderEditDirect(getFirebaseClient().db, order.id, decision); }
+    try { await httpsCallable(getFirebaseClient().functions, 'finalizeOrderEdit')({ orderId: order.id, decision }); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível registrar a decisão.'); }
     finally { setBusy(false); }
   }
@@ -267,10 +263,22 @@ export default function OrderDetailPage() {
     if (!Number.isSafeInteger(minutes) || minutes < 5 || minutes > 240) { setError('Informe uma previsão entre 5 e 240 minutos.'); return; }
     setBusy(true); setError('');
     try {
-      await updateOrderEstimateDirect(getFirebaseClient().db, order.id, minutes);
+      await httpsCallable(getFirebaseClient().functions, 'updateOrderEstimate')({ orderId: order.id, estimatedMinutes: minutes });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar a previsão.'); }
     finally { setBusy(false); }
   }
+  async function verifyPricing() {
+    if (!order) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const result = await httpsCallable<{ orderId: string }, { verified: boolean; alreadyVerified?: boolean; totalCents?: number }>(getFirebaseClient().functions, 'verifyOrderPricing')({ orderId: order.id });
+      setNotice(result.data.alreadyVerified ? 'Os preços já estavam validados pelo servidor.' : 'Itens e total conferidos com o cardápio atual. O pedido pode continuar.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível validar os preços.');
+    } finally { setBusy(false); }
+  }
+  const pricingVerified = Boolean(order && order.pricingVerification?.status === 'VERIFIED' && order.pricingVerification.source === 'SERVER');
+  const canReviewItems = Boolean(order && ((['NEW', 'CONFIRMED'] as OrderStatus[]).includes(order.status) || (order.status === 'PREPARING' && !pricingVerified)));
   return (
     <AdminShell>
       {!order ? (
@@ -308,6 +316,7 @@ export default function OrderDetailPage() {
             </p>
           )}
           {notice && <p role="status" className="mt-5 rounded-xl bg-emerald-50 p-3 text-sm font-bold text-emerald-800">{notice}</p>}
+          {!pricingVerified && <section className="mt-5 flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-amber-950">Preço ainda não validado pelo servidor</p><p className="mt-1 text-sm text-amber-900">Este pedido antigo não pode avançar nem gerar venda no financeiro até conferirmos o total com o cardápio atual.</p></div>{!['COMPLETED', 'CANCELLED'].includes(order.status) && <Button disabled={busy} onClick={() => void verifyPricing()} className="shrink-0 rounded-xl bg-amber-700 font-black text-white hover:bg-amber-800"><CheckCircle2 /> Validar preços</Button>}</section>}
           <IntegrationOrderPanel orderId={order.id} state={order.integration} />
           {order.customerEditApproval?.status === 'PENDING' && <section className="mt-5 rounded-[26px] border-2 border-[#d7f04a] bg-[#fffde8] p-5 shadow-sm sm:p-6"><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Aprovação do cliente</p><h2 className="mt-1 text-xl font-black">Alteração enviada para confirmação</h2><p className="mt-2 text-sm leading-relaxed text-[#6f5360]">O pedido foi editado e não pode avançar para preparo até o cliente responder no link de acompanhamento.</p>{publicEditProposal?.status === 'ACCEPTED' && <><p className="mt-3 rounded-xl bg-[#d7f04a]/50 p-3 text-sm font-black text-[#351924]">O cliente concordou com as alterações.</p><Button disabled={busy} onClick={() => void finalizeEdit('ACCEPTED')} className="mt-3 rounded-full bg-[#82204f] text-white">Registrar aceite e liberar pedido</Button></>}{publicEditProposal?.status === 'REJECTED' && <><p className="mt-3 rounded-xl bg-red-100 p-3 text-sm font-black text-red-800">O cliente recusou as alterações.</p><Button disabled={busy} onClick={() => void finalizeEdit('REJECTED')} className="mt-3 rounded-full bg-[#82204f] text-white">Reverter para a versão anterior</Button></>}{(!publicEditProposal || publicEditProposal.status === 'PENDING') && <p className="mt-3 text-sm font-bold text-[#826a75]">Aguardando a resposta do cliente no acompanhamento público.</p>}</section>}
           <div className="mt-7 grid gap-5 xl:grid-cols-[1fr_360px]">
@@ -356,14 +365,15 @@ export default function OrderDetailPage() {
               <section className="rounded-[26px] bg-[#351924] p-5 text-white">
                 <h2 className="text-lg font-black">Atualizar status</h2>
                 <div className="mt-4 grid gap-2">
-                  {(['NEW', 'CONFIRMED'] as OrderStatus[]).includes(order.status) && <><Button disabled={busy} onClick={() => setEditOpen(true)} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar dados do cliente</Button><Button disabled={busy} onClick={openItemsEditor} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar itens e total</Button></>}
+                  {(['NEW', 'CONFIRMED'] as OrderStatus[]).includes(order.status) && <Button disabled={busy} onClick={() => setEditOpen(true)} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar dados do cliente</Button>}
+                  {canReviewItems && <Button disabled={busy} onClick={openItemsEditor} className="h-11 justify-start rounded-xl bg-white/10 px-4 font-black text-white hover:bg-white/20"><Pencil /> Editar itens e total</Button>}
                   {ORDER_TRANSITIONS[order.status]
                     .filter((status) => status !== 'CANCELLED')
                     .map((status) => (
                       status === 'PREPARING' ? (
                         <Button
                           key={status}
-                          disabled={busy || order.integration?.provider === 'saipos'}
+                          disabled={busy || !pricingVerified || order.customerEditApproval?.status === 'PENDING' || order.integration?.provider === 'saipos'}
                           onClick={() => setKitchenOpen(true)}
                           className="h-11 justify-start rounded-xl bg-[#d7f04a] px-4 font-black text-[#351924] hover:bg-[#c4dd36]"
                         >
@@ -373,7 +383,7 @@ export default function OrderDetailPage() {
                       <Button
                         key={status}
                         disabled={
-                          busy || order.integration?.provider === 'saipos' || (status === 'CONFIRMED' && order.customerEditApproval?.status === 'PENDING' && publicEditProposal?.status !== 'ACCEPTED')
+                          busy || order.integration?.provider === 'saipos' || !pricingVerified || (status === 'CONFIRMED' && order.customerEditApproval?.status === 'PENDING' && publicEditProposal?.status !== 'ACCEPTED')
                         }
                         onClick={() => update(status)}
                         className="h-11 justify-start rounded-xl bg-[#d7f04a] px-4 font-black text-[#351924] hover:bg-[#c4dd36]"

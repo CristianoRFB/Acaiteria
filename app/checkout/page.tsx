@@ -6,8 +6,8 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { PublicHeader } from '@/components/public-header';
 import { useCart, useCatalog } from '@/components/providers';
 import { Button } from '@/components/ui/button';
+import { httpsCallable } from 'firebase/functions';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
-import { createOrderDirect } from '@/lib/direct-orders';
 import { calculateCartPreview, calculateDeliveryFee, formatBRL, formatNextOpening, getStoreAvailability, type FulfillmentMode } from '@/shared/domain';
 
 const paymentLabels = { PIX: 'Pix', CARD: 'Cartão na entrega', CASH: 'Dinheiro' } as const;
@@ -112,20 +112,20 @@ export default function CheckoutPage() {
         ...(paymentMethod === 'CASH' && needsChange ? { changeForCents } : {}),
       },
       ...(fields.orderNotes ? { notes: fields.orderNotes } : {}),
-      deliveryFeeCents: deliveryFee,
+      clientPreviewTotalCents: totalCents,
     };
 
     setSubmitting(true);
     try {
-      const response = await createOrderDirect(getFirebaseClient().db, payload, catalog);
+      const response = await httpsCallable<typeof payload, { publicCode: string }>(getFirebaseClient().functions, 'createOrder')(payload);
       cart.clear();
       requestIdRef.current = null;
       try { sessionStorage.removeItem('acai-checkout-request-id'); } catch { /* opcional */ }
-      window.location.href = `/pedido/${response.publicCode}?novo=1`;
+      window.location.href = `/pedido/${response.data.publicCode}?novo=1`;
     } catch (cause: unknown) {
       const rawMessage = cause instanceof Error ? cause.message.replace(/^FirebaseError:\s*/, '') : 'Não foi possível enviar o pedido.';
       const errorCode = typeof cause === 'object' && cause && 'code' in cause ? String((cause as { code?: unknown }).code) : '';
-      const ambiguous = /deadline|timeout|unavailable|internal|network|failed-precondition/i.test(`${errorCode} ${rawMessage}`);
+      const ambiguous = /deadline-exceeded|unavailable|internal|network-request-failed|timeout/i.test(`${errorCode} ${rawMessage}`);
       const message = ambiguous
         ? 'Estamos confirmando se seu pedido chegou. Não envie outro pedido ainda. Aguarde alguns instantes e tente novamente.'
         : rawMessage;

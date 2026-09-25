@@ -391,6 +391,60 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
   return { differenceCents };
 });
 
+const verifyOrderPricingSchema = z.object({ orderId: z.string().min(1).max(128) });
+export const verifyOrderPricing = onCall({ region, timeoutSeconds: 20, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin', 'staff']);
+  const parsed = verifyOrderPricingSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Pedido inválido.');
+  const orderRef = db.doc(`orders/${parsed.data.orderId}`);
+  const snapshot = await orderRef.get();
+  if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+  const data = snapshot.data()!;
+  if (data.pricingVerification?.status === 'VERIFIED' && data.pricingVerification?.source === 'SERVER') return { verified: true, alreadyVerified: true };
+  if (['COMPLETED', 'CANCELLED'].includes(String(data.status))) throw new HttpsError('failed-precondition', 'Pedidos encerrados não podem ser revalidados.');
+  if (data.customerEditApproval?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Aguarde a resposta do cliente sobre a alteração pendente.');
+  if (!Array.isArray(data.items) || data.items.length < 1 || data.items.length > 30) throw new HttpsError('failed-precondition', 'Não foi possível conferir os itens salvos. Edite os itens e peça a aprovação do cliente.');
+  const catalogData = await loadCatalog();
+  let canonicalItems: PricedItem[];
+  let canonicalFee: number;
+  try {
+    const drafts = data.items.map((raw: Record<string, unknown>, index: number) => ({
+      cartItemId: String(index),
+      productId: String(raw.productId ?? ''),
+      sizeId: String(raw.sizeId ?? ''),
+      quantity: Number(raw.quantity),
+      notes: typeof raw.notes === 'string' ? raw.notes : undefined,
+      selections: Array.isArray(raw.modifierSelections) ? raw.modifierSelections.map((group: Record<string, unknown>) => ({
+        groupId: String(group.groupId ?? ''),
+        items: Array.isArray(group.items) ? group.items.map((item: Record<string, unknown>) => ({ modifierId: String(item.modifierId ?? ''), quantity: Number(item.quantity) })) : [],
+      })) : [],
+    }));
+    canonicalItems = calculateCartPreview(drafts, catalogData.catalog).items;
+    const mode = data.fulfillment?.mode === 'DELIVERY' ? 'DELIVERY' : data.fulfillment?.mode === 'PICKUP' ? 'PICKUP' : null;
+    if (!mode || !catalogData.config.fulfillmentModes.includes(mode)) throw new Error('Forma de recebimento inválida.');
+    canonicalFee = calculateDeliveryFee(catalogData.config.deliveryConfig, mode, data.fulfillment?.zoneId);
+  } catch (cause) {
+    throw new HttpsError('failed-precondition', cause instanceof Error ? `${cause.message} Edite os itens antes de continuar.` : 'Não foi possível validar o cardápio atual.');
+  }
+  const subtotalCents = canonicalItems.reduce((sum, item) => sum + item.totalPriceCents, 0);
+  const totalCents = subtotalCents + canonicalFee;
+  const oldPricing = data.pricing ?? {};
+  if (oldPricing.subtotalCents !== subtotalCents || oldPricing.deliveryFeeCents !== canonicalFee || oldPricing.totalCents !== totalCents) {
+    throw new HttpsError('failed-precondition', `O total salvo difere do cardápio atual. Total conferido: ${(totalCents / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}. Edite os itens e solicite a aprovação do cliente.`);
+  }
+  const pricing = { ...oldPricing, subtotalCents, deliveryFeeCents: canonicalFee, totalCents, currency: 'BRL' };
+  await db.runTransaction(async (transaction) => {
+    const current = await transaction.get(orderRef);
+    if (!current.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
+    if (current.data()?.pricingVerification?.status === 'VERIFIED' && current.data()?.pricingVerification?.source === 'SERVER') return;
+    if (current.updateTime?.toMillis() !== snapshot.updateTime?.toMillis()) throw new HttpsError('aborted', 'O pedido mudou durante a conferência. Atualize a tela e tente novamente.');
+    if (current.data()?.customerEditApproval?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Aguarde a resposta do cliente sobre a alteração pendente.');
+    transaction.update(orderRef, { items: canonicalItems, pricing, pricingVerification: { status: 'VERIFIED', source: 'SERVER', verifiedAt: FieldValue.serverTimestamp(), verifiedBy: request.auth!.uid }, updatedAt: FieldValue.serverTimestamp() });
+    transaction.set(db.doc(`publicOrders/${String(data.publicCode || parsed.data.orderId)}`), { items: canonicalItems, pricing: { totalCents }, pricingReviewStatus: 'VERIFIED', updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+  });
+  return { verified: true, alreadyVerified: false, totalCents };
+});
+
 const updateStatusSchema = z.object({ orderId: z.string().min(1).max(128), status: z.enum(['NEW', 'CONFIRMED', 'PREPARING', 'READY', 'OUT_FOR_DELIVERY', 'COMPLETED', 'CANCELLED']), reason: z.string().trim().max(300).optional() });
 export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   const role = await requireRole(request.auth?.uid, ['admin', 'staff']);
@@ -405,7 +459,9 @@ export const updateOrderStatus = onCall({ region, timeoutSeconds: 15, memory: '2
     if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Operação e cancelamento devem ser realizados no Saipos. Sincronização de status ainda não homologada.');
     const current = snapshot.data()?.status as OrderStatus;
     if (snapshot.data()?.customerEditApproval?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Aguardando a aprovação do cliente para continuar este pedido.');
-    if (status === 'CONFIRMED' && snapshot.data()?.pricingVerification?.status === 'PENDING') throw new HttpsError('failed-precondition', 'Confira itens e total antes de confirmar este pedido.');
+    if (status !== 'CANCELLED' && (snapshot.data()?.pricingVerification?.status !== 'VERIFIED' || snapshot.data()?.pricingVerification?.source !== 'SERVER')) {
+      throw new HttpsError('failed-precondition', 'Os preços deste pedido ainda não foram validados pelo servidor. Use “Validar preços” no painel antes de continuar.');
+    }
     if (!ORDER_TRANSITIONS[current]?.includes(status)) throw new HttpsError('failed-precondition', `Transição ${current} → ${status} não permitida.`);
     let completionRegister: DocumentSnapshot | null = null;
     let completionFinance: DocumentSnapshot | null = null;
@@ -503,6 +559,7 @@ export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory:
     const finance = await transaction.get(financeRef);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
     if (snapshot.data()?.status !== 'COMPLETED') throw new HttpsError('failed-precondition', 'Somente pedidos concluídos podem receber estorno.');
+    if (snapshot.data()?.pricingVerification?.status !== 'VERIFIED' || snapshot.data()?.pricingVerification?.source !== 'SERVER') throw new HttpsError('failed-precondition', 'Este pedido não tem preços validados pelo servidor; revise-o antes de estornar.');
     if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Este pedido deve ser estornado no Saipos.');
     if (!sale.exists) throw new HttpsError('failed-precondition', 'A venda deste pedido não está registrada no Caixa.');
     if (refund.exists) return;
@@ -554,9 +611,10 @@ export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '
     const snapshot = await transaction.get(orderRef);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
     const current = snapshot.data()?.status as OrderStatus;
-    if (!['NEW', 'CONFIRMED'].includes(current)) throw new HttpsError('failed-precondition', 'Este pedido não pode mais ser editado porque já entrou em preparo.');
     const data = snapshot.data()!;
-    const previous = { customer: data.customer, notes: data.notes ?? '', items: data.items ?? [], pricing: data.pricing, fulfillment: data.fulfillment, payment: data.payment };
+    const legacyPreparingPriceReview = current === 'PREPARING' && data.pricingVerification?.status !== 'VERIFIED' && Boolean(input.items);
+    if (!['NEW', 'CONFIRMED'].includes(current) && !legacyPreparingPriceReview) throw new HttpsError('failed-precondition', 'Este pedido não pode mais ser editado porque já entrou em preparo.');
+    const previous = { customer: data.customer, notes: data.notes ?? '', items: data.items ?? [], pricing: data.pricing, fulfillment: data.fulfillment, payment: data.payment, pricingVerification: data.pricingVerification ?? null };
     const nextFulfillment = input.fulfillment ?? data.fulfillment;
     if (!nextFulfillment || !['PICKUP', 'DELIVERY'].includes(nextFulfillment.mode)) throw new HttpsError('failed-precondition', 'Forma de recebimento inválida.');
     if (nextFulfillment.mode === 'DELIVERY' && !input.customer.address) throw new HttpsError('invalid-argument', 'Endereço obrigatório para delivery.');
@@ -580,7 +638,7 @@ export const updateOrderDetails = onCall({ region, timeoutSeconds: 15, memory: '
     const finalFulfillment = catalogData && input.fulfillment ? { ...nextFulfillment, deliveryFeePending: nextFulfillment.mode === 'DELIVERY' && catalogData.config.deliveryConfig.mode === 'CONFIRM' } : nextFulfillment;
     const changes = [input.items ? 'itens e total' : '', input.fulfillment ? 'forma de recebimento' : '', input.payment ? 'pagamento' : '', 'dados do cliente'].filter(Boolean);
     const proposal = { status: 'PENDING', summary: `A loja ajustou ${changes.join(', ')}. Confira e escolha se concorda.`, requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, before: { items: previous.items, pricing: { totalCents: previous.pricing.totalCents }, fulfillment: { mode: previous.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP' } } };
-    const orderUpdate = { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', customerEditApproval: { status: 'PENDING', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, previous }, updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid, ...(input.items ? { items: nextItems } : {}), ...(catalogData && (input.items || input.fulfillment) ? { pricing: nextPricing } : {}), ...(input.fulfillment ? { fulfillment: finalFulfillment } : {}), ...(input.payment ? { payment: nextPayment } : {}) };
+    const orderUpdate = { customer: { name: input.customer.name, whatsapp, ...(input.customer.address ? { address: input.customer.address } : {}) }, notes: input.notes ?? '', customerEditApproval: { status: 'PENDING', requestedAt: Timestamp.now(), requestedBy: request.auth!.uid, previous }, updatedAt: FieldValue.serverTimestamp(), lastEditedAt: FieldValue.serverTimestamp(), lastEditedBy: request.auth!.uid, ...(input.items ? { items: nextItems, pricingVerification: { status: 'VERIFIED', source: 'SERVER' } } : {}), ...(catalogData && (input.items || input.fulfillment) ? { pricing: nextPricing } : {}), ...(input.fulfillment ? { fulfillment: finalFulfillment } : {}), ...(input.payment ? { payment: nextPayment } : {}) };
     transaction.update(orderRef, orderUpdate);
     transaction.set(db.doc(`publicOrders/${String(data.publicCode || input.orderId)}`), { editProposal: proposal, updatedAt: FieldValue.serverTimestamp(), ...(input.items ? { items: nextItems } : {}), ...(catalogData && (input.items || input.fulfillment) ? { pricing: { totalCents: nextPricing.totalCents } } : {}), ...(input.fulfillment ? { fulfillment: { mode: finalFulfillment.mode } } : {}) }, { merge: true });
   });
@@ -608,7 +666,7 @@ export const finalizeOrderEdit = onCall({ region, timeoutSeconds: 15, memory: '2
     if (!proposal || proposal.status !== decision) throw new HttpsError('failed-precondition', 'A decisão do cliente ainda não foi registrada.');
     const common = { customerEditApproval: { ...approval, status: decision, decidedAt: FieldValue.serverTimestamp() }, updatedAt: FieldValue.serverTimestamp() };
     if (decision === 'REJECTED') {
-      transaction.update(orderRef, { ...common, customer: approval.previous.customer, notes: approval.previous.notes, items: approval.previous.items, pricing: approval.previous.pricing, fulfillment: approval.previous.fulfillment, payment: approval.previous.payment });
+      transaction.update(orderRef, { ...common, customer: approval.previous.customer, notes: approval.previous.notes, items: approval.previous.items, pricing: approval.previous.pricing, fulfillment: approval.previous.fulfillment, payment: approval.previous.payment, pricingVerification: approval.previous.pricingVerification ?? FieldValue.delete() });
       transaction.set(publicRef, { items: proposal.before.items, pricing: proposal.before.pricing, fulfillment: proposal.before.fulfillment, editProposal: { ...proposal, status: 'REJECTED', respondedAt: FieldValue.serverTimestamp() }, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
     } else {
       transaction.update(orderRef, common);
@@ -1038,6 +1096,7 @@ export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
     const order = await transaction.get(orderRef);
     if (!order.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
     if (order.data()?.status !== 'OUT_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'O pedido não está em rota.');
+    if (order.data()?.pricingVerification?.status !== 'VERIFIED' || order.data()?.pricingVerification?.source !== 'SERVER') throw new HttpsError('failed-precondition', 'A loja precisa validar os preços do pedido antes da confirmação. Peça ajuda à loja.');
     const totalCents = Number(order.data()?.pricing?.totalCents ?? 0);
     if (!Number.isSafeInteger(totalCents) || totalCents <= 0) throw new HttpsError('failed-precondition', 'O pedido precisa ter um total válido para ser concluído.');
     const control = await transaction.get(db.doc('cashControl/main'));

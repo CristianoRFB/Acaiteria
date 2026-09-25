@@ -48,7 +48,7 @@ async function createArrivedCashDelivery(driverId: string) {
   const deliveryId = `delivery-${orderId}`;
   const publicCode = `public-${randomUUID()}`;
   const code = '4827';
-  await db.doc(`orders/${orderId}`).set({ status: 'OUT_FOR_DELIVERY', orderNumber: '#QA-1', publicCode, fulfillment: { mode: 'DELIVERY' }, pricing: { totalCents: 2450 }, payment: { method: 'CASH' }, customer: { name: 'Cliente teste' }, updatedAt: new Date() });
+  await db.doc(`orders/${orderId}`).set({ status: 'OUT_FOR_DELIVERY', orderNumber: '#QA-1', publicCode, fulfillment: { mode: 'DELIVERY' }, pricing: { subtotalCents: 2450, deliveryFeeCents: 0, totalCents: 2450 }, pricingVerification: { status: 'VERIFIED', source: 'SERVER' }, payment: { method: 'CASH' }, customer: { name: 'Cliente teste' }, updatedAt: new Date() });
   await db.doc(`publicOrders/${publicCode}`).set({ publicCode, orderNumber: '#QA-1', status: 'OUT_FOR_DELIVERY', deliveryStatus: 'ARRIVED', deliveryCode: code, deliveryCodeHint: `${code.slice(0, 2)}••` });
   await db.doc(`deliveries/${deliveryId}`).set({ orderId, orderNumber: '#QA-1', driverId, driverIds: [driverId], status: 'ARRIVED', customerName: 'Cliente teste', totalCents: 2450 });
   await db.doc(`deliverySecrets/${deliveryId}`).set({ deliveryId, codeHash: createHash('sha256').update(code).digest('hex'), failedCodeAttempts: 0, failedCodeWindowStartedAtMs: Date.now(), failedCodeLockedUntilMs: 0 });
@@ -107,6 +107,16 @@ afterEach(async () => {
 });
 
 describe('delivery operations in Firebase Emulator Suite', () => {
+  it('does not confirm or financially complete an order whose price has no server verification', async () => {
+    const orderId = `order-${randomUUID()}`;
+    await db.doc(`orders/${orderId}`).set({ status: 'NEW', orderNumber: '#QA-UNVERIFIED', pricing: { subtotalCents: 1, deliveryFeeCents: 0, totalCents: 9999999 }, fulfillment: { mode: 'PICKUP' } });
+    const response = await call('updateOrderStatus', adminToken, { orderId, status: 'CONFIRMED' });
+    expect(response.status).not.toBe(200);
+    expect(response.body.error?.message).toMatch(/preços.*validados/i);
+    expect((await db.doc(`orders/${orderId}`).get()).data()?.status).toBe('NEW');
+    expect((await db.doc(`financeEntries/order-${orderId}`).get()).exists).toBe(false);
+  });
+
   it('serializes two admins assigning the same ready order and accepts only one winner', async () => {
     const fixture = await createReadyDelivery();
     const secondDriver = await createSignedInUser('driver', `qa-driver-race-${randomUUID()}@example.test`);

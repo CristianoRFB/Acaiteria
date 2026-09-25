@@ -17,7 +17,6 @@ vi.mock('@/components/providers', () => ({
 
 vi.mock('@/components/public-header', () => ({ PublicHeader: () => null }));
 vi.mock('@/lib/firebase/client', () => ({ getFirebaseClient: vi.fn(), hasFirebaseConfig: false }));
-vi.mock('@/lib/direct-orders', () => ({ createOrderDirect: vi.fn() }));
 vi.mock('@/shared/domain', () => ({
   calculateCartPreview: () => ({ items: [], subtotalCents: 0 }),
   calculateDeliveryFee: () => 0,
