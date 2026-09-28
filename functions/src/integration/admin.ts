@@ -7,10 +7,12 @@ import { configuredMode, providerFor } from './provider.js';
 import { processIntegration } from './service.js';
 
 if (!getApps().length) initializeApp();
-const options = { region: 'southamerica-east1', enforceAppCheck: process.env.ENFORCE_APP_CHECK === 'true' };
+const options = { region: 'southamerica-east1', enforceAppCheck: process.env.FUNCTIONS_EMULATOR !== 'true' };
 async function authorize(uid?: string) {
   if (!uid) throw new HttpsError('unauthenticated', 'Entre no painel.');
-  if ((await getFirestore().doc(`users/${uid}`).get()).data()?.role !== 'admin') throw new HttpsError('permission-denied', 'Somente administradores.');
+  const userSnapshot = await getFirestore().doc(`users/${uid}`).get();
+  const user = userSnapshot.data();
+  if (!userSnapshot.exists || user?.active === false || user?.role !== 'admin') throw new HttpsError('permission-denied', 'Somente administradores ativos.');
 }
 const code = z.string().trim().min(1).max(120).refine((value) => [...value].every((char) => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127), 'Código contém caracteres de controle.');
 const codes = z.record(z.string().min(1).max(220), code);

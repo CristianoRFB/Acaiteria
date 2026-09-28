@@ -14,6 +14,7 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/components/providers';
+import { DriverBottomNav } from '@/components/driver-bottom-nav';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import {
@@ -95,7 +96,7 @@ export default function DriverDeliveryPage() {
     );
   if (!delivery)
     return (
-      <main className="min-h-screen bg-[#f8f7ff] p-5">
+      <main className="min-h-screen bg-[#f8f7ff] p-5 pb-[calc(6rem+env(safe-area-inset-bottom))]">
         <a href="/entregador" className="font-bold text-[#6f2bc5]">
           ← Voltar
         </a>
@@ -105,6 +106,7 @@ export default function DriverDeliveryPage() {
             Ela pode ter sido cancelada ou atribuída a outro entregador.
           </p>
         </div>
+        <DriverBottomNav active="ORDERS" />
       </main>
     );
   const address = delivery.address
@@ -122,7 +124,7 @@ export default function DriverDeliveryPage() {
   const canArrive = delivery.status === 'ON_THE_WAY';
   const canConfirm = delivery.status === 'ARRIVED';
   return (
-    <main className="min-h-screen bg-[#f8f7ff] pb-8 text-[#171521]">
+    <main className="min-h-screen bg-[#f8f7ff] pb-[calc(6rem+env(safe-area-inset-bottom))] text-[#171521]">
       <header className="border-b border-[#e5e1ed] bg-white px-5 py-5">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <a
@@ -370,6 +372,7 @@ export default function DriverDeliveryPage() {
           )}
         </div>
       </div>
+      <DriverBottomNav active="ORDERS" />
     </main>
   );
 }

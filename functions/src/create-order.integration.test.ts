@@ -6,8 +6,8 @@ import { processIntegration } from './integration/service.js';
 
 if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor' });
 const db = getFirestore();
-const functionsEndpoint = 'http://127.0.0.1:5001/demo-acai-mais-sabor/southamerica-east1';
-const authEndpoint = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key';
+const functionsEndpoint = `http://${process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001'}/demo-acai-mais-sabor/southamerica-east1`;
+const authEndpoint = `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`;
 const testPassword = 'Functions-Teste-2026!';
 let adminToken = '';
 const basePayload = { customer: { name: 'Cliente Integração', whatsapp: '17999999999' }, items: [{ productId: 'simple', sizeId: 'unico', quantity: 1, selections: [] }], fulfillment: { mode: 'PICKUP' }, payment: { method: 'PIX', needsChange: false }, clientPreviewTotalCents: 1800 };

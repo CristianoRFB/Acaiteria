@@ -26,7 +26,15 @@ const invalid = [];
 if (String(env.NEXT_PUBLIC_FIREBASE_PROJECT_ID).startsWith('demo-')) invalid.push('NEXT_PUBLIC_FIREBASE_PROJECT_ID não pode ser um projeto demo');
 if (env.NEXT_PUBLIC_USE_FIREBASE_EMULATORS === 'true') invalid.push('NEXT_PUBLIC_USE_FIREBASE_EMULATORS deve ser false');
 if (env.NEXT_PUBLIC_USE_DEVELOPMENT_SEED === 'true') invalid.push('NEXT_PUBLIC_USE_DEVELOPMENT_SEED deve ser false');
-if (env.NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY === 'COLE_AQUI') invalid.push('substitua a chave de exemplo do App Check');
+if (String(env.NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY).trim().toUpperCase() === 'COLE_AQUI') invalid.push('substitua a chave de exemplo do App Check');
+
+try {
+  const firebaseProject = JSON.parse(fs.readFileSync('.firebaserc', 'utf8')).projects?.default;
+  if (!firebaseProject) invalid.push('.firebaserc precisa definir o projeto Firebase padrão');
+  else if (env.NEXT_PUBLIC_FIREBASE_PROJECT_ID && env.NEXT_PUBLIC_FIREBASE_PROJECT_ID !== firebaseProject) invalid.push('NEXT_PUBLIC_FIREBASE_PROJECT_ID precisa corresponder ao projeto padrão de .firebaserc');
+} catch {
+  invalid.push('não foi possível ler o projeto padrão de .firebaserc');
+}
 
 if (missing.length || invalid.length) {
   console.error('Configuração de produção incompleta.');

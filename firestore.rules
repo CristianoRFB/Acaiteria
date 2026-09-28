@@ -20,6 +20,7 @@ service cloud.firestore {
       allow write: if false;
     }
     match /cashControl/{id} { allow read: if isStaff(); allow write: if false; }
+    match /cashControlEvents/{id} { allow read: if isStaff(); allow write: if false; }
     match /cashRegisters/{id} { allow read: if isStaff(); allow write: if false; }
     match /cashMovements/{id} { allow read: if isStaff(); allow write: if false; }
     match /orders/{id} {

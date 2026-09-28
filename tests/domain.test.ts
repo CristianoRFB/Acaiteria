@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { developmentCatalog, developmentStoreConfig } from '../lib/development-seed';
-import { calculateCartPreview, calculateDeliveryFee, calculateItemPrice, formatBRL, formatNextOpening, getDeliveryEstimate, getNextOpening, getStoreAvailability, isStoreOpen, normalizeSelections, validateGroupSelection, type CatalogSnapshot, type StorePublicConfig } from '../shared/domain';
+import { calculateCartPreview, calculateDeliveryFee, calculateItemPrice, formatBRL, formatNextOpening, getCalendarDateKey, getDeliveryEstimate, getNextOpening, getStoreAvailability, isStoreOpen, normalizeSelections, shiftCalendarDateKey, validateGroupSelection, type CatalogSnapshot, type StorePublicConfig } from '../shared/domain';
 
 describe('motor de preços em centavos', () => {
   it('formata BRL sem usar float na persistência', () => expect(formatBRL(2350)).toContain('23,50'));
@@ -102,5 +102,13 @@ describe('adulteração', () => {
     expect(() => calculateItemPrice({ cartItemId: 'x', productId: 'agua-sem-gas', sizeId: 'unico', selections: [], quantity: 1 }, negative)).toThrow(/Preço/);
     const huge = { ...developmentCatalog, products: developmentCatalog.products.map((product) => product.id === 'agua-sem-gas' ? { ...product, sizes: product.sizes.map((size) => ({ ...size, basePriceCents: 6_000_000 })) } : product) };
     expect(() => calculateCartPreview([{ cartItemId: 'x', productId: 'agua-sem-gas', sizeId: 'unico', selections: [], quantity: 2 }], huge)).toThrow(/limite/);
+  });
+});
+
+describe('datas de operação', () => {
+  it('usa a data comercial do fuso da loja e atravessa mês, ano e ano bissexto', () => {
+    expect(getCalendarDateKey(new Date('2026-09-25T01:30:00.000Z'), 'America/Sao_Paulo')).toBe('2026-09-24');
+    expect(shiftCalendarDateKey('2026-01-01', -1)).toBe('2025-12-31');
+    expect(shiftCalendarDateKey('2024-03-01', -1)).toBe('2024-02-29');
   });
 });

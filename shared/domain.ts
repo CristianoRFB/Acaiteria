@@ -340,6 +340,26 @@ function getZonedParts(now: Date, timezone: string): { date: string; day: number
   };
 }
 
+export function getCalendarDateKey(value: Date, timezone: string): string {
+  if (!Number.isFinite(value.getTime())) return '';
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(value);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value ?? '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+export function shiftCalendarDateKey(dateKey: string, days: number): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey) || !Number.isInteger(days)) return '';
+  const date = new Date(`${dateKey}T00:00:00.000Z`);
+  if (!Number.isFinite(date.getTime())) return '';
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
 function timeToMinutes(value: string): number {
   const [hour, minute] = value.split(':').map(Number);
   return hour * 60 + minute;

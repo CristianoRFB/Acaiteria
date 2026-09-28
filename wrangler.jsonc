@@ -10,5 +10,20 @@
     "directory": "dist/client",
     "not_found_handling": "none",
     "binding": "ASSETS"
+  },
+  "observability": {
+    "enabled": true,
+    "redact_query_string": true,
+    // Public order-tracking codes are bearer tokens embedded in /pedido/[code].
+    // Keep invocation URLs and trace paths out of retained telemetry until that route is redesigned.
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0
+    }
   }
 }

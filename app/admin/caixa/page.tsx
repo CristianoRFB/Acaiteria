@@ -2,11 +2,13 @@
 
 import {
   collection,
+  doc,
   limit,
   onSnapshot,
   orderBy,
   query,
   Timestamp,
+  where,
 } from 'firebase/firestore';
 import {
   Banknote,
@@ -34,6 +36,7 @@ import {
   closeCashRegister,
   recordLocalSale,
   recordCashMovement,
+  reconcileCashRegisterControl,
 } from '@/lib/cash-register';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import { formatBRL } from '@/shared/domain';
@@ -86,6 +89,13 @@ function parseRequiredMoney(value: string, label: string) {
 export default function CashRegisterPage() {
   const { role } = useAuth();
   const [registers, setRegisters] = useState<CashRegister[]>([]);
+  const [openRegisters, setOpenRegisters] = useState<CashRegister[]>([]);
+  const [openRegisterId, setOpenRegisterId] = useState<string | null>(null);
+  const [openRegistersLoaded, setOpenRegistersLoaded] = useState(false);
+  const [cashControlLoaded, setCashControlLoaded] = useState(false);
+  const [openRegistersLoadFailed, setOpenRegistersLoadFailed] = useState(false);
+  const [cashControlLoadFailed, setCashControlLoadFailed] = useState(false);
+  const [controlEvents, setControlEvents] = useState<Array<Record<string, unknown> & { id: string }>>([]);
   const [movements, setMovements] = useState<CashMovement[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -106,6 +116,8 @@ export default function CashRegisterPage() {
   const [localSaleNote, setLocalSaleNote] = useState('');
   const [countedCash, setCountedCash] = useState('');
   const [closingNote, setClosingNote] = useState('');
+  const [reconciliationReason, setReconciliationReason] = useState('');
+  const [reconciliationConfirmed, setReconciliationConfirmed] = useState(false);
   const [historyDate, setHistoryDate] = useState('');
   const [historyStatus, setHistoryStatus] = useState<'ALL' | 'OPEN' | 'CLOSED'>(
     'ALL',
@@ -113,6 +125,7 @@ export default function CashRegisterPage() {
   const pendingCashRequest = useRef<{ fingerprint: string; id: string } | null>(
     null,
   );
+  const pendingReconciliation = useRef<{ fingerprint: string; id: string } | null>(null);
 
   function cashRequestId(operation: string, input: Record<string, unknown>) {
     const fingerprint = JSON.stringify({ operation, ...input });
@@ -126,6 +139,10 @@ export default function CashRegisterPage() {
   useEffect(() => {
     if (!role) return undefined;
     setLoading(true);
+    setOpenRegistersLoaded(false);
+    setCashControlLoaded(false);
+    setOpenRegistersLoadFailed(false);
+    setCashControlLoadFailed(false);
     const db = getFirebaseClient().db;
     const stopRegisters = onSnapshot(
       query(collection(db, 'cashRegisters'), orderBy('openedAt', 'desc'), limit(100)),
@@ -154,21 +171,54 @@ export default function CashRegisterPage() {
         ),
       () => setError('Não foi possível carregar as movimentações do caixa.'),
     );
+    const stopOpenRegisters = onSnapshot(
+      query(collection(db, 'cashRegisters'), where('status', '==', 'OPEN'), limit(2)),
+      (snapshot) => {
+        setOpenRegisters(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as CashRegister));
+        setOpenRegistersLoaded(true);
+      },
+      () => {
+        setOpenRegistersLoadFailed(true);
+        setError('Não foi possível conferir se há outros caixas abertos. A abertura ficará bloqueada até atualizar a tela.');
+        setOpenRegistersLoaded(true);
+      },
+    );
+    const stopControl = onSnapshot(
+      doc(db, 'cashControl', 'main'),
+      (snapshot) => {
+        setOpenRegisterId(String(snapshot.data()?.openRegisterId ?? '') || null);
+        setCashControlLoaded(true);
+      },
+      () => {
+        setCashControlLoadFailed(true);
+        setError('Não foi possível conferir o vínculo do caixa atual. Atualize a tela antes de operar.');
+        setCashControlLoaded(true);
+      },
+    );
+    const stopControlEvents = onSnapshot(
+      query(collection(db, 'cashControlEvents'), orderBy('createdAt', 'desc'), limit(10)),
+      (snapshot) => setControlEvents(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))),
+      () => setError('Não foi possível carregar as reconciliações auditáveis do Caixa.'),
+    );
     return () => {
       stopRegisters();
       stopMovements();
+      stopOpenRegisters();
+      stopControl();
+      stopControlEvents();
     };
   }, [role]);
 
   const current = useMemo(
-    () =>
-      registers
-        .filter((register) => register.status === 'OPEN')
-        .sort((a, b) =>
-          formatWhen(b.openedAt).localeCompare(formatWhen(a.openedAt)),
-        )[0] ?? null,
-    [registers],
+    () => openRegistersLoaded && cashControlLoaded && !openRegistersLoadFailed && !cashControlLoadFailed && openRegisters.length === 1 && openRegisters[0]?.id === openRegisterId
+      ? openRegisters[0]
+      : null,
+    [cashControlLoaded, cashControlLoadFailed, openRegisterId, openRegisters, openRegistersLoadFailed, openRegistersLoaded],
   );
+  const cashIntegrityIssue = openRegisters.length > 1
+    || (openRegisters.length === 1 && openRegisters[0]?.id !== openRegisterId);
+  const cashStateLoaded = openRegistersLoaded && cashControlLoaded;
+  const cashStateError = openRegistersLoadFailed || cashControlLoadFailed;
   const currentMovements = useMemo(
     () =>
       current
@@ -215,6 +265,10 @@ export default function CashRegisterPage() {
   async function handleOpen(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     resetFeedback();
+    if (!cashStateLoaded || cashStateError || openRegisters.length > 0) {
+      setError('O estado do Caixa mudou ou ainda não pôde ser conferido. Atualize a tela antes de abrir outro turno.');
+      return;
+    }
     setBusy(true);
     try {
       const amount = openingAmount.trim() ? parseBRLToCents(openingAmount) : -1;
@@ -346,6 +400,44 @@ export default function CashRegisterPage() {
       setBusy(false);
     }
   }
+  async function handleReconcile(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    resetFeedback();
+    if (role !== 'admin') {
+      setError('Somente um administrador pode restaurar o vínculo do Caixa.');
+      return;
+    }
+    if (openRegisters.length !== 1) {
+      setError('A reconciliação exige exatamente um caixa aberto.');
+      return;
+    }
+    if (!reconciliationConfirmed || reconciliationReason.trim().length < 10) {
+      setError('Confira o saldo físico com a gerência e informe um motivo com pelo menos 10 caracteres.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const input = { registerId: openRegisters[0].id, reason: reconciliationReason.trim() };
+      const fingerprint = JSON.stringify(input);
+      if (pendingReconciliation.current?.fingerprint !== fingerprint) {
+        pendingReconciliation.current = { fingerprint, id: crypto.randomUUID() };
+      }
+      await reconcileCashRegisterControl({
+        ...input,
+        clientRequestId: pendingReconciliation.current.id,
+        physicalCashConfirmed: true,
+        managerAuthorized: true,
+      });
+      pendingReconciliation.current = null;
+      setReconciliationReason('');
+      setReconciliationConfirmed(false);
+      setNotice('Vínculo do caixa restaurado. O histórico da reconciliação foi registrado.');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível reconciliar o vínculo do Caixa.');
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <AdminShell>
@@ -362,7 +454,15 @@ export default function CashRegisterPage() {
             fechar.
           </p>
         </div>
-        {current ? (
+        {cashStateError || !cashStateLoaded ? (
+          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-black text-amber-900">
+            <Info className="size-4" /> Caixa não conferido
+          </span>
+        ) : cashIntegrityIssue ? (
+          <span className="inline-flex w-fit items-center gap-2 rounded-full bg-amber-100 px-4 py-2 text-sm font-black text-amber-900">
+            <Info className="size-4" /> Caixa requer conferência
+          </span>
+        ) : current ? (
           <span className="inline-flex w-fit items-center gap-2 rounded-full bg-emerald-50 px-4 py-2 text-sm font-black text-emerald-700">
             <CheckCircle2 className="size-4" /> Caixa aberto
           </span>
@@ -388,7 +488,53 @@ export default function CashRegisterPage() {
           {notice}
         </p>
       )}
-      {!current && (
+      {cashStateError && (
+        <section className="mt-6 rounded-[26px] border border-amber-300 bg-amber-50 p-5 text-sm font-semibold leading-relaxed text-amber-950" role="alert">
+          Não foi possível validar o estado atual do Caixa. Abertura, movimentações e reconciliação ficam indisponíveis até recuperar essa leitura. Verifique a conexão e atualize a tela.
+        </section>
+      )}
+      {!cashStateError && cashIntegrityIssue && (
+        <section className="mt-6 rounded-[26px] border border-amber-300 bg-amber-50 p-5 shadow-sm sm:p-7" role="alert">
+          <p className="text-xs font-black uppercase tracking-wider text-amber-900">Operação bloqueada por segurança</p>
+          <h2 className="mt-1 text-xl font-black text-[#241329]">Há caixa aberto sem vínculo único</h2>
+          {openRegisters.length > 1 ? (
+            <p className="mt-2 text-sm leading-relaxed text-amber-950">
+              Foram encontrados pelo menos dois caixas abertos. Não escolha um automaticamente: interrompa as operações, confira os valores físicos e peça à gerência para decidir manualmente qual turno deve permanecer aberto.
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-sm leading-relaxed text-amber-950">
+                Caixa {openRegisters[0]?.id} · saldo esperado {formatBRL(openRegisters[0]?.expectedCashCents ?? openRegisters[0]?.initialBalanceCents ?? 0)}. Antes de restaurar o vínculo, confirme o saldo físico e obtenha autorização da gerência. A reconciliação não altera saldo nem lançamentos.
+              </p>
+              {role === 'admin' ? (
+                <form onSubmit={handleReconcile} className="mt-4 grid gap-3">
+                  <AdminTextarea
+                    label="Motivo registrado no histórico"
+                    name="reconciliationReason"
+                    value={reconciliationReason}
+                    onChange={(event) => setReconciliationReason(event.target.value)}
+                    placeholder="Ex.: conferência física de R$ 120,00 e autorização da gerência no turno da manhã."
+                    required
+                  />
+                  <label className="flex items-start gap-3 rounded-2xl border border-amber-300 bg-white p-4 text-sm font-semibold text-[#442c13]">
+                    <input type="checkbox" checked={reconciliationConfirmed} onChange={(event) => setReconciliationConfirmed(event.target.checked)} className="mt-1 size-4 accent-[#82204f]" />
+                    <span>Confirmo que conferi o valor físico e tenho autorização da gerência para restaurar somente o vínculo deste caixa.</span>
+                  </label>
+                  <Button type="submit" disabled={busy || !reconciliationConfirmed || reconciliationReason.trim().length < 10} className="min-h-11 w-full rounded-full bg-[#82204f] font-black text-white sm:w-fit sm:px-6">
+                    {busy ? <Loader2 className="animate-spin" /> : <CheckCircle2 />} Restaurar vínculo com auditoria
+                  </Button>
+                </form>
+              ) : (
+                <p className="mt-4 rounded-2xl bg-white p-4 text-sm font-bold text-amber-950">Peça a um administrador para revisar o caixa. Nenhuma movimentação pode ser feita enquanto o vínculo estiver inconsistente.</p>
+              )}
+            </>
+          )}
+        </section>
+      )}
+      {!cashStateLoaded && (
+        <p className="mt-7 rounded-2xl bg-white p-5 text-sm font-semibold text-[#826a75]">Conferindo o vínculo e os caixas abertos…</p>
+      )}
+      {cashStateLoaded && !cashStateError && !cashIntegrityIssue && openRegisters.length === 0 && (
         <section className="mt-7 rounded-[26px] bg-[#351924] p-6 text-white shadow-sm sm:p-8">
           <div className="flex items-start gap-4">
             <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#d7f04a] text-[#351924]">
@@ -924,6 +1070,29 @@ export default function CashRegisterPage() {
                 </p>
               </div>
             )}
+          </div>
+        </section>
+      )}
+      {controlEvents.length > 0 && (
+        <section className="mt-7 rounded-[26px] bg-white p-5 shadow-sm sm:p-7">
+          <div className="flex items-center gap-3">
+            <History className="size-5 text-[#82204f]" />
+            <div>
+              <p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Trilha imutável</p>
+              <h2 className="mt-1 text-xl font-black">Reconciliações do Caixa</h2>
+            </div>
+          </div>
+          <div className="mt-4 overflow-hidden rounded-2xl border border-[#82204f]/10">
+            {controlEvents.map((event) => (
+              <article key={event.id} className="grid gap-1 border-b border-[#82204f]/8 px-4 py-3 last:border-0 sm:grid-cols-[1fr_180px] sm:items-start">
+                <div>
+                  <strong className="block text-sm">Vínculo restaurado · Caixa {String(event.registerId ?? '—')}</strong>
+                  <span className="block text-sm text-[#826a75]">{String(event.reason ?? 'Motivo não informado')}</span>
+                  <small className="text-xs text-[#826a75]">Vínculo anterior: {String(event.previousOpenRegisterId ?? 'nenhum')} · {String(event.actorEmail ?? event.actorUid ?? 'administrador')}</small>
+                </div>
+                <span className="text-xs font-semibold text-[#826a75] sm:text-right">{formatWhen(event.createdAt)}</span>
+              </article>
+            ))}
           </div>
         </section>
       )}

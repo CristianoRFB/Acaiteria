@@ -33,7 +33,9 @@ import { canTransitionDelivery, deliveryStatusMessage, recordDeliveryCodeFailure
 if (!getApps().length) initializeApp();
 const db = getFirestore();
 const region = 'southamerica-east1';
-const enforceAppCheck = process.env.ENFORCE_APP_CHECK === 'true';
+// App Check is mandatory in production. Firebase's Emulator Suite bypasses this
+// requirement so local integration tests can exercise callable functions.
+const enforceAppCheck = process.env.FUNCTIONS_EMULATOR !== 'true';
 
 const selectionSchema = z.object({ groupId: z.string().min(1).max(100), items: z.array(z.object({ modifierId: z.string().min(1).max(100), quantity: z.number().int().min(1).max(20) })).max(60) });
 const itemSchema = z.object({ productId: z.string().min(1).max(100), sizeId: z.string().min(1).max(100), quantity: z.number().int().min(1).max(20), selections: z.array(selectionSchema).max(30), notes: z.string().trim().max(300).optional() });
@@ -276,9 +278,12 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
       }
       const control = await transaction.get(controlRef);
       const openId = String(control.data()?.openRegisterId ?? '');
-      if (openId) {
-        const openRegister = await transaction.get(db.doc(`cashRegisters/${openId}`));
-        if (openRegister.exists && openRegister.data()?.status === 'OPEN') throw new HttpsError('failed-precondition', 'Já existe um caixa aberto.');
+      const openRegisters = await transaction.get(db.collection('cashRegisters').where('status', '==', 'OPEN').limit(2));
+      if (!openRegisters.empty) {
+        const linkedOpen = openId && openRegisters.docs.some((item) => item.id === openId);
+        if (openRegisters.size > 1) throw new HttpsError('failed-precondition', 'Há mais de um caixa aberto. A abertura foi bloqueada; confira os caixas e faça a reconciliação manual.');
+        if (!linkedOpen) throw new HttpsError('failed-precondition', 'Há um caixa aberto sem vínculo válido. A abertura foi bloqueada até a reconciliação auditável.');
+        throw new HttpsError('failed-precondition', 'Já existe um caixa aberto.');
       }
       const now = FieldValue.serverTimestamp();
       transaction.create(registerRef, { status: 'OPEN', operatorUid: uid, operatorEmail: email, openingRequestId: input.clientRequestId, requestFingerprint, openingDate: input.openingDate, initialBalanceCents: input.initialBalanceCents, expectedCashCents: input.initialBalanceCents, note: input.note?.trim() || null, openedAt: now, updatedAt: now });
@@ -418,6 +423,53 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
     transaction.set(controlRef, { openRegisterId: null, updatedAt: now }, { merge: true });
   });
   return { differenceCents };
+});
+
+const reconcileCashControlSchema = z.object({
+  registerId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  clientRequestId: z.string().regex(/^[A-Za-z0-9_-]{1,128}$/),
+  reason: z.string().trim().min(10).max(300),
+  physicalCashConfirmed: z.literal(true),
+  managerAuthorized: z.literal(true),
+});
+export const reconcileCashRegisterControl = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  await requireRole(request.auth?.uid, ['admin']);
+  const parsed = reconcileCashControlSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Dados da reconciliação inválidos.');
+  const { registerId, clientRequestId, reason } = parsed.data;
+  const eventRef = db.doc(`cashControlEvents/${clientRequestId}`);
+  const controlRef = db.doc('cashControl/main');
+  const registerRef = db.doc(`cashRegisters/${registerId}`);
+  const fingerprint = JSON.stringify({ registerId, reason });
+  const uid = request.auth!.uid;
+  const email = typeof request.auth?.token.email === 'string' ? request.auth.token.email : null;
+  let idempotent = false;
+
+  await db.runTransaction(async (transaction) => {
+    const event = await transaction.get(eventRef);
+    if (event.exists) {
+      if (event.data()?.requestFingerprint !== fingerprint) throw new HttpsError('already-exists', 'Esta reconciliação já foi registrada com outros dados. Consulte o histórico do Caixa.');
+      idempotent = true;
+      return;
+    }
+    const control = await transaction.get(controlRef);
+    const register = await transaction.get(registerRef);
+    const openRegisters = await transaction.get(db.collection('cashRegisters').where('status', '==', 'OPEN').limit(2));
+    if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'O caixa selecionado não está aberto. Atualize a tela e confira o histórico.');
+    if (openRegisters.size !== 1 || openRegisters.docs[0]?.id !== registerId) throw new HttpsError('failed-precondition', 'A reconciliação automática exige exatamente um caixa aberto. Com vários caixas, interrompa a operação e confira os saldos com a gerência.');
+    const previousOpenRegisterId = String(control.data()?.openRegisterId ?? '') || null;
+    if (previousOpenRegisterId === registerId) throw new HttpsError('failed-precondition', 'Este caixa já está vinculado corretamente. Nenhuma alteração foi feita.');
+
+    const now = FieldValue.serverTimestamp();
+    transaction.set(controlRef, { openRegisterId: registerId, updatedAt: now }, { merge: true });
+    transaction.create(eventRef, {
+      type: 'REGISTER_LINK_RESTORED', registerId, previousOpenRegisterId, reason,
+      physicalCashConfirmed: true, managerAuthorized: true,
+      requestFingerprint: fingerprint, actorUid: uid, actorEmail: email, createdAt: now,
+    });
+  });
+  logger.info('reconcileCashRegisterControl completed', { registerId, actorUid: uid, idempotent });
+  return { ok: true, idempotent };
 });
 
 const verifyOrderPricingSchema = z.object({ orderId: z.string().min(1).max(128) });
@@ -578,6 +630,8 @@ export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory:
   const parsed = refundOrderSchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Motivo de estorno inválido.');
   const { orderId, reason } = parsed.data;
+  const requestFingerprint = JSON.stringify({ orderId, reason });
+  let idempotent = false;
   await db.runTransaction(async (transaction) => {
     const orderRef = db.doc(`orders/${orderId}`);
     const saleRef = db.doc(`cashMovements/order-${orderId}`);
@@ -589,11 +643,47 @@ export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory:
     const refund = await transaction.get(refundRef);
     const finance = await transaction.get(financeRef);
     if (!snapshot.exists) throw new HttpsError('not-found', 'Pedido não encontrado.');
-    if (snapshot.data()?.status !== 'COMPLETED') throw new HttpsError('failed-precondition', 'Somente pedidos concluídos podem receber estorno.');
     if (snapshot.data()?.pricingVerification?.status !== 'VERIFIED' || snapshot.data()?.pricingVerification?.source !== 'SERVER') throw new HttpsError('failed-precondition', 'Este pedido não tem preços validados pelo servidor; revise-o antes de estornar.');
     if (snapshot.data()?.integration?.provider === 'saipos') throw new HttpsError('failed-precondition', 'Este pedido deve ser estornado no Saipos.');
     if (!sale.exists) throw new HttpsError('failed-precondition', 'A venda deste pedido não está registrada no Caixa.');
-    if (refund.exists) return;
+    const data = snapshot.data()!;
+    const saleData = sale.data()!;
+    const amountCents = Number(saleData.amountCents ?? data.pricing?.totalCents ?? 0);
+    const cashAmountCents = Number(saleData.cashAmountCents ?? 0);
+    const paymentMethod = String(saleData.paymentMethod ?? 'OTHER');
+    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || !Number.isSafeInteger(cashAmountCents) || cashAmountCents < 0 || cashAmountCents > amountCents) throw new HttpsError('failed-precondition', 'A venda possui valores inválidos para estorno.');
+
+    if (refund.exists) {
+      const refundData = refund.data()!;
+      const financeData = finance.data();
+      const matchingFingerprint = refundData.requestFingerprint === requestFingerprint;
+      const matchingLegacyReason = !refundData.requestFingerprint && refundData.note === `Estorno: ${reason}`;
+      const matchesOrder = data.status === 'CANCELLED' && data.cancellationReason === reason;
+      const matchesRefund = (matchingFingerprint || matchingLegacyReason)
+        && matchesOrder
+        && refundData.sourceOrderId === orderId
+        && refundData.orderNumber === data.orderNumber
+        && Number(refundData.amountCents) === amountCents
+        && Number(refundData.cashAmountCents) === cashAmountCents
+        && refundData.paymentMethod === paymentMethod
+        && typeof refundData.registerId === 'string' && refundData.registerId.length > 0;
+      const matchesFinance = finance.exists
+        && financeData?.kind === 'EXPENSE'
+        && financeData.category === 'Estornos'
+        && financeData.status === 'PAID'
+        && financeData.description === `Estorno do pedido ${data.orderNumber}`
+        && financeData.orderNumber === data.orderNumber
+        && Number(financeData.amountCents) === amountCents
+        && financeData.sourceOrderId === orderId
+        && financeData.notes === reason
+        && financeData.paymentMethod === paymentMethod;
+      if (!matchesRefund || !matchesFinance) throw new HttpsError('already-exists', 'Já existe um estorno, mas ele não corresponde integralmente a este pedido, motivo e lançamento financeiro. Confira o histórico antes de qualquer nova ação.');
+      idempotent = true;
+      return;
+    }
+
+    if (data.status !== 'COMPLETED') throw new HttpsError('failed-precondition', 'Somente pedidos concluídos podem receber estorno.');
+    if (finance.exists) throw new HttpsError('failed-precondition', 'Há um lançamento de estorno sem o movimento correspondente no Caixa. Confira a conciliação antes de continuar.');
     const control = await transaction.get(controlRef);
     const registerId = String(control.data()?.openRegisterId ?? '');
     if (!registerId) throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar o estorno.');
@@ -601,21 +691,16 @@ export const refundCompletedOrder = onCall({ region, timeoutSeconds: 15, memory:
     if (!register.exists || register.data()?.status !== 'OPEN') throw new HttpsError('failed-precondition', 'Abra o Caixa antes de registrar o estorno.');
     const expected = Number(register.data()?.expectedCashCents ?? register.data()?.initialBalanceCents ?? 0);
     if (!Number.isSafeInteger(expected) || expected < 0) throw new HttpsError('failed-precondition', 'O saldo esperado do Caixa está inválido. Revise as movimentações antes de registrar o estorno.');
-    const data = snapshot.data()!;
-    const saleData = sale.data()!;
-    const amountCents = Number(saleData.amountCents ?? data.pricing?.totalCents ?? 0);
-    const cashAmountCents = Number(saleData.cashAmountCents ?? 0);
-    if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || !Number.isSafeInteger(cashAmountCents) || cashAmountCents < 0) throw new HttpsError('failed-precondition', 'A venda possui valores inválidos para estorno.');
+    if (cashAmountCents > expected) throw new HttpsError('failed-precondition', 'O estorno em dinheiro supera o saldo esperado do caixa.');
     const now = FieldValue.serverTimestamp();
     transaction.update(orderRef, { status: 'CANCELLED', cancelledAt: now, cancellationReason: reason, updatedAt: now, statusHistory: FieldValue.arrayUnion({ status: 'CANCELLED', at: Timestamp.now(), actorUid: request.auth!.uid, actorRole: role, reason }) });
     transaction.set(db.doc(`publicOrders/${String(data.publicCode || orderId)}`), { status: 'CANCELLED', statusMessage: getCustomerOrderStatusMessage('CANCELLED', reason), updatedAt: now }, { merge: true });
-    transaction.create(refundRef, { registerId, type: 'REFUND', direction: 'OUT', amountCents, cashAmountCents, paymentMethod: saleData.paymentMethod ?? 'OTHER', orderNumber: data.orderNumber, sourceOrderId: orderId, operatorUid: request.auth!.uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: `Estorno: ${reason}`, createdAt: now });
-    if (!finance.exists) transaction.create(financeRef, { kind: 'EXPENSE', category: 'Estornos', description: `Estorno do pedido ${data.orderNumber}`, amountCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: data.orderNumber, sourceOrderId: orderId, paymentMethod: saleData.paymentMethod ?? 'OTHER', notes: reason, createdAt: now, updatedAt: now });
-    if (cashAmountCents > expected) throw new HttpsError('failed-precondition', 'O estorno em dinheiro supera o saldo esperado do caixa.');
+    transaction.create(refundRef, { registerId, type: 'REFUND', direction: 'OUT', amountCents, cashAmountCents, paymentMethod, orderNumber: data.orderNumber, sourceOrderId: orderId, requestFingerprint, operatorUid: request.auth!.uid, operatorEmail: typeof request.auth?.token.email === 'string' ? request.auth.token.email : null, note: `Estorno: ${reason}`, createdAt: now });
+    transaction.create(financeRef, { kind: 'EXPENSE', category: 'Estornos', description: `Estorno do pedido ${data.orderNumber}`, amountCents, date: new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date()), status: 'PAID', orderNumber: data.orderNumber, sourceOrderId: orderId, paymentMethod, notes: reason, createdAt: now, updatedAt: now });
     transaction.update(register.ref, { expectedCashCents: expected - cashAmountCents, lastMovementAt: now, updatedAt: now });
   });
-  logger.info('refundCompletedOrder completed', { orderId, actorUid: request.auth?.uid });
-  return { ok: true };
+  logger.info('refundCompletedOrder completed', { orderId, actorUid: request.auth?.uid, idempotent });
+  return { ok: true, idempotent };
 });
 
 const updateDetailsSchema = z.object({
@@ -833,6 +918,31 @@ export const updateDeliveryDriver = onCall({ region, timeoutSeconds: 20, memory:
     if (cause instanceof HttpsError) throw cause;
     throw new HttpsError('internal', 'Não foi possível salvar os dados do motoboy.');
   }
+  return { ok: true };
+});
+
+const updateDriverContactSchema = z.object({
+  name: z.string().trim().min(2).max(80),
+  phone: z.string().trim().min(8).max(30),
+});
+export const updateDriverContact = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
+  const uid = request.auth?.uid;
+  await requireRole(uid, ['driver']);
+  const parsed = updateDriverContactSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Confira seu nome e telefone.');
+  const { name, phone } = parsed.data;
+  const digits = phone.replace(/\D/g, '');
+  if (![10, 11, 12, 13].includes(digits.length)) throw new HttpsError('invalid-argument', 'Informe um telefone válido com DDD.');
+
+  const driverRef = db.doc(`deliveryDrivers/${uid}`);
+  const userRef = db.doc(`users/${uid}`);
+  await db.runTransaction(async (transaction) => {
+    const driver = await transaction.get(driverRef);
+    if (!driver.exists || driver.data()?.enabled !== true) throw new HttpsError('permission-denied', 'Seu acesso de entregador está desativado.');
+    const now = FieldValue.serverTimestamp();
+    transaction.update(driverRef, { name, phone, updatedAt: now });
+    transaction.set(userRef, { name, phone, updatedAt: now }, { merge: true });
+  });
   return { ok: true };
 });
 

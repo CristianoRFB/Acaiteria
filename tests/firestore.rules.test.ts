@@ -32,6 +32,7 @@ beforeAll(async () => {
     await setDoc(doc(db, 'financeEntries', 'sensitive'), { kind: 'INCOME', amountCents: 12345, status: 'PAID' });
     await setDoc(doc(db, 'cashRegisters', 'open'), { status: 'OPEN', expectedCashCents: 1000 });
     await setDoc(doc(db, 'cashMovements', 'movement'), { registerId: 'open', type: 'SUPPLY', direction: 'IN', amountCents: 100, cashAmountCents: 100 });
+    await setDoc(doc(db, 'cashControlEvents', 'event'), { type: 'REGISTER_LINK_RESTORED', registerId: 'open', reason: 'Conferência do turno' });
   });
 }, 30000);
 afterAll(() => env.cleanup());
@@ -63,6 +64,8 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'publicOrders', 'staff-forgery'), { status: 'COMPLETED' }));
     await assertFails(setDoc(doc(db, 'cashRegisters', 'open'), { expectedCashCents: 999999 }, { merge: true }));
     await assertFails(setDoc(doc(db, 'cashMovements', 'forged'), { registerId: 'open', type: 'SALE', direction: 'IN', amountCents: 100, cashAmountCents: 100 }));
+    await assertSucceeds(getDoc(doc(db, 'cashControlEvents', 'event')));
+    await assertFails(setDoc(doc(db, 'cashControlEvents', 'forged'), { registerId: 'open', reason: 'Fraude' }));
     await assertFails(setDoc(doc(db, 'financeEntries', 'order-forged'), { kind: 'INCOME', status: 'PAID', sourceOrderId: 'secret', amountCents: 100 }));
   });
   it('entregador só lê seu perfil e suas entregas, sem escrita direta', async () => {
@@ -86,6 +89,7 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(getDoc(doc(db, 'financeEntries', 'sensitive')));
     await assertFails(getDoc(doc(db, 'cashRegisters', 'open')));
     await assertFails(getDoc(doc(db, 'cashMovements', 'movement')));
+    await assertFails(getDoc(doc(db, 'cashControlEvents', 'event')));
     await assertFails(setDoc(doc(db, 'users', 'driver-uid'), { role: 'admin' }, { merge: true }));
   });
   it('conta desativada perde acesso Firestore mesmo com sessão ainda válida', async () => {
@@ -110,6 +114,8 @@ describe('Firestore Rules deny by default', () => {
     await assertFails(setDoc(doc(db, 'publicOrders', 'admin-forgery'), { status: 'NEW' }));
     await assertFails(setDoc(doc(db, 'financeEntries', 'manual'), { kind: 'EXPENSE', category: 'Insumos', amountCents: 1200 }));
     await assertFails(setDoc(doc(db, 'cashControl', 'main'), { openRegisterId: 'fake' }));
+    await assertSucceeds(getDoc(doc(db, 'cashControlEvents', 'event')));
+    await assertFails(setDoc(doc(db, 'cashControlEvents', 'admin-forgery'), { registerId: 'open', reason: 'Falso' }));
     await assertFails(setDoc(doc(db, 'cashRegisters', 'open'), { status: 'OPEN' }));
     await assertFails(setDoc(doc(db, 'cashMovements', 'fake-sale'), { amountCents: 1, sourceOrderId: 'bypass' }));
     await assertFails(setDoc(doc(db, 'users', 'staff-uid'), { role: 'admin' }, { merge: true }));

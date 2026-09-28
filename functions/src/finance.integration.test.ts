@@ -8,15 +8,16 @@ if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 
 const auth = getAuth();
 const db = getFirestore();
 const projectId = process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor';
-const functionsEndpoint = `http://127.0.0.1:5001/${projectId}/southamerica-east1`;
-const authEndpoint = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key';
+const functionsEndpoint = `http://${process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001'}/${projectId}/southamerica-east1`;
+const authEndpoint = `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`;
 const testPassword = 'Finance-QA-2026!';
 let adminToken = '';
 let staffToken = '';
+let inactiveAdminToken = '';
 
-async function createSignedInUser(role: 'admin' | 'staff', email: string) {
+async function createSignedInUser(role: 'admin' | 'staff', email: string, active = true) {
   const user = await auth.createUser({ email, password: testPassword, displayName: role });
-  await db.doc(`users/${user.uid}`).set({ role, active: true, name: role, email });
+  await db.doc(`users/${user.uid}`).set({ role, active, name: role, email });
   const response = await fetch(authEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -52,9 +53,10 @@ function entryPayload(clientRequestId = randomUUID()) {
 
 beforeAll(async () => {
   const suffix = randomUUID();
-  [adminToken, staffToken] = await Promise.all([
+  [adminToken, staffToken, inactiveAdminToken] = await Promise.all([
     createSignedInUser('admin', `qa-finance-admin-${suffix}@example.test`),
     createSignedInUser('staff', `qa-finance-staff-${suffix}@example.test`),
+    createSignedInUser('admin', `qa-finance-inactive-${suffix}@example.test`, false),
   ]);
 });
 
@@ -122,5 +124,15 @@ describe('finance callables in Firebase Emulator Suite', () => {
     const missing = await call('updateFinanceStatus', adminToken, { id: 'manual-missing', status: 'PAID' });
     expect(missing.status).not.toBe(200);
     expect(missing.body.error?.status).toBe('NOT_FOUND');
+  });
+
+  it('blocks inactive administrators from finance and integration management', async () => {
+    const finance = await call('saveFinanceEntry', inactiveAdminToken, entryPayload());
+    expect(finance.status).not.toBe(200);
+    expect(finance.body.error?.status).toBe('PERMISSION_DENIED');
+
+    const integration = await call('getIntegrationReadiness', inactiveAdminToken, {});
+    expect(integration.status).not.toBe(200);
+    expect(integration.body.error?.status).toBe('PERMISSION_DENIED');
   });
 });

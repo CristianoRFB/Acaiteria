@@ -67,6 +67,20 @@ export async function closeCashRegister(input: {
   return operateCashRegister({ ...input, operation: 'CLOSE' });
 }
 
+export async function reconcileCashRegisterControl(input: {
+  registerId: string;
+  clientRequestId: string;
+  reason: string;
+  physicalCashConfirmed: true;
+  managerAuthorized: true;
+}) {
+  const reconcile = httpsCallable<typeof input, { ok: boolean; idempotent: boolean }>(
+    getFirebaseClient().functions,
+    'reconcileCashRegisterControl',
+  );
+  return (await reconcile(input)).data;
+}
+
 export async function refundCompletedOrder(input: {
   orderId: string;
   reason: string;

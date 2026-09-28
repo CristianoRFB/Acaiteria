@@ -8,8 +8,8 @@ if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 
 const auth = getAuth();
 const db = getFirestore();
 const projectId = process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor';
-const functionsEndpoint = `http://127.0.0.1:5001/${projectId}/southamerica-east1`;
-const authEndpoint = 'http://127.0.0.1:9099/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key';
+const functionsEndpoint = `http://${process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001'}/${projectId}/southamerica-east1`;
+const authEndpoint = `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`;
 const testPassword = 'Motoboy-Teste-2026!';
 let adminToken = '';
 let secondAdminToken = '';
@@ -17,7 +17,7 @@ let driverToken = '';
 let driverUid = '';
 let driverEmail = '';
 
-async function createSignedInUser(role: 'admin' | 'driver', email: string) {
+async function createSignedInUser(role: 'admin' | 'driver' | 'customer', email: string) {
   const user = await auth.createUser({ email, password: testPassword, displayName: role });
   await db.doc(`users/${user.uid}`).set({ role, active: true, name: role, email });
   if (role === 'driver') await db.doc(`deliveryDrivers/${user.uid}`).set({ userId: user.uid, name: role, email, phone: '17999999999', status: 'BUSY', enabled: true });
@@ -405,6 +405,151 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(4050);
   }, 20000);
 
+  it('allows only one of two concurrent new cash-register openings', async () => {
+    expect((await db.collection('cashRegisters').where('status', '==', 'OPEN').get()).empty).toBe(true);
+    const controlRef = db.doc('cashControl/main');
+    const previousControl = await controlRef.get();
+    const previousOpenRegisterId = previousControl.data()?.openRegisterId ?? null;
+    const requestIds = [randomUUID(), randomUUID()];
+    try {
+      const results = await Promise.all(requestIds.map((clientRequestId) => call('operateCashRegister', adminToken, {
+        operation: 'OPEN', clientRequestId, initialBalanceCents: 1000,
+        openingDate: '2026-09-28', note: 'Concorrência de abertura de teste',
+      })));
+      expect(results.filter((result) => result.status === 200)).toHaveLength(1);
+      const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
+      expect(openRegisters.size).toBe(1);
+      expect(requestIds).toContain(openRegisters.docs[0].id);
+      expect((await controlRef.get()).data()?.openRegisterId).toBe(openRegisters.docs[0].id);
+    } finally {
+      for (const requestId of requestIds) {
+        await db.doc(`cashRegisters/${requestId}`).delete();
+        await db.doc(`cashMovements/opening-${requestId}`).delete();
+      }
+      if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
+      else await controlRef.delete();
+    }
+  }, 20000);
+
+  it('blocks opening a new register when an open register has no valid control link', async () => {
+    const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
+    expect(openRegisters.empty).toBe(true);
+    const orphanId = `orphan-${randomUUID()}`;
+    const requestId = randomUUID();
+    const controlRef = db.doc('cashControl/main');
+    const previousControl = await controlRef.get();
+    const previousOpenRegisterId = previousControl.data()?.openRegisterId ?? null;
+    await controlRef.set({ openRegisterId: null }, { merge: true });
+    await db.doc(`cashRegisters/${orphanId}`).set({
+      status: 'OPEN', openedAt: new Date(), openingDate: '2026-09-28',
+      initialBalanceCents: 1000, expectedCashCents: 850,
+    });
+
+    try {
+      const result = await call('operateCashRegister', adminToken, {
+        operation: 'OPEN', clientRequestId: requestId, initialBalanceCents: 500,
+        openingDate: '2026-09-28', note: 'Nova tentativa durante reconciliação',
+      });
+      expect(result.status).not.toBe(200);
+      expect(result.body.error?.status).toBe('FAILED_PRECONDITION');
+      expect(result.body.error?.message).toMatch(/aberto|vínculo|reconciliação/i);
+      expect((await db.doc(`cashRegisters/${requestId}`).get()).exists).toBe(false);
+      expect((await db.doc('cashControl/main').get()).data()?.openRegisterId).toBeNull();
+    } finally {
+      await db.doc(`cashRegisters/${orphanId}`).delete();
+      if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
+      else await controlRef.delete();
+    }
+  }, 20000);
+
+  it('reconciles one orphan register link with an immutable audit event and idempotent retry', async () => {
+    const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
+    expect(openRegisters.empty).toBe(true);
+    const registerId = `orphan-${randomUUID()}`;
+    const requestId = randomUUID();
+    const reason = 'Conferência física e autorização da gerência no turno';
+    const registerRef = db.doc(`cashRegisters/${registerId}`);
+    const controlRef = db.doc('cashControl/main');
+    const previousControl = await controlRef.get();
+    const previousOpenRegisterId = previousControl.data()?.openRegisterId ?? null;
+    await controlRef.set({ openRegisterId: null }, { merge: true });
+    await registerRef.set({
+      status: 'OPEN', openedAt: new Date(), openingDate: '2026-09-28',
+      initialBalanceCents: 1000, expectedCashCents: 850,
+    });
+    const before = (await registerRef.get()).data();
+    const request = { registerId, clientRequestId: requestId, reason, physicalCashConfirmed: true, managerAuthorized: true };
+
+    try {
+      const result = await call('reconcileCashRegisterControl', adminToken, request);
+      expect(result.status).toBe(200);
+      expect(result.body.result?.idempotent).toBe(false);
+      expect((await controlRef.get()).data()?.openRegisterId).toBe(registerId);
+      expect((await registerRef.get()).data()).toMatchObject({
+        status: 'OPEN', initialBalanceCents: before?.initialBalanceCents,
+        expectedCashCents: before?.expectedCashCents,
+      });
+      const eventRef = db.doc(`cashControlEvents/${requestId}`);
+      expect((await eventRef.get()).data()).toMatchObject({
+        type: 'REGISTER_LINK_RESTORED', registerId, previousOpenRegisterId: null,
+        reason, physicalCashConfirmed: true, managerAuthorized: true,
+        requestFingerprint: JSON.stringify({ registerId, reason }),
+      });
+
+      const retry = await call('reconcileCashRegisterControl', adminToken, request);
+      expect(retry.status).toBe(200);
+      expect(retry.body.result?.idempotent).toBe(true);
+      const changedRetry = await call('reconcileCashRegisterControl', adminToken, { ...request, reason: 'Motivo diferente' });
+      expect(changedRetry.status).not.toBe(200);
+      expect(changedRetry.body.error?.status).toBe('ALREADY_EXISTS');
+      const driverAttempt = await call('reconcileCashRegisterControl', driverToken, request);
+      expect(driverAttempt.status).not.toBe(200);
+      expect(driverAttempt.body.error?.status).toBe('PERMISSION_DENIED');
+    } finally {
+      const linked = String((await controlRef.get()).data()?.openRegisterId ?? '');
+      if (linked === registerId) {
+        await call('operateCashRegister', adminToken, {
+          operation: 'CLOSE', registerId, countedCashCents: 850,
+          note: 'Encerramento do fixture de reconciliação',
+        });
+      }
+      await registerRef.delete();
+      await db.doc(`cashMovements/closing-${registerId}`).delete();
+      await db.doc(`cashControlEvents/${requestId}`).delete();
+      if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
+      else await controlRef.delete();
+    }
+  }, 20000);
+
+  it('refuses automatic cash-link reconciliation when multiple open registers make ownership ambiguous', async () => {
+    const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
+    expect(openRegisters.empty).toBe(true);
+    const registerIds = [`orphan-a-${randomUUID()}`, `orphan-b-${randomUUID()}`];
+    const requestId = randomUUID();
+    const controlRef = db.doc('cashControl/main');
+    const previousControl = await controlRef.get();
+    const previousOpenRegisterId = previousControl.data()?.openRegisterId ?? null;
+    await controlRef.set({ openRegisterId: null }, { merge: true });
+    await Promise.all(registerIds.map((id) => db.doc(`cashRegisters/${id}`).set({
+      status: 'OPEN', openedAt: new Date(), initialBalanceCents: 1000, expectedCashCents: 1000,
+    })));
+
+    try {
+      const result = await call('reconcileCashRegisterControl', adminToken, {
+        registerId: registerIds[0], clientRequestId: requestId,
+        reason: 'Há mais de um caixa aberto para conciliar', physicalCashConfirmed: true, managerAuthorized: true,
+      });
+      expect(result.status).not.toBe(200);
+      expect(result.body.error?.status).toBe('FAILED_PRECONDITION');
+      expect((await controlRef.get()).data()?.openRegisterId).toBeNull();
+      expect((await db.doc(`cashControlEvents/${requestId}`).get()).exists).toBe(false);
+    } finally {
+      await Promise.all(registerIds.map((id) => db.doc(`cashRegisters/${id}`).delete()));
+      if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
+      else await controlRef.delete();
+    }
+  }, 20000);
+
   it('blocks overdraft, requires an explanation for a cash difference, and preserves the first close', async () => {
     const openingRequestId = randomUUID();
     const opened = await call('operateCashRegister', adminToken, {
@@ -519,6 +664,60 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     } finally {
       await registerRef.update({ expectedCashCents: 1000 });
     }
+  }, 20000);
+
+  it('makes a completed-order refund idempotent by reason and rejects altered retries', async () => {
+    const opened = await call('operateCashRegister', adminToken, {
+      operation: 'OPEN', clientRequestId: randomUUID(), initialBalanceCents: 3000,
+      openingDate: '2026-09-28', note: 'Abertura para retry de estorno',
+    });
+    expect(opened.status).toBe(200);
+    const registerId = String(opened.body.result?.registerId);
+    const orderId = `order-${randomUUID()}`;
+    const publicCode = `public-${randomUUID()}`;
+    const reason = 'Pedido devolvido e conferido pela gerente';
+    await db.doc(`orders/${orderId}`).set({
+      status: 'COMPLETED', orderNumber: '#QA-REFUND-RETRY', publicCode,
+      fulfillment: { mode: 'PICKUP' }, payment: { method: 'CASH' },
+      pricing: { subtotalCents: 1200, deliveryFeeCents: 0, totalCents: 1200 },
+      pricingVerification: { status: 'VERIFIED', source: 'SERVER' },
+    });
+    await db.doc(`publicOrders/${publicCode}`).set({ publicCode, status: 'COMPLETED' });
+    await db.doc(`cashMovements/order-${orderId}`).set({
+      registerId, amountCents: 1200, cashAmountCents: 1200,
+      paymentMethod: 'CASH', sourceOrderId: orderId,
+    });
+    const request = { orderId, reason };
+
+    const concurrentRetries = await Promise.all([
+      call('refundCompletedOrder', adminToken, request),
+      call('refundCompletedOrder', adminToken, request),
+    ]);
+    expect(concurrentRetries.every((result) => result.status === 200)).toBe(true);
+    expect(concurrentRetries.some((result) => result.body.result?.idempotent === true)).toBe(true);
+    const changedRetry = await call('refundCompletedOrder', adminToken, { orderId, reason: 'Outro motivo informado depois' });
+    expect(changedRetry.status).not.toBe(200);
+    expect(changedRetry.body.error?.status).toBe('ALREADY_EXISTS');
+
+    expect((await db.doc(`orders/${orderId}`).get()).data()).toMatchObject({
+      status: 'CANCELLED', cancellationReason: reason,
+    });
+    expect((await db.doc(`cashMovements/refund-${orderId}`).get()).data()).toMatchObject({
+      registerId, amountCents: 1200, cashAmountCents: 1200, note: `Estorno: ${reason}`,
+      requestFingerprint: JSON.stringify({ orderId, reason }),
+    });
+    expect((await db.doc(`financeEntries/refund-${orderId}`).get()).data()).toMatchObject({
+      kind: 'EXPENSE', amountCents: 1200, sourceOrderId: orderId, notes: reason,
+    });
+    expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(1800);
+    expect((await db.collection('cashMovements').where('sourceOrderId', '==', orderId).get()).size).toBe(2);
+    expect((await db.collection('financeEntries').where('sourceOrderId', '==', orderId).get()).size).toBe(1);
+
+    await db.doc(`financeEntries/refund-${orderId}`).update({ amountCents: 1201 });
+    const inconsistentRetry = await call('refundCompletedOrder', adminToken, request);
+    expect(inconsistentRetry.status).not.toBe(200);
+    expect(inconsistentRetry.body.error?.message).toMatch(/não corresponde integralmente/i);
+    await db.doc(`financeEntries/refund-${orderId}`).update({ amountCents: 1200 });
   }, 20000);
 
   it('blocks delivery completion after cash closure without partially changing order, delivery, or finance', async () => {
@@ -642,6 +841,37 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false })).status).not.toBe(200);
     expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: true, status: 'BUSY', currentDeliveryId: fixture.deliveryId });
   }, 30000);
+
+  it('allows an active driver to update only their own name and phone', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-contact-${randomUUID()}@example.test`);
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ status: 'OFFLINE' });
+    const originalAuth = await auth.getUser(driver.uid);
+    const saved = await call('updateDriverContact', driver.token, {
+      name: '  Joana Motoboy  ',
+      phone: '(17) 98888-7777',
+      driverId: driverUid,
+      role: 'admin',
+      email: 'attacker@example.test',
+      enabled: false,
+    });
+
+    expect(saved.status).toBe(200);
+    expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ name: 'Joana Motoboy', phone: '(17) 98888-7777', email: driver.email, enabled: true, status: 'OFFLINE' });
+    expect((await db.doc(`users/${driver.uid}`).get()).data()).toMatchObject({ name: 'Joana Motoboy', phone: '(17) 98888-7777', role: 'driver', active: true, email: driver.email });
+    expect((await auth.getUser(driver.uid)).email).toBe(originalAuth.email);
+    expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.name).toBe('driver');
+  }, 20000);
+
+  it('rejects invalid contact data, disabled drivers, and non-driver callers', async () => {
+    const driver = await createSignedInUser('driver', `qa-driver-contact-invalid-${randomUUID()}@example.test`);
+    expect((await call('updateDriverContact', driver.token, { name: 'Jo', phone: '12345678' })).status).not.toBe(200);
+    await db.doc(`deliveryDrivers/${driver.uid}`).update({ enabled: false, status: 'INACTIVE' });
+    expect((await call('updateDriverContact', driver.token, { name: 'Joana', phone: '17988887777' })).status).not.toBe(200);
+    const admin = await call('updateDriverContact', adminToken, { name: 'Admin', phone: '17988887777' });
+    expect(admin.status).not.toBe(200);
+    const customer = await createSignedInUser('customer', `qa-customer-driver-contact-${randomUUID()}@example.test`);
+    expect((await call('updateDriverContact', customer.token, { name: 'Cliente', phone: '17988887777' })).status).not.toBe(200);
+  }, 20000);
 
   it('keeps Auth aligned when two admins toggle the same driver concurrently', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-toggle-race-${randomUUID()}@example.test`);

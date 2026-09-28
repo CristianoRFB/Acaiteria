@@ -6,25 +6,22 @@ import {
   Bike,
   CheckCircle2,
   Clock3,
-  History,
-  Home,
   LogOut,
   MapPin,
-  PackageCheck,
-  UserRound,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
 
+import { DriverBottomNav, type DriverTab } from '@/components/driver-bottom-nav';
 import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import { deliveryStatusLabels, driverStatusLabels, type DeliveryDriverStatus, type DeliveryRecord } from '@/shared/delivery';
+import { getCalendarDateKey, shiftCalendarDateKey } from '@/shared/domain';
 
 interface DriverProfile { name?: string; phone?: string; email?: string; status?: DeliveryDriverStatus; enabled?: boolean; currentDeliveryId?: string | null }
 interface DeliveryRow extends DeliveryRecord { id: string }
 interface DriverHistoryRow { id: string; orderNumber?: string; customerName?: string; status?: string; note?: string; updatedAt?: { toDate?: () => Date } }
-type DriverTab = 'HOME' | 'ORDERS' | 'HISTORY' | 'PROFILE';
 type OrderFilter = 'CURRENT' | 'PENDING' | 'DONE';
 
 const activeDeliveryStatuses = ['ASSIGNED', 'ACCEPTED', 'PICKED_UP', 'ON_THE_WAY', 'ARRIVED'];
@@ -39,6 +36,12 @@ export default function DriverHomePage() {
   const [orderFilter, setOrderFilter] = useState<OrderFilter>('CURRENT');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [editingContact, setEditingContact] = useState(false);
+
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get('tab')?.toUpperCase();
+    if (requestedTab === 'HOME' || requestedTab === 'ORDERS' || requestedTab === 'HISTORY' || requestedTab === 'PROFILE') setTab(requestedTab);
+  }, []);
 
   useEffect(() => {
     if (!hasFirebaseConfig || !user || role !== 'driver') return undefined;
@@ -85,10 +88,23 @@ export default function DriverHomePage() {
       .sort((a, b) => (b.updatedAt?.toDate?.().getTime() ?? 0) - (a.updatedAt?.toDate?.().getTime() ?? 0)),
     [historyRows],
   );
-  const doneToday = useMemo(() => {
-    const today = new Date().toDateString();
-    return history.filter((item) => item.status === 'DELIVERED' && item.updatedAt?.toDate?.().toDateString() === today).length;
-  }, [history]);
+  const todayKey = getCalendarDateKey(new Date(), 'America/Sao_Paulo');
+  const yesterdayKey = shiftCalendarDateKey(todayKey, -1);
+  const historyGroups = useMemo(() => {
+    const groups = [
+      { label: 'Hoje', entries: [] as DriverHistoryRow[] },
+      { label: 'Ontem', entries: [] as DriverHistoryRow[] },
+      { label: 'Mais antigas', entries: [] as DriverHistoryRow[] },
+    ];
+    for (const entry of history) {
+      const timestamp = entry.updatedAt?.toDate?.();
+      const key = timestamp ? getCalendarDateKey(timestamp, 'America/Sao_Paulo') : '';
+      const index = key === todayKey ? 0 : key === yesterdayKey ? 1 : 2;
+      groups[index].entries.push(entry);
+    }
+    return groups.filter((group) => group.entries.length > 0);
+  }, [history, todayKey, yesterdayKey]);
+  const doneToday = history.filter((item) => item.status === 'DELIVERED' && getCalendarDateKey(item.updatedAt?.toDate?.() ?? new Date(NaN), 'America/Sao_Paulo') === todayKey).length;
 
   async function toggleAvailability() {
     const status = profile?.status === 'AVAILABLE' ? 'OFFLINE' : 'AVAILABLE';
@@ -98,6 +114,23 @@ export default function DriverHomePage() {
       await httpsCallable(getFirebaseClient().functions, 'setDriverAvailability')({ status });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível alterar sua disponibilidade.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveContact(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const name = String(form.get('name') ?? '').trim();
+    const phone = String(form.get('phone') ?? '').trim();
+    setBusy(true);
+    setError('');
+    try {
+      await httpsCallable(getFirebaseClient().functions, 'updateDriverContact')({ name, phone });
+      setEditingContact(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar seus dados.');
     } finally {
       setBusy(false);
     }
@@ -162,7 +195,7 @@ export default function DriverHomePage() {
             <div className="mt-4 grid grid-cols-3 gap-2" role="group" aria-label="Filtrar pedidos">
               {([['CURRENT', 'Atual'], ['PENDING', 'Pendentes'], ['DONE', 'Concluídos']] as const).map(([value, label]) => <button key={value} aria-pressed={orderFilter === value} onClick={() => setOrderFilter(value)} className={`min-h-11 rounded-xl border px-2 text-sm font-bold ${orderFilter === value ? 'border-[#6f2bc5] bg-[#6f2bc5] text-white' : 'border-[#e5e1ed] bg-white text-[#6f6878]'}`}>{label}</button>)}
             </div>
-            <div className="mt-5 space-y-3">
+            <div className="mt-5 space-y-5">
               {orderFilter !== 'DONE' && orderDeliveries.map((delivery) => <DeliveryLink key={delivery.id} delivery={delivery} />)}
               {orderFilter === 'DONE' && completedOrders.map((entry) => <HistoryCard key={entry.id} entry={entry} />)}
               {ordersEmpty && <div className="rounded-3xl border border-dashed border-[#d9d1e4] bg-white p-7 text-center text-sm text-[#6f6878]">{orderFilter === 'DONE' ? 'Nenhum pedido concluído ainda.' : 'Nenhum pedido nesta lista.'}</div>}
@@ -173,7 +206,7 @@ export default function DriverHomePage() {
         {tab === 'HISTORY' && (
           <section>
             <h1 className="text-2xl font-black">Histórico de entregas</h1><p className="mt-1 text-sm text-[#6f6878]">Suas corridas concluídas e atualizações</p>
-            <div className="mt-5 space-y-3">{history.map((entry) => <HistoryCard key={entry.id} entry={entry} />)}{!history.length && <div className="rounded-3xl border border-dashed border-[#d9d1e4] bg-white p-7 text-center text-sm text-[#6f6878]">As entregas concluídas aparecerão aqui.</div>}</div>
+            <div className="mt-5 space-y-6">{historyGroups.map((group) => <section key={group.label}><h2 className="mb-3 text-base font-black">{group.label}</h2><div className="space-y-3">{group.entries.map((entry) => <HistoryCard key={entry.id} entry={entry} />)}</div></section>)}{!history.length && <div className="rounded-3xl border border-dashed border-[#d9d1e4] bg-white p-7 text-center text-sm text-[#6f6878]">As entregas concluídas aparecerão aqui.</div>}</div>
           </section>
         )}
 
@@ -187,6 +220,15 @@ export default function DriverHomePage() {
               {profile?.email && <p className="mt-1 break-all text-sm text-[#6f6878]">{profile.email}</p>}
               <span className={`mt-4 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabels[profile?.status ?? 'OFFLINE']}</span>
             </div>
+            {editingContact ? (
+              <form onSubmit={(event) => void saveContact(event)} className="mt-4 grid gap-3 rounded-3xl border border-[#e5e1ed] bg-white p-5">
+                <label className="text-sm font-bold">Nome<input name="name" required minLength={2} maxLength={80} defaultValue={name} autoComplete="name" className="mt-2 h-11 w-full rounded-xl border border-[#e5e1ed] px-3" /></label>
+                <label className="text-sm font-bold">Telefone<input name="phone" required minLength={8} maxLength={30} defaultValue={profile?.phone ?? ''} type="tel" autoComplete="tel" className="mt-2 h-11 w-full rounded-xl border border-[#e5e1ed] px-3" /></label>
+                <div className="flex flex-col gap-2 sm:flex-row"><Button disabled={busy} className="min-h-11 rounded-full bg-[#6f2bc5] text-white">{busy ? 'Salvando…' : 'Salvar contato'}</Button><Button type="button" disabled={busy} variant="outline" className="min-h-11 rounded-full" onClick={() => setEditingContact(false)}>Cancelar</Button></div>
+              </form>
+            ) : (
+              <button type="button" className="mt-4 flex min-h-12 w-full items-center justify-between rounded-2xl border border-[#e5e1ed] bg-white px-5 text-left font-black" onClick={() => setEditingContact(true)}>Editar dados de contato <span aria-hidden="true" className="text-[#6f6878]">›</span></button>
+            )}
             <div className="mt-4 rounded-3xl border border-[#e5e1ed] bg-white p-5"><p className="text-sm font-bold text-[#6f6878]">Status atual</p><p className="mt-2 font-black">{available ? 'Disponível para novas entregas' : profile?.status === 'BUSY' ? 'Você está em uma entrega' : 'Você não está recebendo entregas'}</p></div>
             <Button disabled={busy || profile?.status === 'BUSY' || Boolean(profile?.currentDeliveryId)} onClick={() => void toggleAvailability()} className={`mt-4 min-h-12 w-full rounded-full ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
             <button onClick={() => void signOut(getFirebaseClient().auth)} className="mt-3 min-h-12 w-full rounded-2xl border border-[#e5e1ed] bg-white px-4 text-left font-black text-red-700">Sair da conta</button>
@@ -194,14 +236,7 @@ export default function DriverHomePage() {
         )}
       </div>
 
-      <nav aria-label="Navegação do entregador" className="fixed inset-x-0 bottom-0 border-t border-[#e5e1ed] bg-white/95 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-around">
-          <DriverNavButton active={tab === 'HOME'} label="Início" onClick={() => setTab('HOME')}><Home className="size-5" /></DriverNavButton>
-          <DriverNavButton active={tab === 'ORDERS'} label="Pedidos" onClick={() => setTab('ORDERS')}><PackageCheck className="size-5" /></DriverNavButton>
-          <DriverNavButton active={tab === 'HISTORY'} label="Histórico" onClick={() => setTab('HISTORY')}><History className="size-5" /></DriverNavButton>
-          <DriverNavButton active={tab === 'PROFILE'} label="Perfil" onClick={() => setTab('PROFILE')}><UserRound className="size-5" /></DriverNavButton>
-        </div>
-      </nav>
+      <DriverBottomNav active={tab} onNavigate={setTab} />
     </main>
   );
 }
@@ -212,10 +247,6 @@ function DeliveryLink({ delivery }: { delivery: DeliveryRow }) {
 
 function HistoryCard({ entry }: { entry: DriverHistoryRow }) {
   return <article className="flex min-h-20 items-center justify-between gap-3 rounded-3xl border border-[#e5e1ed] bg-white p-4"><span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#e4f7ed] text-[#1d9560]"><CheckCircle2 className="size-4" /></span><div className="min-w-0 flex-1"><strong className="block truncate">{entry.orderNumber ?? 'Pedido'}</strong><span className="block truncate text-sm text-[#6f6878]">{entry.customerName ?? entry.note ?? 'Entrega atualizada'}</span></div><span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-black ${entry.status === 'DELIVERED' ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-amber-50 text-amber-800'}`}>{historyStatusLabel(entry.status)}</span></article>;
-}
-
-function DriverNavButton({ active, label, onClick, children }: { active: boolean; label: string; onClick: () => void; children: React.ReactNode }) {
-  return <button type="button" aria-current={active ? 'page' : undefined} onClick={onClick} className={`flex min-h-12 min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-xl text-[11px] font-bold ${active ? 'text-[#6f2bc5]' : 'text-[#6f6878]'}`}>{children}{label}</button>;
 }
 
 function historyStatusLabel(status?: string) {

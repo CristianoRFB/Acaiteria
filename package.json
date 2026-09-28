@@ -11,6 +11,9 @@
     "build:firebase": "npm run build && npm --prefix functions run build && node scripts/prepare-firebase-build.mjs",
     "check:production": "node scripts/check-production-env.mjs",
     "deploy:firebase": "npm run check:production && npx firebase deploy --only hosting,functions,firestore:rules,firestore:indexes",
+    "deploy:firebase:backend": "npm run check:production && npx firebase deploy --only functions,firestore:rules,firestore:indexes",
+    "check:production:backend": "node scripts/check-production-backend.mjs",
+    "deploy:cloudflare": "npm run check:production && npm run check:production:backend && npm run build && npm exec wrangler -- deploy --config dist/server/wrangler.json",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint app components/providers.tsx components/public-header.tsx components/admin-shell.tsx components/admin-form.tsx lib shared tests functions/src scripts vitest.config.ts vite.config.ts",
     "format": "oxfmt",
@@ -26,10 +29,12 @@
     "dev:vinext": "vinext dev --port 3001",
     "build:vinext": "vinext build",
     "start:vinext": "wrangler dev --config dist/server/wrangler.json",
-    "deploy:vinext": "vinext-cloudflare deploy --config dist/server/wrangler.json"
+    "deploy:vinext": "npm run deploy:cloudflare"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
+    "@fontsource-variable/geist": "5.3.0",
+    "@fontsource-variable/geist-mono": "5.3.0",
     "@shadcn/react": "0.3.0",
     "@vinext/cloudflare": "^1.0.0-beta.8",
     "class-variance-authority": "0.7.1",
@@ -75,6 +80,12 @@
     "vite": "8.3.0",
     "vitest": "^4.1.11",
     "wrangler": "4.134.0"
+  },
+  "overrides": {
+    "@opentelemetry/core": "^2.8.0",
+    "gaxios": {
+      "uuid": "^11.1.1"
+    }
   },
   "type": "module"
 }

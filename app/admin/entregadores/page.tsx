@@ -244,7 +244,7 @@ export default function DriversPage() {
         {drivers.map((driver) => (
           <article
             key={driver.id}
-            className="surface flex flex-col gap-4 rounded-3xl p-5 sm:flex-row sm:items-center sm:justify-between"
+            className="surface grid grid-cols-1 gap-4 rounded-3xl p-5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
           >
             <div className="flex min-w-0 items-center gap-3">
               <span className="grid size-11 shrink-0 place-items-center rounded-2xl bg-[#fff0f5] text-brand">
@@ -296,7 +296,7 @@ export default function DriversPage() {
               </Button>
             </div>
             {editing?.id === driver.id && (
-              <form onSubmit={saveEdit} className="grid w-full gap-3 border-t border-border-soft pt-4 sm:grid-cols-3">
+              <form onSubmit={saveEdit} className="grid w-full gap-3 border-t border-border-soft pt-4 sm:col-span-2 sm:grid-cols-3">
                 <label className="text-xs font-bold">Nome<input name="name" required minLength={2} defaultValue={driver.name} className="mt-1 h-10 w-full rounded-xl border border-border-soft bg-surface-warm px-3 text-sm" /></label>
                 <label className="text-xs font-bold">Telefone<input name="phone" required minLength={8} defaultValue={driver.phone} className="mt-1 h-10 w-full rounded-xl border border-border-soft bg-surface-warm px-3 text-sm" /></label>
                 <label className="text-xs font-bold">E-mail de acesso<input name="email" type="email" required defaultValue={driver.email} className="mt-1 h-10 w-full rounded-xl border border-border-soft bg-surface-warm px-3 text-sm" /></label>

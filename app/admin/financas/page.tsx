@@ -11,13 +11,13 @@ import {
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Pencil, Plus, Save, WalletCards, X } from 'lucide-react';
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
-import { FinanceInsights, type FinanceInsightOrder } from '@/components/finance-insights';
+import type { FinanceInsightOrder } from '@/components/finance-insights';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import { formatBRL } from '@/shared/domain';
 import { paymentMethodLabel } from '@/shared/cash-register';
@@ -35,6 +35,7 @@ const todayKey = () => {
   return [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
 };
 const currentMonth = () => todayKey().slice(0, 7);
+const FinanceInsights = lazy(() => import('@/components/finance-insights').then((module) => ({ default: module.FinanceInsights })));
 
 function nextMonthStart(value: string) {
   const [year, month] = value.split('-').map(Number);
@@ -226,7 +227,7 @@ export default function FinancesPage() {
         <button type="button" role="tab" aria-selected={view === 'INSIGHTS'} onClick={() => setView('INSIGHTS')} className={`rounded-xl px-4 py-2.5 text-sm font-black ${view === 'INSIGHTS' ? 'bg-white text-[#82204f] shadow-sm' : 'text-[#826a75]'}`}>Inteligência de vendas</button>
       </div>
 
-      {view === 'INSIGHTS' ? (insightLoading ? <div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Carregando os dados de vendas…</div> : <FinanceInsights entries={visibleEntries} orders={insightOrders} />) : <>
+      {view === 'INSIGHTS' ? (insightLoading ? <div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Carregando os dados de vendas…</div> : <Suspense fallback={<div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Preparando os gráficos…</div>}><FinanceInsights entries={visibleEntries} orders={insightOrders} /></Suspense>) : <>
       <section className="mt-5 rounded-[26px] bg-white p-5 shadow-sm sm:p-7"><div className="flex items-center gap-3"><WalletCards className="size-5 text-[#82204f]" /><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Resumo das vendas</p><h2 className="mt-1 text-xl font-black">Receitas por forma de pagamento</h2></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{summary.payments.map(({ paymentMethod, amountCents }) => <div key={paymentMethod} className="rounded-2xl bg-[#fffaf5] p-4"><span className="text-xs font-bold text-[#826a75]">{paymentMethodLabel(paymentMethod)}</span><strong className="mt-1 block text-lg font-black text-[#82204f]">{formatBRL(amountCents)}</strong></div>)}</div><p className="mt-4 text-xs text-[#826a75]">Valores de pedidos concluídos, sem dados sensíveis de cartão. Use o Caixa para conferir o dinheiro contado.</p></section>
 
       {formOpen && <section className="mt-7 rounded-[26px] bg-white p-5 shadow-sm sm:p-7">
