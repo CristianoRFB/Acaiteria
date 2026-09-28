@@ -45,15 +45,15 @@ Legenda: **OK** = comprovado em teste executado; **PARCIAL** = implementação p
 | Entregador | Retirada antes da rota | **PARCIAL** | Estados e botões implementados; não houve E2E da sequência completa em navegador. |
 | Entregador | Histórico | **PARCIAL** | Persistência privada implementada; conclusão verificada na integração; demais resultados sem teste integrado individual. |
 | Administração | Cancelamento e liberação | **OK** | Integração autenticada confirmou cancelamento, liberação do driver e estado público. |
-| Administração | Editar entregador, reassociar, consultar eventos | **PARCIAL** | Implementado em callable/UI; faltou cenário integrado automatizado de edição/reassociação e QA visual. |
+| Administração | Editar entregador, reassociar, consultar eventos | **PARCIAL** | Edição/reassociação e histórico têm cobertura integrada; a consulta visual dos eventos e o fluxo autenticado na interface ainda não foram homologados. |
 | Cliente | Evitar enumeração e ler link individual | **OK** | Rules emulator: acesso individual permitido; listagem pública negada. |
 | Cliente | Exibir nome/status do entregador | **PARCIAL** | Dados e interface implementados; sem teste visual/autenticado completo no cliente. |
-| Compatibilidade financeira | Venda em dinheiro concorrente/idempotente no callable | **PARCIAL** | Teste de integração passou com fixture que cria `cashRegisters` e `cashControl/main` diretamente; a abertura pela interface não estava coberta. |
-| Compatibilidade financeira | Caixa aberto pela interface → conclusão da entrega | **QUEBRADA** | Reprodução real em 23/09: a UI cria `cashRegisters`, mas não `cashControl/main.openRegisterId`; `confirmDelivery` bloqueia antes de lançar receita ou movimento. |
-| Compatibilidade financeira | Caixa fechado, outras formas de pagamento e reversões em todos os cenários | **PARCIAL** | Requer caixa aberto para concluir; cenários restantes não foram integrados nesta bateria. |
-| Segurança | Código legado nos documentos antigos | **PARCIAL** | Callable de limpeza limitada a 450 por execução; não executada contra Firebase real nem contra cópia de produção. Admin deve abrir a central publicada para concluir a limpeza. |
+| Compatibilidade financeira | Venda em dinheiro concorrente/idempotente no callable | **OK (emuladores)** | A integração atual abre pelo `operateCashRegister`, repete e concorre vendas; verifica lançamento e movimento únicos. |
+| Compatibilidade financeira | Abertura de caixa → conclusão da entrega | **OK (backend/emuladores), PARCIAL (interface ponta a ponta)** | A interface usa `operateCashRegister`; a integração confirma a entrega usando o controle criado pela mesma callable. Ainda falta percorrer os cliques autenticados de Caixa e entregador em navegador. |
+| Compatibilidade financeira | Caixa fechado, PIX/cartão, inconsistências e estornos | **OK (emuladores)** | Integração cobre bloqueio sem escrita parcial, pagamento sem efeito sobre dinheiro físico, caixa inconsistente e estorno idempotente. Não equivale à homologação contábil/operacional em produção. |
+| Segurança | Código legado nos documentos antigos | **PARCIAL** | Callable de limpeza limitada a 450 por execução; não foi executada em staging/produção. A Function ainda falta no projeto de produção, portanto a limpeza não pode ser concluída pela central publicada atual. |
 | Mobile/PWA | Instalação e push com app fechado | **AUSENTE** | Não há manifest/service worker nem FCM/VAPID. Atualização em tempo real funciona enquanto o painel está aberto, mas não substitui push. |
-| QA visual | 360/390/430 px e 11 telas de referência | **AUSENTE** | As referências não vieram no workspace e não há `test:e2e`; não declarar homologação visual. |
+| QA visual | 360/390/430 px e telas de referência | **PARCIAL** | Quatro telas públicas foram verificadas manualmente nesses viewports em 24/09; não há E2E configurado nem comparação autenticada/completa de todas as telas de referência. |
 
 ## Validações executadas
 
@@ -63,6 +63,35 @@ Legenda: **OK** = comprovado em teste executado; **PARCIAL** = implementação p
 - `npm run test:functions:integration`: **14 testes aprovados** (pedido/outbox, confirmação concorrente, bloqueio de código, cancelamento, reassociação, edição de cadastro e saneamento legado) nos emuladores Auth, Firestore e Functions.
 - `npm audit --omit=dev --audit-level=moderate`: **0 vulnerabilidades de produção**. Instalação completa reportou 7 moderadas em dependências de desenvolvimento; não foi aplicado upgrade automático.
 - O ambiente usa Node 24 apesar do runtime Functions declarado como Node 22; o Firebase Emulator emitiu aviso. Firebase de produção, App Check, FCM e dispositivos reais não foram testados.
+
+## Situação vigente — 28/09/2026
+
+**Estado geral: NÃO HOMOLOGADO PARA PRODUÇÃO.** A auditoria local desta retomada passou nos testes e builds executáveis, mas a configuração Firebase real e a jornada autenticada visual continuam sem homologação. Nenhum deploy foi feito.
+
+### Base e revisão
+
+- Branch `main`, HEAD `6a6124a` (`feat: continue delivery driver system`), sincronizada com `origin/main` antes deste checkpoint. Arquivos temporários locais não rastreados foram preservados e não fazem parte do registro.
+- Reconciliado o achado histórico de 23/09 sobre a abertura de caixa: ele foi corrigido depois. `lib/cash-register.ts` encaminha a abertura à callable `operateCashRegister`, que grava `cashRegisters` e `cashControl/main` na mesma transação; a conclusão da entrega exige esse vínculo. A matriz acima substitui o status antigo de **QUEBRADA** por evidência atual dos emuladores.
+- A inspeção local do portal cobriu apenas a página pública de login do entregador. O navegador ofereceu preenchimento automático; não usei esses dados, não autentiquei e fechei a aba de teste. Não houve teste visual das telas autenticadas nem medição de viewport mobile nesta rodada.
+
+### Testes executados nesta retomada
+
+- `npm run ci`: **passou** — lint, TypeScript, 40 testes de aplicação e build.
+- `npm run test:functions`: **passou** — 14 testes unitários.
+- `npm run test:rules`: **passou** — 6 testes do Firestore Rules Emulator.
+- `npm run test:functions:integration`: **passou** — 49 testes nos emuladores Auth, Firestore e Functions. Cobertura inclui pedido/preço, atribuição e aceite concorrentes, vínculo/isolamento, código inválido e limite de tentativas, conclusão idempotente, recusa/falha/requeue/reassociação/cancelamento, caixa, dinheiro/PIX/cartão, estornos e edição/ativação de entregadores.
+- `npm run build:firebase`: **passou** — app, Functions e preparação do servidor Firebase.
+- `npm exec wrangler -- deploy --dry-run --config dist/server/wrangler.json`: **passou sem publicar** — 147 módulos e 440 assets (2.257,42 KiB total; 620,66 KiB gzip).
+- `npm audit --omit=dev --audit-level=moderate` e `npm --prefix functions audit --omit=dev --audit-level=moderate`: **0 vulnerabilidades** de produção em ambos os pacotes.
+- `git diff --check`: sem erros. O host continua em Node 24, diferente do runtime Node 22 declarado; a build também mantém o aviso de chunk cliente acima de 500 kB.
+
+### Gates e próximos passos
+
+- `npm run check:production` bloqueia pelo placeholder da chave App Check; `npm run check:production:backend` encontrou **28 Functions requeridas ausentes** no projeto `food-5fb44`. O projeto está no plano Spark. É preciso que o responsável habilite o plano de faturamento compatível e forneça/configure a chave App Check real por canal seguro; não alterei billing, segredos nem produção.
+- A conta Cloudflare está autenticada neste host e o Wrangler lista oito versões existentes para `acai-mais-sabor`, a mais recente datada de 18/09/2026. Isso não comprova que a versão publicada corresponda ao HEAD atual. O dry-run acima só validou o artefato local; nenhum upload/deploy foi feito.
+- Falta E2E autenticado no navegador para concluir a jornada cliente → painel/admin → entregador → cliente/financeiro, bem como QA visual real nas larguras 360/390/430 px para as telas autenticadas e estados de erro/loading. O backend integrado não substitui essa validação.
+- Antes de release: resolver os gates de Firebase/App Check, publicar Functions + Rules + índices + frontend como conjunto coordenado; validar em ambiente de staging com contas e endereços sintéticos; reexecutar o fluxo completo e verificar rastreio, histórico, caixa e Financeiro sem duplicidade; só então considerar deploy Cloudflare.
+- PWA/FCM/Web Push continuam ausentes; telas conectadas recebem atualizações em tempo real, mas não há push com o app fechado. Maps externos, aparelhos físicos e reconciliação contábil real não foram homologados.
 
 ## Checkpoint de continuidade — 23/09/2026
 
