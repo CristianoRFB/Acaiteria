@@ -314,3 +314,30 @@ Próximo passo: retomar a validação de navegador/aparelho e os gates de produ�
 - `npm run check:production` segue bloqueado porque a chave/configuração de App Check ainda está como placeholder `COLE_AQUI`. A inspeção somente de leitura do backend de produção (`food-5fb44`) não encontrou as 28 Functions esperadas como implantadas. Nenhum deploy foi feito.
 - Não foram testados conta real de entregador, aparelho físico, mapas com endereço real nem entrega de notificações com o app fechado. A QA móvel desta rodada cobriu landing/login, não todo o painel autenticado do entregador.
 - PWA é base instalável/offline de assets; não é implementação de push. Não afirmar prontidão empresarial ou produção até resolver App Check, backend, Rules/índices e homologar jornada operacional real.
+
+## Checkpoint adicional — 02/10/2026 — jornada completa de entrega em emuladores
+
+**Estado: NÃO HOMOLOGADO PARA PRODUÇÃO.** A jornada passou por navegador móvel e pelos emuladores isolados de Firebase. O pedido e as contas usados foram fictícios, limitados ao projeto `demo-acai-mais-sabor`.
+
+### Jornada percorrida e correções
+
+- Cliente montou um pedido de R$ 3,50, escolheu entrega, preencheu endereço de QA e recebeu o total de R$ 7,50 com taxa de R$ 4,00. O checkout impediu seguir sem os dados obrigatórios e apresentou o endereço no resumo antes do envio.
+- Admin confirmou o pedido, abriu a ficha de cozinha, escolheu “Mandar sem imprimir” e marcou como pronto. A opção “Mandar e imprimir” estava disponível; o teste evitou abrir diálogo de impressão no ambiente automatizado.
+- Admin atribuiu o pedido a um entregador ativo. O entregador entrou, aceitou a corrida, confirmou retirada, iniciou rota e registrou chegada. Código incorreto foi recusado. Código correto foi recusado enquanto o Caixa estava fechado, conforme a regra de negócio; após abrir o Caixa, a confirmação concluiu a entrega.
+- O rastreio público atualizou para “Pedido concluído”. A UI autenticada do entregador não permitiu ler o documento público que contém o código; a leitura do rastreio funcionou em contexto anônimo de cliente.
+- Caixa e Finanças registraram exatamente R$ 7,50 em Pix, R$ 0,00 em dinheiro e uma movimentação vinculada ao pedido. O fluxo não registrou receita antes da conclusão.
+- A inspeção encontrou endereço repetindo a referência, título “Entrega em andamento” depois da conclusão e códigos técnicos `[400]`/`[403]` nas mensagens de erro. O app agora mantém complemento e referência em linhas próprias, exibe “Entrega concluída” e remove esses sufixos das mensagens. A home do entregador distingue corrida atribuída aguardando aceite de entrega em andamento.
+
+### Validações
+
+- `npm run ci`: **passou** — lint, typecheck, 46 testes da aplicação e build completo.
+- `npm run test:functions`: **14 passaram**; `npm run test:rules`: **6 passaram**; `npm run test:functions:integration`: **49 passaram** nos emuladores locais.
+- Jornada web real em ambiente de QA: pedido, fila do admin, impressão opcional da ficha, atribuição, aceite, retirada, rota, chegada, bloqueio por código inválido, bloqueio por caixa fechado, conclusão e confirmação no cliente/Financeiro.
+- Viewport móvel do entregador em 360, 390 e 430 px: largura do documento e do corpo coincidiu com a largura disponível, sem overflow horizontal. Admin Caixa/Finanças e checkout também foram verificados em 390 px.
+- Os testes de regras e integração apontam para projeto demo e emuladores; nada foi implantado nem escrito no Firebase de produção.
+
+### Gates ainda abertos
+
+- Produção segue bloqueada pelo App Check placeholder `COLE_AQUI` e pela ausência das 28 Functions esperadas no projeto `food-5fb44`. Não implantar antes de configurar App Check e publicar/revalidar o backend.
+- O teste não cobriu endereço real/Maps, impressora física, aparelho físico, FCM/push, pico de concorrência em produção, integração Saipos habilitada nem reconciliação de pagamentos externos.
+- Permanecem avisos não bloqueantes no build: chunk cliente acima de 500 kB e classificação dinâmica de algumas rotas pelo vinext. A auditoria global continua aberta até resolver os gates externos e homologar essas integrações.

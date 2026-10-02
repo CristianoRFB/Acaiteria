@@ -20,6 +20,8 @@ import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import {
   deliveryStatusLabels,
   deliveryStatusMessage,
+  formatDeliveryDestination,
+  getDeliveryActionError,
   type DeliveryRecord,
 } from '@/shared/delivery';
 
@@ -64,11 +66,7 @@ export default function DriverDeliveryPage() {
       setNotice('Atualização salva.');
       return true;
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : 'Não foi possível atualizar a entrega.',
-      );
+      setError(getDeliveryActionError(cause, 'Não foi possível atualizar a entrega.'));
       return false;
     } finally {
       setBusy(false);
@@ -109,14 +107,7 @@ export default function DriverDeliveryPage() {
         <DriverBottomNav active="ORDERS" />
       </main>
     );
-  const address = delivery.address
-    ? [
-        `${delivery.address.street}, ${delivery.address.number}`,
-        delivery.address.complement,
-        delivery.address.neighborhood,
-        delivery.address.reference ? `Referência: ${delivery.address.reference}` : undefined,
-      ].filter(Boolean).join(', ')
-    : 'Endereço não informado';
+  const address = formatDeliveryDestination(delivery.address);
   const mapUrl = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(address)}&travelmode=driving`;
   const canAccept = delivery.status === 'ASSIGNED';
   const canPickup = delivery.status === 'ACCEPTED';
@@ -138,7 +129,11 @@ export default function DriverDeliveryPage() {
             <h1 className="text-2xl font-black">
               {delivery.status === 'ASSIGNED'
                 ? 'Nova entrega'
-                : 'Entrega em andamento'}
+                : delivery.status === 'DELIVERED'
+                  ? 'Entrega concluída'
+                  : ['CANCELLED', 'DELIVERY_FAILED'].includes(delivery.status)
+                    ? 'Entrega encerrada'
+                    : 'Entrega em andamento'}
             </h1>
             <p className="text-sm text-[#6f6878]">
               Pedido {delivery.orderNumber}
@@ -167,14 +162,14 @@ export default function DriverDeliveryPage() {
             </p>
           )}
           <div className="mt-5 flex flex-wrap gap-2">
-            <a
+            {delivery.address && <a
               href={mapUrl}
               target="_blank"
               rel="noreferrer"
               className="inline-flex min-h-11 items-center gap-2 rounded-full bg-[#3270d8] px-4 text-sm font-black text-white"
             >
               <Navigation className="size-4" /> Abrir navegação
-            </a>
+            </a>}
             {delivery.customerWhatsapp && (
               <a
                 href={`tel:${delivery.customerWhatsapp}`}

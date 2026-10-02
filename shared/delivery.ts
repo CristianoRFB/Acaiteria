@@ -50,6 +50,19 @@ export interface DeliveryAddress {
   reference?: string;
 }
 
+export function formatDeliveryDestination(address?: DeliveryAddress): string {
+  if (!address) return 'Endereço não informado';
+  return [
+    [address.street, address.number].filter(Boolean).join(', '),
+    address.neighborhood,
+  ].filter(Boolean).join(' · ');
+}
+
+export function getDeliveryActionError(cause: unknown, fallback: string): string {
+  if (!(cause instanceof Error)) return fallback;
+  return cause.message.replace(/\s*\[\d{3}\]$/, '').trim() || fallback;
+}
+
 export interface DeliveryRecord {
   id: string;
   orderId: string;

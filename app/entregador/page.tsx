@@ -16,7 +16,7 @@ import { DriverBottomNav, type DriverTab } from '@/components/driver-bottom-nav'
 import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
-import { deliveryStatusLabels, driverStatusLabels, type DeliveryDriverStatus, type DeliveryRecord } from '@/shared/delivery';
+import { deliveryStatusLabels, driverStatusLabels, getDeliveryActionError, type DeliveryDriverStatus, type DeliveryRecord } from '@/shared/delivery';
 import { getCalendarDateKey, shiftCalendarDateKey } from '@/shared/domain';
 
 interface DriverProfile { name?: string; phone?: string; email?: string; status?: DeliveryDriverStatus; enabled?: boolean; currentDeliveryId?: string | null }
@@ -113,7 +113,7 @@ export default function DriverHomePage() {
     try {
       await httpsCallable(getFirebaseClient().functions, 'setDriverAvailability')({ status });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível alterar sua disponibilidade.');
+      setError(getDeliveryActionError(cause, 'Não foi possível alterar sua disponibilidade.'));
     } finally {
       setBusy(false);
     }
@@ -130,7 +130,7 @@ export default function DriverHomePage() {
       await httpsCallable(getFirebaseClient().functions, 'updateDriverContact')({ name, phone });
       setEditingContact(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar seus dados.');
+      setError(getDeliveryActionError(cause, 'Não foi possível atualizar seus dados.'));
     } finally {
       setBusy(false);
     }
@@ -142,6 +142,8 @@ export default function DriverHomePage() {
 
   const name = profile?.name ?? user.displayName ?? 'Entregador';
   const available = profile?.status === 'AVAILABLE' && !profile.currentDeliveryId;
+  const awaitingAcceptance = profile?.status === 'BUSY' && pending.length > 0 && !current;
+  const driverStatusLabel = awaitingAcceptance ? 'Aguardando aceite' : driverStatusLabels[profile?.status ?? 'OFFLINE'];
   const orderDeliveries = orderFilter === 'CURRENT'
     ? deliveries.filter((item) => inProgressStatuses.includes(item.status))
     : deliveries.filter((item) => item.status === 'ASSIGNED');
@@ -167,7 +169,7 @@ export default function DriverHomePage() {
         {tab === 'HOME' && (
           <>
             <section className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-              <div><h1 className="text-2xl font-black">Olá, {name.split(' ')[0]}!</h1><span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabels[profile?.status ?? 'OFFLINE']}</span></div>
+              <div><h1 className="text-2xl font-black">Olá, {name.split(' ')[0]}!</h1><span className={`mt-2 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabel}</span></div>
               <Button disabled={busy || profile?.status === 'BUSY' || Boolean(profile?.currentDeliveryId)} onClick={() => void toggleAvailability()} className={`min-h-11 w-full rounded-full px-5 sm:w-fit ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
             </section>
 
@@ -180,7 +182,7 @@ export default function DriverHomePage() {
                 <a href={`/entregador/entrega/${current.id}`} className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-[#6f2bc5] px-4 text-sm font-black text-white">Ver entrega <MapPin className="size-4" /></a>
               </section>
             ) : (
-              <section className="mt-6 rounded-3xl border border-dashed border-[#d9d1e4] bg-white p-7 text-center"><Clock3 className="mx-auto size-7 text-[#6f2bc5]" /><h2 className="mt-3 text-xl font-black">Nenhuma entrega agora</h2><p className="mt-1 text-sm text-[#6f6878]">Fique disponível para receber novas corridas.</p></section>
+              <section className="mt-6 rounded-3xl border border-dashed border-[#d9d1e4] bg-white p-7 text-center"><Clock3 className="mx-auto size-7 text-[#6f2bc5]" /><h2 className="mt-3 text-xl font-black">{awaitingAcceptance ? 'Corrida aguardando aceite' : 'Nenhuma entrega agora'}</h2><p className="mt-1 text-sm text-[#6f6878]">{awaitingAcceptance ? 'Abra a corrida em Próximas entregas para aceitar ou recusar.' : 'Fique disponível para receber novas corridas.'}</p></section>
             )}
 
             {pending.length > 0 && <section className="mt-7"><div className="flex items-center justify-between gap-3"><h2 className="text-xl font-black">Próximas entregas</h2><button className="text-sm font-black text-[#6f2bc5]" onClick={() => { setOrderFilter('PENDING'); setTab('ORDERS'); }}>Ver todas</button></div><div className="mt-3 space-y-3">{pending.slice(0, 3).map((delivery) => <DeliveryLink key={delivery.id} delivery={delivery} />)}</div></section>}
@@ -218,7 +220,7 @@ export default function DriverHomePage() {
               <h2 className="mt-4 text-xl font-black">{name}</h2>
               {profile?.phone && <p className="mt-1 text-sm text-[#6f6878]">{profile.phone}</p>}
               {profile?.email && <p className="mt-1 break-all text-sm text-[#6f6878]">{profile.email}</p>}
-              <span className={`mt-4 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabels[profile?.status ?? 'OFFLINE']}</span>
+              <span className={`mt-4 inline-flex rounded-full px-3 py-1 text-xs font-black ${available ? 'bg-[#e4f7ed] text-[#1d9560]' : 'bg-[#ece9f1] text-[#6f6878]'}`}>{driverStatusLabel}</span>
             </div>
             {editingContact ? (
               <form onSubmit={(event) => void saveContact(event)} className="mt-4 grid gap-3 rounded-3xl border border-[#e5e1ed] bg-white p-5">
@@ -229,7 +231,7 @@ export default function DriverHomePage() {
             ) : (
               <button type="button" className="mt-4 flex min-h-12 w-full items-center justify-between rounded-2xl border border-[#e5e1ed] bg-white px-5 text-left font-black" onClick={() => setEditingContact(true)}>Editar dados de contato <span aria-hidden="true" className="text-[#6f6878]">›</span></button>
             )}
-            <div className="mt-4 rounded-3xl border border-[#e5e1ed] bg-white p-5"><p className="text-sm font-bold text-[#6f6878]">Status atual</p><p className="mt-2 font-black">{available ? 'Disponível para novas entregas' : profile?.status === 'BUSY' ? 'Você está em uma entrega' : 'Você não está recebendo entregas'}</p></div>
+            <div className="mt-4 rounded-3xl border border-[#e5e1ed] bg-white p-5"><p className="text-sm font-bold text-[#6f6878]">Status atual</p><p className="mt-2 font-black">{available ? 'Disponível para novas entregas' : awaitingAcceptance ? 'Você tem uma corrida aguardando aceite' : profile?.status === 'BUSY' ? 'Você está em uma entrega' : 'Você não está recebendo entregas'}</p></div>
             <Button disabled={busy || profile?.status === 'BUSY' || Boolean(profile?.currentDeliveryId)} onClick={() => void toggleAvailability()} className={`mt-4 min-h-12 w-full rounded-full ${available ? 'bg-[#df5656] text-white' : 'bg-[#6f2bc5] text-white'}`}>{busy ? 'Salvando…' : available ? 'Ficar offline' : 'Ficar disponível'}</Button>
             <button onClick={() => void signOut(getFirebaseClient().auth)} className="mt-3 min-h-12 w-full rounded-2xl border border-[#e5e1ed] bg-white px-4 text-left font-black text-red-700">Sair da conta</button>
           </section>
