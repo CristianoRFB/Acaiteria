@@ -53,11 +53,11 @@ export function LandingHero({ slides, statusText, open, estimate, city }: Landin
         <span className="inline-flex items-center gap-2 rounded-full bg-white/75 px-3 py-1.5 tracking-[.1em] shadow-sm"><span className={`size-2 rounded-full ${open ? 'bg-emerald-500' : 'bg-amber-500'}`} /> {statusText}</span>
       </div>
       <div className="relative overflow-hidden rounded-[32px] bg-[#53142f] shadow-[0_24px_70px_rgba(83,20,47,.24)] sm:rounded-[42px]">
-        <div className="grid min-h-[540px] lg:grid-cols-[.83fr_1.17fr]">
-          <div className="relative z-10 flex flex-col justify-between p-6 text-white sm:p-10 lg:p-14">
+        <div className="grid min-h-[540px] grid-cols-[minmax(0,1fr)] lg:grid-cols-[.83fr_1.17fr]">
+          <div className="relative z-10 flex min-w-0 flex-col justify-between p-6 text-white sm:p-10 lg:p-14">
             <div>
               <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[11px] font-black uppercase tracking-[.13em] ${accent.chip}`}><Sparkles className="size-3.5" /> {current.eyebrow}</span>
-              <p className="mt-7 max-w-[12ch] text-5xl font-black leading-[.9] tracking-[-.07em] sm:text-6xl">{current.title}</p>
+              <p className="mt-7 max-w-full break-words text-4xl font-black leading-[.95] tracking-[-.05em] sm:max-w-[12ch] sm:text-6xl sm:leading-[.9] sm:tracking-[-.07em]">{current.title}</p>
               <p className="mt-5 max-w-sm text-sm leading-relaxed text-white/72 sm:text-base">{current.description}</p>
               <Button className="mt-7 h-12 rounded-full bg-white px-5 text-sm font-black text-[#53142f] shadow-xl hover:bg-[#fff7f3]" render={<a href={current.href}>{current.cta} <ArrowRight className="size-4" /></a>} />
             </div>

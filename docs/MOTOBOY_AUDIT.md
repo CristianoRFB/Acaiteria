@@ -291,3 +291,26 @@ Próximo passo: retomar a validação de navegador/aparelho e os gates de produ�
 - Firebase de produção, App Check, índices efetivamente implantados, Maps com endereço de teste autorizado e notificações não foram verificados. Nenhum deploy foi feito.
 - PWA/FCM/Web Push continuam fora da implementação atual. Atualização em tempo real com a tela conectada não significa notificação entregue com o app fechado.
 - A auditoria ampla do goal continua aberta até fechar os gates operacionais e externos sem falhas reproduzíveis. Preservar arquivos temporários locais não rastreados; não os adicionar ao commit.
+
+## Checkpoint adicional — 02/10/2026 — PWA local e viewport móvel real
+
+**Estado: NÃO HOMOLOGADO PARA PRODUÇÃO.** Esta rodada abriu a aplicação local no painel do Codex, concluiu a correção responsiva dos logins e conferiu o viewport móvel em navegador Chromium com emulação de dispositivo. A auditoria operacional de entregas e os gates externos continuam abertos.
+
+### Implementação e QA desta rodada
+
+- Base PWA local: manifestos separados para cliente, administração e entregador; ícones próprios; página offline genérica; registro do service worker apenas em produção/contexto seguro. O worker só armazena assets estáticos versionados e não armazena páginas privadas, pedidos ou dados de clientes.
+- O primeiro teste por redução da janela desktop não representava um viewport móvel real e produziu capturas enganosas. Repeti com `Emulation.setDeviceMetricsOverride` nos tamanhos 360, 390 e 430 px. Nas rotas `/`, `/admin/login` e `/entregador/login`, `innerWidth`, `documentElement.clientWidth`, `documentElement.scrollWidth` e `body.scrollWidth` coincidiram; as capturas de 360 px mostraram títulos, formulários e botões dentro da tela. Faixas horizontais intencionais do cardápio continuam roláveis dentro do próprio componente.
+- Ajustes responsivos: largura mínima zero no grid e nos campos dos logins; quebra e tipografia do título do destaque na landing page para caber em telas estreitas.
+- Servidor Wrangler local em `127.0.0.1:8788`, modo `--local`, aberto no painel. Rotas públicas, três manifestos, service worker, página offline e três PNGs de ícone responderam HTTP 200.
+
+### Validações
+
+- `npm run ci`: **passou** — lint, typecheck, build e 44 testes da aplicação (11 arquivos). Permanecem avisos não bloqueantes sobre chunks cliente acima de 500 kB e classificação dinâmica de rotas pelo vinext.
+- `npm run test:functions`: **14 passaram**; `npm run test:rules`: **6 passaram**; `npm run test:functions:integration`: **49 passaram** em emuladores locais no ciclo de QA desta retomada. Esses testes usam Firebase demo/emulado, não dados de produção.
+- `git diff --check`: passou antes deste registro; repetir depois da edição.
+
+### Gates externos ainda abertos
+
+- `npm run check:production` segue bloqueado porque a chave/configuração de App Check ainda está como placeholder `COLE_AQUI`. A inspeção somente de leitura do backend de produção (`food-5fb44`) não encontrou as 28 Functions esperadas como implantadas. Nenhum deploy foi feito.
+- Não foram testados conta real de entregador, aparelho físico, mapas com endereço real nem entrega de notificações com o app fechado. A QA móvel desta rodada cobriu landing/login, não todo o painel autenticado do entregador.
+- PWA é base instalável/offline de assets; não é implementação de push. Não afirmar prontidão empresarial ou produção até resolver App Check, backend, Rules/índices e homologar jornada operacional real.
