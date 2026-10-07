@@ -4,6 +4,87 @@ Data: 23/09/2026. Base inicial: `680e1a8` (`main` sincronizada com `origin/main`
 
 Legenda: **OK** = comprovado em teste executado; **PARCIAL** = implementação presente, mas sem prova completa ou depende de infraestrutura; **QUEBRADA** = risco/comportamento reproduzível; **AUSENTE** = não encontrado.
 
+## Matriz inicial da retomada — 07/10/2026 — `f90eaf8`
+
+Base verificada: `main`, `HEAD=f90eaf8`, atualizado por `git pull origin main`; `680e1a8` existe na história; working tree limpo após o pull. Há um stash local preexistente, preservado e fora da árvore. A matriz abaixo classifica o estado inicial desta retomada: a presença de implementação/teste não será marcada como **OK** até a prova ser executada contra este HEAD; os resultados de checkpoints anteriores são históricos.
+
+| Área | Requisito individual | Estado inicial | Fonte que será verificada |
+| --- | --- | --- | --- |
+| Motoboy | Login próprio | PARCIAL | `app/entregador/login/page.tsx`, Firebase Auth |
+| Motoboy | Papel `driver` | PARCIAL | `components/providers.tsx`, `firestore.rules`, Functions |
+| Motoboy | Proteção das rotas | PARCIAL | `app/entregador/layout.tsx`, páginas do entregador |
+| Motoboy | Dashboard | PARCIAL | `app/entregador/page.tsx` |
+| Motoboy | Ficar disponível | PARCIAL | `setDriverAvailability`, integração |
+| Motoboy | Ficar ocupado | PARCIAL | atribuição/transações, integração |
+| Motoboy | Ficar offline | PARCIAL | `setDriverAvailability`, integração |
+| Motoboy | Receber entrega atribuída | PARCIAL | listeners do dashboard e `assignDelivery` |
+| Motoboy | Notificação de nova corrida | PARCIAL | atualização in-app; FCM/Web Push ainda sem prova |
+| Motoboy | Aceitar corrida | PARCIAL | `respondDelivery`, tela e concorrência |
+| Motoboy | Confirmar retirada | PARCIAL | `progressDelivery(PICKED_UP)` |
+| Motoboy | Iniciar rota | PARCIAL | `progressDelivery(ON_THE_WAY)` |
+| Motoboy | Abrir mapa | PARCIAL | página de detalhe e URL de navegação |
+| Motoboy | Marcar chegada | PARCIAL | `progressDelivery(ARRIVED)` |
+| Motoboy | Confirmar código | PARCIAL | `confirmDelivery`, segredo e rate limit |
+| Motoboy | Registrar falha | PARCIAL | `reportDeliveryFailure` e tela de detalhe |
+| Motoboy | Ver pedidos | PARCIAL | dashboard/listeners e filtros |
+| Motoboy | Ver histórico | PARCIAL | `deliveryHistory` e filtros |
+| Motoboy | Editar perfil/contato | PARCIAL | `updateDriverContact` e formulário |
+| Motoboy | Logout | PARCIAL | Firebase Auth e navegação |
+| Admin | Cadastrar motoboy | PARCIAL | `/admin/entregadores`, callable e teste |
+| Admin | Editar motoboy | PARCIAL | callable/formulário e integração |
+| Admin | Ativar motoboy | PARCIAL | callable/Auth/usuário/perfil |
+| Admin | Desativar motoboy | PARCIAL | callable/Auth/usuário/perfil |
+| Admin | Listar motoboys | PARCIAL | `/admin/entregadores` |
+| Admin | Ver disponibilidade | PARCIAL | listeners e perfil do entregador |
+| Admin | Ver entrega atual | PARCIAL | `currentDeliveryId` e central |
+| Admin | Atribuir pedido | PARCIAL | `assignDelivery` |
+| Admin | Impedir dupla atribuição | PARCIAL | transação e testes concorrentes |
+| Admin | Acompanhar status em tempo real | PARCIAL | listeners da central e pedidos |
+| Admin | Ver falhas e motivos | PARCIAL | filtro `DELIVERY_FAILED` e detalhe |
+| Admin | Devolver falha à fila | PARCIAL | `requeueDelivery` |
+| Admin | Reassociar entregador | PARCIAL | `reassignDelivery` |
+| Admin | Consultar histórico/eventos | PARCIAL | `deliveryEvents` e tela central |
+| Admin | Preservar consistência pedido/entrega/caixa | PARCIAL | transações de status, cancelamento e conclusão |
+| Cliente | Acompanhar a própria entrega | PARCIAL | `/pedido/[publicCode]`, espelho público e Rules |
+| Cliente | Ver entregador quando aplicável | PARCIAL | `deliveryDriverName` e rastreio |
+| Cliente | Ver código de recebimento | PARCIAL | espelho público e página de rastreio |
+| Cliente | Impedir que outros perfis leiam o código | PARCIAL | Rules, callable de entregador e testes |
+| Cliente | Ver status final entregue | PARCIAL | transação final e rastreio |
+| Backend/banco | Vincular entrega a pedido real | PARCIAL | criação em `updateOrderStatus`, schema e integração |
+| Backend/banco | Vincular entregador a usuário Auth | PARCIAL | `createDeliveryDriver`, `users`, `deliveryDrivers` |
+| Backend/banco | Registrar timestamps de transição | PARCIAL | `functions/src/index.ts` e eventos |
+| Backend/banco | Validar transições permitidas | PARCIAL | `shared/delivery.ts` e Functions |
+| Backend/banco | Guardar segredo fora dos payloads de entregador | PARCIAL | `deliverySecrets`, callable e Rules |
+| Backend/banco | Bloquear código errado/limitar tentativas | PARCIAL | integração de `confirmDelivery` |
+| Backend/banco | Bloquear duplicidade e retry alterado | PARCIAL | IDs/fingerprints e testes de concorrência |
+| Backend/banco | Fazer conclusão e financeiro atomicamente | PARCIAL | `confirmDelivery`, Caixa/Financeiro e integração |
+| Backend/banco | Manter falha sem conclusão financeira | PARCIAL | `reportDeliveryFailure` e integração |
+| Backend/banco | Manter requeue/reassignment consistentes | PARCIAL | `requeueDelivery`, `reassignDelivery`, histórico |
+| Backend/banco | Preservar histórico após liberar/trocar motoboy | PARCIAL | `deliveryHistory`, `deliveryEvents` |
+| Segurança | Impedir cliente de ler entrega alheia | PARCIAL | Rules e testes de Rules |
+| Segurança | Impedir motoboy de ler corrida alheia | PARCIAL | Rules e callable de detalhe |
+| Segurança | Impedir motoboy de acessar Admin/Financeiro | PARCIAL | layouts, RBAC de Functions e Rules |
+| Segurança | Impedir alteração de role pelo próprio usuário | PARCIAL | Rules e Functions administrativas |
+| Segurança | Impedir escrita direta em campos protegidos | PARCIAL | Rules e testes |
+| Segurança | Rules negarem acessos indevidos | PARCIAL | `scripts/test-rules.mjs` |
+| Segurança | Não vazar código em tela/payload/logs | PARCIAL | callable, UI e testes de privacidade |
+| Segurança | Limitar dados pessoais expostos ao motoboy | PARCIAL | schema de `deliveries` e UI |
+| Mobile/PWA | Viewport 360 px | PARCIAL | QA visual deste HEAD pendente |
+| Mobile/PWA | Viewport 390 px | PARCIAL | QA visual deste HEAD pendente |
+| Mobile/PWA | Viewport 430 px | PARCIAL | QA visual deste HEAD pendente |
+| Mobile/PWA | Teclado aberto | PARCIAL | QA visual autenticado pendente |
+| Mobile/PWA | Navegação inferior | PARCIAL | `components/driver-bottom-nav.tsx` |
+| Mobile/PWA | Alvos de toque | PARCIAL | telas do entregador; QA manual pendente |
+| Mobile/PWA | Estados loading e erro | PARCIAL | telas/listeners; execução visual pendente |
+| Mobile/PWA | Offline e reconexão | PARCIAL | `public/sw.js`, `public/offline.html`, teste PWA |
+| Mobile/PWA | Refresh e retorno do background | PARCIAL | listeners/Auth; QA real pendente |
+| Mobile/PWA | Deep link para Maps | PARCIAL | detalhe da corrida; Maps real não testado |
+| Mobile/PWA | Manifest e instalação PWA | PARCIAL | manifests/icons; teste de instalação real pendente |
+| Mobile/PWA | Service worker | PARCIAL | `public/sw.js`, registro e testes |
+| Mobile/PWA | Push com app fechado | AUSENTE | FCM/Web Push não localizado no inventário |
+
+Esta matriz é o baseline de trabalho, não o veredito. Será atualizada somente com resultado observado em testes atuais e execução real; limitações externas e evidência ausente continuarão explícitas.
+
 ## Matriz inicial
 
 | Área | Fluxo | Status inicial | Evidência no baseline |
@@ -341,3 +422,16 @@ Próximo passo: retomar a validação de navegador/aparelho e os gates de produ�
 - Produção segue bloqueada pelo App Check placeholder `COLE_AQUI` e pela ausência das 28 Functions esperadas no projeto `food-5fb44`. Não implantar antes de configurar App Check e publicar/revalidar o backend.
 - O teste não cobriu endereço real/Maps, impressora física, aparelho físico, FCM/push, pico de concorrência em produção, integração Saipos habilitada nem reconciliação de pagamentos externos.
 - Permanecem avisos não bloqueantes no build: chunk cliente acima de 500 kB e classificação dinâmica de algumas rotas pelo vinext. A auditoria global continua aberta até resolver os gates externos e homologar essas integrações.
+
+## Revalidação do código — 07/10/2026 — `f90eaf8`
+
+- `git pull --ff-only origin main`: sem commits novos; a base já estava atualizada. O commit `f90eaf8` permanece como HEAD.
+- `npm run ci`: passou nesta retomada — lint, typecheck, 46 testes do app e build.
+- `npm run test:rules`: 6 testes passaram; `npm run test:functions`: 14 passaram; `npm run test:functions:integration`: 49 passaram nos emuladores locais.
+- `npm run build:firebase`: passou; a compilação incluiu frontend, Functions e servidor Firebase. O aviso do chunk cliente de aproximadamente 567 kB continua não bloqueante.
+- `npm audit --omit=dev --audit-level=moderate` e `npm --prefix functions audit --omit=dev --audit-level=moderate`: zero vulnerabilidades de dependências de runtime. O audit completo ainda reporta 16 vulnerabilidades altas em dependências de ferramentas de desenvolvimento; a correção automática sugerida exige downgrades incompatíveis e não foi aplicada.
+- `npm run check:production`: bloqueado pela ausência de `NEXT_PUBLIC_FIREBASE_APPCHECK_SITE_KEY`.
+- `npm run check:production:backend`: não conseguiu confirmar o inventário implantado do Firebase nesta sessão. O último checkpoint de produção registrado (02/10) encontrou 28 Functions críticas ausentes e plano Spark; confirmar novamente com a conta autorizada antes de qualquer publicação.
+- A jornada web completa de pedido fictício → admin → entregador → caixa/financeiro está registrada no checkpoint de 02/10 e foi executada contra emuladores, não contra produção. Nenhum deploy ou dado real foi usado nesta retomada.
+
+Estado do módulo: **NÃO HOMOLOGADO PARA PRODUÇÃO**. Evidência automatizada atual não substitui configuração de App Check, backend implantado, homologação de produção/staging e aceite operacional. O checklist comercial está em `docs/GO_LIVE_READINESS.md`.
