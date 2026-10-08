@@ -18,8 +18,8 @@ export interface PublicOrderEditProposal {
 }
 
 /** O cliente só pode responder sua proposta pública; todo o restante roda pelas Functions. */
-export async function respondToOrderEditDirect(db: Firestore, publicCodeValue: string, decision: CustomerEditDecision) {
-  const publicRef = doc(db, 'publicOrders', publicCodeValue);
+export async function respondToOrderEditDirect(db: Firestore, tenantId: string, publicCodeValue: string, decision: CustomerEditDecision) {
+  const publicRef = doc(db, 'tenants', tenantId, 'publicOrders', publicCodeValue);
   await runTransaction(db, async (transaction) => {
     const snapshot = await transaction.get(publicRef);
     if (!snapshot.exists()) throw new Error('Pedido não encontrado.');

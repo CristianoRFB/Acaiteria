@@ -1,6 +1,8 @@
 'use client';
 
 import { History, Home, PackageCheck, UserRound } from 'lucide-react';
+import { useTenant } from '@/components/tenant-provider';
+import { tenantPath } from '@/shared/tenancy';
 
 export type DriverTab = 'HOME' | 'ORDERS' | 'HISTORY' | 'PROFILE';
 
@@ -12,6 +14,7 @@ const items: { id: DriverTab; label: string; icon: typeof Home; href: string }[]
 ];
 
 export function DriverBottomNav({ active, onNavigate }: { active: DriverTab; onNavigate?: (tab: DriverTab) => void }) {
+  const { tenant } = useTenant();
   return (
     <nav aria-label="Navegação do entregador" className="fixed inset-x-0 bottom-0 z-40 border-t border-[#e5e1ed] bg-white/95 px-2 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom))] backdrop-blur">
       <div className="mx-auto flex max-w-3xl items-center justify-around">
@@ -22,7 +25,7 @@ export function DriverBottomNav({ active, onNavigate }: { active: DriverTab; onN
               <Icon aria-hidden="true" className="size-5" />{label}
             </button>
           ) : (
-            <a key={id} href={href} aria-current={active === id ? 'page' : undefined} className={className}>
+            <a key={id} href={tenant ? tenantPath(tenant.slug, href) : '#'} aria-current={active === id ? 'page' : undefined} className={className}>
               <Icon aria-hidden="true" className="size-5" />{label}
             </a>
           );

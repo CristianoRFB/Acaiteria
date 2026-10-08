@@ -1,6 +1,5 @@
-import { httpsCallable } from 'firebase/functions';
-
 import { getFirebaseClient } from '@/lib/firebase/client';
+import { tenantCallable } from '@/lib/firebase/callable';
 import type { CashPaymentMethod } from '@/shared/cash-register';
 
 function requestId(value?: string) {
@@ -8,7 +7,7 @@ function requestId(value?: string) {
 }
 
 async function operateCashRegister<T extends Record<string, unknown>>(input: T) {
-  const operation = httpsCallable<T, Record<string, unknown>>(
+  const operation = tenantCallable<T, Record<string, unknown>>(
     getFirebaseClient().functions,
     'operateCashRegister',
   );
@@ -74,7 +73,7 @@ export async function reconcileCashRegisterControl(input: {
   physicalCashConfirmed: true;
   managerAuthorized: true;
 }) {
-  const reconcile = httpsCallable<typeof input, { ok: boolean; idempotent: boolean }>(
+  const reconcile = tenantCallable<typeof input, { ok: boolean; idempotent: boolean }>(
     getFirebaseClient().functions,
     'reconcileCashRegisterControl',
   );
@@ -85,7 +84,7 @@ export async function refundCompletedOrder(input: {
   orderId: string;
   reason: string;
 }) {
-  const refund = httpsCallable<typeof input, { ok: boolean }>(
+  const refund = tenantCallable<typeof input, { ok: boolean }>(
     getFirebaseClient().functions,
     'refundCompletedOrder',
   );

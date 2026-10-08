@@ -4,13 +4,15 @@ import { onAuthStateChanged, signOut, type User } from 'firebase/auth';
 import { collection, doc, getDoc, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
-import { developmentCatalog, developmentStoreConfig } from '@/lib/development-seed';
+import { developmentCatalog, developmentStoreConfig, developmentTenantBConfig } from '@/lib/development-seed';
 import { getFirebaseClient, hasFirebaseConfig, useDevelopmentSeed } from '@/lib/firebase/client';
 import type { CartItemDraft, CatalogSnapshot, Promotion, Role, StorePublicConfig } from '@/shared/domain';
 import { optimizedMenuImage, resolveModifierImage, resolveProductImage } from '@/shared/catalog-images';
 import { isOrderableCatalogProduct, normalizeCatalogProduct } from '@/shared/catalog-normalization';
 import { normalizeStoreConfig } from '@/shared/store-config';
 import { withBeverageOptions } from '@/shared/beverage-options';
+import { TENANT_A, tenantStorageKey } from '@/shared/tenancy';
+import { TenantProvider, useTenant } from '@/components/tenant-provider';
 
 interface CatalogState { catalog: CatalogSnapshot; config: StorePublicConfig; promotions: Promotion[]; loading: boolean; error?: string; development: boolean }
 const CatalogContext = createContext<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: true, development: true });
@@ -24,10 +26,32 @@ function enrichCatalogImages(catalog: CatalogSnapshot): CatalogSnapshot {
 }
 
 export function CatalogProvider({ children }: { children: ReactNode }) {
+  const { tenant, status: tenantStatus } = useTenant();
+  const tenantId = tenant?.id;
+  const tenantName = tenant?.displayName;
   const [state, setState] = useState<CatalogState>({ catalog: developmentCatalog, config: developmentStoreConfig, promotions: [], loading: !useDevelopmentSeed, development: useDevelopmentSeed });
   useEffect(() => {
+    if (tenantStatus !== 'active' || !tenantId) {
+      setState((old) => ({ ...old, loading: true }));
+      return;
+    }
     if (useDevelopmentSeed || !hasFirebaseConfig) {
-      setState({ catalog: enrichCatalogImages(withBeverageOptions(developmentCatalog)), config: developmentStoreConfig, promotions: [], loading: false, development: true });
+      const demoTenant = tenantId !== TENANT_A.id;
+      const catalog = demoTenant ? {
+        ...developmentCatalog,
+        categories: developmentCatalog.categories.map((item) => ({ ...item, name: `Amora • ${item.name}` })),
+        products: developmentCatalog.products.map((item) => ({
+          ...item,
+          name: `Amora ${item.name}`,
+          slug: `amora-${item.slug}`,
+          description: `Demonstração independente: ${item.description}`,
+          sizes: item.sizes.map((size) => ({ ...size, basePriceCents: size.basePriceCents + 150 })),
+        })),
+        groups: developmentCatalog.groups.map((item) => ({ ...item, name: `Amora • ${item.name}` })),
+        modifiers: developmentCatalog.modifiers.map((item) => ({ ...item, name: `Amora • ${item.name}`, priceCents: item.priceCents + 50 })),
+      } : developmentCatalog;
+      const config = demoTenant ? { ...developmentTenantBConfig, storeName: tenantName ?? developmentTenantBConfig.storeName } : developmentStoreConfig;
+      setState({ catalog: enrichCatalogImages(withBeverageOptions(catalog)), config, promotions: [], loading: false, development: true });
       return;
     }
     let db;
@@ -38,8 +62,8 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     const stops: Array<() => void> = [];
     const next = { catalog: { products: [], categories: [], groups: [], modifiers: [] } as CatalogSnapshot, config: developmentStoreConfig, promotions: [] as Promotion[] };
     const publish = () => setState({ ...next, catalog: enrichCatalogImages(withBeverageOptions(next.catalog)), promotions: next.promotions.map((promotion) => ({ ...promotion, imageUrl: optimizedMenuImage(promotion.imageUrl) })), loading: false, development: false });
-    stops.push(onSnapshot(doc(db, 'storePublicConfig', 'main'), (snap) => { next.config = normalizeStoreConfig(snap.exists() ? snap.data() : undefined); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
-    const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, name), where('active', '==', true), orderBy('displayOrder')), (snap) => {
+    stops.push(onSnapshot(doc(db, 'tenants', tenantId, 'settings', 'public'), (snap) => { next.config = normalizeStoreConfig(snap.exists() ? snap.data() : undefined); publish(); }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
+    const subscribe = <T,>(name: string, key: keyof CatalogSnapshot) => onSnapshot(query(collection(db, 'tenants', tenantId, name), where('active', '==', true), orderBy('displayOrder')), (snap) => {
       const values = snap.docs.map((item) => ({ id: item.id, ...item.data() }));
       (next.catalog[key] as T[]) = key === 'products'
         ? values.map((value) => normalizeCatalogProduct(value)).filter(isOrderableCatalogProduct) as T[]
@@ -47,7 +71,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
       publish();
     }, (error) => setState((old) => ({ ...old, loading: false, error: error.message })));
     stops.push(subscribe('categories', 'categories'), subscribe('products', 'products'), subscribe('modifierGroups', 'groups'), subscribe('modifiers', 'modifiers'));
-    stops.push(onSnapshot(query(collection(db, 'promotions'), where('active', '==', true)), (snap) => {
+    stops.push(onSnapshot(query(collection(db, 'tenants', tenantId, 'promotions'), where('active', '==', true)), (snap) => {
       next.promotions = snap.docs
         .map((item) => ({ id: item.id, ...item.data() }) as Promotion)
         .sort((a, b) => a.displayOrder - b.displayOrder);
@@ -55,7 +79,7 @@ export function CatalogProvider({ children }: { children: ReactNode }) {
     }, (error) => setState((old) => ({ ...old, loading: false, error: error.message }))));
     const timeout = window.setTimeout(() => setState((old) => old.loading ? { ...old, loading: false, error: 'Não foi possível conectar ao Firebase. Verifique a configuração e tente novamente.' } : old), 10000);
     return () => { window.clearTimeout(timeout); stops.forEach((stop) => stop()); };
-  }, []);
+  }, [tenantId, tenantName, tenantStatus]);
   return <CatalogContext.Provider value={state}>{children}</CatalogContext.Provider>;
 }
 export const useCatalog = () => useContext(CatalogContext);
@@ -118,33 +142,49 @@ function sanitizeCartDrafts(value: unknown): CartItemDraft[] {
   }).slice(0, 30);
 }
 
-function removeStoredCart() { try { localStorage.removeItem(CART_KEY); } catch { /* armazenamento bloqueado */ } }
-function persistCart(value: CartItemDraft[]) { try { localStorage.setItem(CART_KEY, JSON.stringify(value)); } catch { /* quota/modo privado: a sessão continua em memória */ } }
+function removeStoredCart(key: string) { try { localStorage.removeItem(key); } catch { /* armazenamento bloqueado */ } }
+function persistCart(key: string, value: CartItemDraft[]): boolean {
+  try { localStorage.setItem(key, JSON.stringify(value)); return true; }
+  catch { return false; /* quota/modo privado: a sessão continua em memória */ }
+}
 
 export function CartProvider({ children }: { children: ReactNode }) {
+  const { tenant, status: tenantStatus } = useTenant();
+  const tenantId = tenant?.id;
+  const cartKey = tenantId && tenantStatus === 'active' ? tenantStorageKey(tenantId, CART_KEY) : null;
   const [items, setItems] = useState<CartItemDraft[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const itemsRef = useRef<CartItemDraft[]>([]);
   useEffect(() => {
+    setHydrated(false);
+    if (!cartKey) {
+      itemsRef.current = [];
+      setItems([]);
+      setHydrated(true);
+      return;
+    }
     try {
-      const saved = localStorage.getItem(CART_KEY);
-      const loaded = saved ? JSON.parse(saved) : [];
+      const saved = localStorage.getItem(cartKey);
+      const legacySaved = !saved && tenantId === TENANT_A.id ? localStorage.getItem(CART_KEY) : null;
+      const stored = saved ?? legacySaved;
+      const loaded = stored ? JSON.parse(stored) : [];
       itemsRef.current = sanitizeCartDrafts(loaded);
       setItems(itemsRef.current);
+      if (legacySaved && persistCart(cartKey, itemsRef.current)) removeStoredCart(CART_KEY);
       setHydrated(true);
     } catch {
-      removeStoredCart();
+      removeStoredCart(cartKey);
       itemsRef.current = [];
       setItems([]);
       setHydrated(true);
     }
-  }, []);
+  }, [cartKey, tenantId]);
   const commit = useCallback((updateItems: (current: CartItemDraft[]) => CartItemDraft[]) => {
     const next = updateItems(itemsRef.current);
     itemsRef.current = next;
-    persistCart(next);
+    if (cartKey) persistCart(cartKey, next);
     setItems(next);
-  }, []);
+  }, [cartKey]);
   const add = useCallback((item: Omit<CartItemDraft, 'cartItemId'>) => { const id = newCartItemId(); commit((old) => [...old, { ...item, cartItemId: id }].slice(0, 30)); return id; }, [commit]);
   const update = useCallback((id: string, item: Omit<CartItemDraft, 'cartItemId'>) => commit((old) => old.map((candidate) => candidate.cartItemId === id ? { ...item, cartItemId: id } : candidate)), [commit]);
   const remove = useCallback((id: string) => commit((old) => old.filter((item) => item.cartItemId !== id)), [commit]);
@@ -159,6 +199,8 @@ export function useCart() { const context = useContext(CartContext); if (!contex
 interface AuthState { user: User | null; role: Role | null; loading: boolean }
 const AuthContext = createContext<AuthState>({ user: null, role: null, loading: true });
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { tenant, status: tenantStatus } = useTenant();
+  const tenantId = tenant?.id;
   const [state, setState] = useState<AuthState>({ user: null, role: null, loading: true });
   useEffect(() => {
     if (!hasFirebaseConfig) { setState({ user: null, role: null, loading: false }); return; }
@@ -170,28 +212,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setState({ user: null, role: null, loading: false });
       return;
     }
+    setState((old) => ({ ...old, loading: true }));
     return onAuthStateChanged(auth, async (user) => {
       if (!user) { setState({ user: null, role: null, loading: false }); return; }
       try {
-        const roleDoc = await getDoc(doc(db, 'users', user.uid));
-        if (roleDoc.exists() && roleDoc.data().active === false) {
+        const identity = await getDoc(doc(db, 'users', user.uid));
+        if (identity.exists() && identity.data().active === false) {
           await signOut(auth);
           setState({ user: null, role: null, loading: false });
           return;
         }
-        const role = roleDoc.exists() ? roleDoc.data().role as Role : null;
+        if (tenantStatus === 'platform') {
+          const role = identity.data()?.platformRole === 'platform_owner' ? 'platform_owner' : null;
+          setState({ user, role, loading: false });
+          return;
+        }
+        if (tenantStatus !== 'active' || !tenantId) {
+          setState({ user, role: null, loading: false });
+          return;
+        }
+        const membership = await getDoc(doc(db, 'tenants', tenantId, 'members', user.uid));
+        const membershipData = membership.data();
+        const validRoles: Role[] = ['tenant_owner', 'admin', 'staff', 'driver'];
+        const role = membership.exists() && membershipData?.status === 'ACTIVE' && validRoles.includes(membershipData.role as Role)
+          ? membershipData.role as Role
+          : null;
         setState({ user, role, loading: false });
       } catch {
-        // Uma falha transitória no documento de papel não deve deixar o painel
-        // preso em “carregando” nem conceder acesso administrativo.
+        // Uma falha de perfil ou membership nunca concede acesso por papel legado.
         setState({ user, role: null, loading: false });
       }
     });
-  }, []);
+  }, [tenantId, tenantStatus]);
   return <AuthContext.Provider value={state}>{children}</AuthContext.Provider>;
 }
 export const useAuth = () => useContext(AuthContext);
 
 export function AppProviders({ children }: { children: ReactNode }) {
-  return <AuthProvider><CatalogProvider><CartProvider>{children}</CartProvider></CatalogProvider></AuthProvider>;
+  return <TenantProvider><AuthProvider><CatalogProvider><CartProvider>{children}</CartProvider></CatalogProvider></AuthProvider></TenantProvider>;
 }

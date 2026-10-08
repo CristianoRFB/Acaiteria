@@ -1,13 +1,16 @@
 'use client';
 
-import { collection, limit, onSnapshot, orderBy, query, Timestamp } from 'firebase/firestore';
+import { limit, onSnapshot, orderBy, query, Timestamp } from 'firebase/firestore';
 import { ArrowRight, CircleDollarSign, Clock3, PackageCheck, ShoppingBag, WalletCards } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth, useCatalog } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantCollection } from '@/lib/firebase/tenant';
 import { formatBRL, getStoreAvailability, type OrderStatus } from '@/shared/domain';
+import { tenantPath } from '@/shared/tenancy';
 
 interface DashboardOrder {
   id: string;
@@ -26,6 +29,8 @@ const statusLabels: Record<OrderStatus, string> = {
 
 export default function AdminDashboard() {
   const { role } = useAuth();
+  const { tenant, slug } = useTenant();
+  const tenantId = tenant?.id;
   const { config } = useCatalog();
   const [orders, setOrders] = useState<DashboardOrder[]>([]);
   const [error, setError] = useState('');
@@ -36,13 +41,15 @@ export default function AdminDashboard() {
     return () => window.clearInterval(timer);
   }, []);
   useEffect(() => {
-    if (!hasFirebaseConfig || !role) return;
+    if (!hasFirebaseConfig || !role || !tenantId) return;
     return onSnapshot(
-      query(collection(getFirebaseClient().db, 'orders'), orderBy('createdAt', 'desc'), limit(100)),
+      query(tenantCollection(getFirebaseClient().db, tenantId, 'orders'), orderBy('createdAt', 'desc'), limit(100)),
       (snapshot) => setOrders(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DashboardOrder)),
       (cause) => setError(`Não foi possível atualizar os pedidos: ${cause.message}`),
     );
-  }, [role]);
+  }, [role, tenantId]);
+
+  const href = (path: string) => slug ? tenantPath(slug, path) : '#';
 
   const todayKey = now.toLocaleDateString('en-CA', { timeZone: config.timezone || 'America/Sao_Paulo' });
   const todayOrders = useMemo(() => orders.filter((order) => order.createdAt?.toDate().toLocaleDateString('en-CA', { timeZone: config.timezone || 'America/Sao_Paulo' }) === todayKey), [orders, todayKey, config.timezone]);
@@ -65,12 +72,12 @@ export default function AdminDashboard() {
     </section>
     <section className="mt-7 grid gap-5 xl:grid-cols-[1.3fr_.7fr]">
       <div className="surface rounded-3xl p-5 sm:p-6">
-        <div className="flex items-start justify-between gap-3"><div><p className="eyebrow">Fila agora</p><h2 className="mt-1 text-xl font-black text-brand-deep">Acompanhe os estágios</h2></div><a href="/admin/pedidos" className="inline-flex min-h-10 items-center gap-1 rounded-full px-3 text-sm font-black text-brand hover:bg-surface-warm">Abrir pedidos <ArrowRight className="size-4" /></a></div>
+        <div className="flex items-start justify-between gap-3"><div><p className="eyebrow">Fila agora</p><h2 className="mt-1 text-xl font-black text-brand-deep">Acompanhe os estágios</h2></div><a href={href('/admin/pedidos')} className="inline-flex min-h-10 items-center gap-1 rounded-full px-3 text-sm font-black text-brand hover:bg-surface-warm">Abrir pedidos <ArrowRight className="size-4" /></a></div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">{activeStatuses.map((status) => <div key={status} className="rounded-2xl bg-surface-warm p-4"><span className="text-xs font-bold text-text-muted">{statusLabels[status]}</span><strong className="mt-2 block text-2xl font-black text-brand-deep">{orders.filter((order) => order.status === status).length}</strong><span className="mt-1 block text-xs text-text-muted">pedido(s)</span></div>)}</div>
       </div>
-      <div className="surface rounded-3xl p-5 sm:p-6"><p className="eyebrow">Atalhos do turno</p><h2 className="mt-1 text-xl font-black text-brand-deep">Ações rápidas</h2><div className="mt-4 space-y-2"><QuickLink href="/admin/pedidos" icon={ShoppingBag} title="Operar pedidos" text="Confirmar e avançar o preparo" /><QuickLink href="/admin/caixa" icon={CircleDollarSign} title="Conferir caixa" text="Abrir turno ou registrar movimento" /><QuickLink href="/admin/catalogo" icon={PackageCheck} title="Atualizar cardápio" text="Disponibilidade, fotos e preços" /></div></div>
+      <div className="surface rounded-3xl p-5 sm:p-6"><p className="eyebrow">Atalhos do turno</p><h2 className="mt-1 text-xl font-black text-brand-deep">Ações rápidas</h2><div className="mt-4 space-y-2"><QuickLink href={href('/admin/pedidos')} icon={ShoppingBag} title="Operar pedidos" text="Confirmar e avançar o preparo" /><QuickLink href={href('/admin/caixa')} icon={CircleDollarSign} title="Conferir caixa" text="Abrir turno ou registrar movimento" /><QuickLink href={href('/admin/catalogo')} icon={PackageCheck} title="Atualizar cardápio" text="Disponibilidade, fotos e preços" /></div></div>
     </section>
-    <section className="surface mt-5 rounded-3xl p-5 sm:p-6"><div className="flex items-start justify-between gap-3"><div><p className="eyebrow">Últimos pedidos</p><h2 className="mt-1 text-xl font-black text-brand-deep">O que entrou por último</h2></div><Clock3 className="size-5 text-brand" /></div>{orders.slice(0, 5).map((order) => <a key={order.id} href={`/admin/pedidos/${order.id}`} className="mt-3 flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border-soft px-4 py-3 transition hover:border-brand/30 hover:bg-surface-warm"><span className="min-w-0"><strong className="block truncate text-sm">{order.orderNumber}</strong><span className="text-xs text-text-muted">{order.customer?.name || 'Cliente'} · {order.createdAt?.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) || 'agora'}</span></span><span className="shrink-0 text-right"><strong className="block text-sm text-brand">{formatBRL(order.pricing?.totalCents ?? 0)}</strong><span className="text-[11px] font-bold text-text-muted">{statusLabels[order.status]}</span></span></a>)}{!orders.length && <p className="mt-5 rounded-2xl bg-surface-warm p-5 text-sm text-text-muted">Nenhum pedido carregado ainda. Quando chegar um novo pedido, ele aparecerá aqui.</p>}</section>
+    <section className="surface mt-5 rounded-3xl p-5 sm:p-6"><div className="flex items-start justify-between gap-3"><div><p className="eyebrow">Últimos pedidos</p><h2 className="mt-1 text-xl font-black text-brand-deep">O que entrou por último</h2></div><Clock3 className="size-5 text-brand" /></div>{orders.slice(0, 5).map((order) => <a key={order.id} href={href(`/admin/pedidos/${order.id}`)} className="mt-3 flex min-h-14 items-center justify-between gap-3 rounded-2xl border border-border-soft px-4 py-3 transition hover:border-brand/30 hover:bg-surface-warm"><span className="min-w-0"><strong className="block truncate text-sm">{order.orderNumber}</strong><span className="text-xs text-text-muted">{order.customer?.name || 'Cliente'} · {order.createdAt?.toDate().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) || 'agora'}</span></span><span className="shrink-0 text-right"><strong className="block text-sm text-brand">{formatBRL(order.pricing?.totalCents ?? 0)}</strong><span className="text-[11px] font-bold text-text-muted">{statusLabels[order.status]}</span></span></a>)}{!orders.length && <p className="mt-5 rounded-2xl bg-surface-warm p-5 text-sm text-text-muted">Nenhum pedido carregado ainda. Quando chegar um novo pedido, ele aparecerá aqui.</p>}</section>
   </AdminShell>;
 }
 

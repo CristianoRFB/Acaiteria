@@ -1,7 +1,7 @@
 'use client';
 
-import { doc, onSnapshot } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { onSnapshot } from 'firebase/firestore';
+import { tenantCallable } from '@/lib/firebase/callable';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -14,9 +14,11 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { DriverBottomNav } from '@/components/driver-bottom-nav';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantDoc } from '@/lib/firebase/tenant';
 import {
   deliveryStatusLabels,
   deliveryStatusMessage,
@@ -24,6 +26,7 @@ import {
   getDeliveryActionError,
   type DeliveryRecord,
 } from '@/shared/delivery';
+import { tenantPath } from '@/shared/tenancy';
 
 interface DeliveryRow extends DeliveryRecord {
   id: string;
@@ -31,6 +34,8 @@ interface DeliveryRow extends DeliveryRecord {
 
 export default function DriverDeliveryPage() {
   const { user, role, loading } = useAuth();
+  const { tenant, slug } = useTenant();
+  const tenantId = tenant?.id;
   const { id } = useParams<{ id: string }>();
   const [delivery, setDelivery] = useState<DeliveryRow | null>(null);
   const [error, setError] = useState('');
@@ -40,10 +45,10 @@ export default function DriverDeliveryPage() {
   const [failureReason, setFailureReason] = useState('');
   const [showFailure, setShowFailure] = useState(false);
   useEffect(() => {
-    if (!hasFirebaseConfig || !user || role !== 'driver' || !id)
+    if (!hasFirebaseConfig || !tenantId || !user || role !== 'driver' || !id)
       return undefined;
     return onSnapshot(
-      doc(getFirebaseClient().db, 'deliveries', id),
+      tenantDoc(getFirebaseClient().db, tenantId, 'deliveries', id),
       (snapshot) =>
         setDelivery(
           snapshot.exists()
@@ -52,17 +57,17 @@ export default function DriverDeliveryPage() {
         ),
       () => setError('Não foi possível carregar esta entrega.'),
     );
-  }, [id, role, user]);
+  }, [id, role, tenantId, user]);
   useEffect(() => {
     if (!loading && (!user || role !== 'driver'))
-      window.location.href = '/entregador/login';
-  }, [loading, role, user]);
+      if (slug) window.location.href = tenantPath(slug, '/entregador/login');
+  }, [loading, role, slug, user]);
   async function call(name: string, payload: Record<string, string>) {
     setBusy(true);
     setError('');
     setNotice('');
     try {
-      await httpsCallable(getFirebaseClient().functions, name)(payload);
+      await tenantCallable(getFirebaseClient().functions, name)(payload);
       setNotice('Atualização salva.');
       return true;
     } catch (cause) {
@@ -95,7 +100,7 @@ export default function DriverDeliveryPage() {
   if (!delivery)
     return (
       <main className="min-h-screen bg-[#f8f7ff] p-5 pb-[calc(6rem+env(safe-area-inset-bottom))]">
-        <a href="/entregador" className="font-bold text-[#6f2bc5]">
+        <a href={slug ? tenantPath(slug, '/entregador') : '#'} className="font-bold text-[#6f2bc5]">
           ← Voltar
         </a>
         <div className="mx-auto mt-16 max-w-md rounded-3xl bg-white p-8 text-center">
@@ -119,7 +124,7 @@ export default function DriverDeliveryPage() {
       <header className="border-b border-[#e5e1ed] bg-white px-5 py-5">
         <div className="mx-auto flex max-w-3xl items-center gap-3">
           <a
-            href="/entregador"
+            href={slug ? tenantPath(slug, '/entregador') : '#'}
             aria-label="Voltar"
             className="grid size-10 place-items-center rounded-full text-[#6f2bc5] hover:bg-[#f3ecfa]"
           >
@@ -358,7 +363,7 @@ export default function DriverDeliveryPage() {
                 Esta entrega não aceita novas ações.
               </p>
               <a
-                href="/entregador"
+                href={slug ? tenantPath(slug, '/entregador') : '#'}
                 className="mt-4 inline-flex font-bold text-[#6f2bc5]"
               >
                 Voltar para o início

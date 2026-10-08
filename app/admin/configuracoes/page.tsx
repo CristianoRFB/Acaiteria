@@ -1,14 +1,16 @@
 'use client';
 
-import { doc, onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
+import { onSnapshot, serverTimestamp, setDoc } from 'firebase/firestore';
 import { BookOpen, CircleHelp, Plus, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 
 import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantDoc } from '@/lib/firebase/tenant';
 import {
   ADMIN_TUTORIAL_PROGRESS_EVENT,
   ADMIN_TUTORIALS,
@@ -19,6 +21,7 @@ import {
 } from '@/lib/admin-tutorials';
 import type { DeliveryZone, StoreDayHours, StoreHoursWindow, StorePublicConfig } from '@/shared/domain';
 import { normalizeStoreConfig } from '@/shared/store-config';
+import { isTenantAdminRole } from '@/shared/tenancy';
 
 const fallbackHours: StoreDayHours[] = [0, 1, 2, 3, 4, 5, 6].map((day) => ({ day, closed: true, windows: [] }));
 const defaultHolidayHours: StoreHoursWindow[] = [{ open: '15:00', close: '21:50' }];
@@ -32,6 +35,8 @@ function zoneId(value: string, index: number) {
 
 export default function SettingsPage() {
   const { role, user } = useAuth();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [config, setConfig] = useState<StorePublicConfig | null>(null);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -44,20 +49,21 @@ export default function SettingsPage() {
   const [zonesDraft, setZonesDraft] = useState<ZoneDraft[]>([]);
 
   useEffect(() => {
-    if (!hasFirebaseConfig || role !== 'admin') return;
+    if (!hasFirebaseConfig || !tenantId || !isTenantAdminRole(role)) return;
     return onSnapshot(
-      doc(getFirebaseClient().db, 'storePublicConfig', 'main'),
+      tenantDoc(getFirebaseClient().db, tenantId, 'settings', 'public'),
       (snapshot) => setConfig(normalizeStoreConfig(snapshot.exists() ? snapshot.data() : undefined)),
       (_cause) => { setConfig(normalizeStoreConfig(undefined)); setError('Não foi possível carregar as configurações da loja. Os valores padrão estão disponíveis para revisão.'); },
     );
-  }, [role]);
+  }, [role, tenantId]);
   useEffect(() => {
-    if (role !== 'admin' || !user?.uid) return undefined;
-    const sync = () => setTutorialProgress(readAdminTutorialProgress(user.uid));
+    if (!isTenantAdminRole(role) || !user?.uid) return undefined;
+    if (!tenantId) return undefined;
+    const sync = () => setTutorialProgress(readAdminTutorialProgress(tenantId, user.uid));
     sync();
     window.addEventListener(ADMIN_TUTORIAL_PROGRESS_EVENT, sync);
     return () => window.removeEventListener(ADMIN_TUTORIAL_PROGRESS_EVENT, sync);
-  }, [role, user?.uid]);
+  }, [role, tenantId, user?.uid]);
   useEffect(() => {
     if (!config) return;
     setHoursDraft((config.hours?.length === 7 ? config.hours : fallbackHours).map((day) => ({ ...day, windows: day.windows.map((window) => ({ ...window })) })));
@@ -136,7 +142,8 @@ export default function SettingsPage() {
       };
 
       if (!payload.storeName || !payload.fulfillmentModes.length || !payload.paymentMethods.length) throw new Error('Informe o nome e ao menos uma opção de recebimento e pagamento.');
-      await setDoc(doc(getFirebaseClient().db, 'storePublicConfig', 'main'), payload);
+      if (!tenantId) throw new Error('Estabelecimento ainda não foi identificado.');
+      await setDoc(tenantDoc(getFirebaseClient().db, tenantId, 'settings', 'public'), payload);
       setMessage('Configurações salvas e publicadas.');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível salvar as configurações da loja. As alterações não foram aplicadas. Tente novamente.');
@@ -148,7 +155,7 @@ export default function SettingsPage() {
   return <AdminShell adminOnly>
     <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end"><div><p className="text-xs font-extrabold uppercase tracking-[.18em] text-[#a62c63]">Loja</p><h1 className="mt-2 text-3xl font-black tracking-[-.04em]">Configurações</h1><p className="mt-2 max-w-2xl text-sm text-[#826a75]">Deixe a loja pronta para receber pedidos. Você pode salvar uma seção por vez; nada aqui apaga pedidos, Caixa ou Finanças.</p></div><Button type="button" onClick={() => openAdminTutorial('admin-first-use')} className="rounded-full bg-[#82204f] text-white"><BookOpen /> Mostrar tutorial</Button></div>
     <section className="mt-7 rounded-[26px] border border-[#82204f]/10 bg-[#fffaf5] p-5 sm:p-6"><div className="flex items-start gap-3"><CircleHelp className="mt-0.5 size-5 shrink-0 text-[#82204f]" /><div><h2 className="text-lg font-black">Comece por aqui</h2><p className="mt-1 text-sm leading-relaxed text-[#6f5360]">Confira nesta ordem: nome e contato, pedidos e pagamentos, entrega, horários e mensagem ao cliente. Se precisar, use o botão Mostrar tutorial.</p></div></div></section>
-    <section className="mt-5 rounded-[26px] bg-white p-5 shadow-sm sm:p-6"><div className="flex items-start gap-3"><BookOpen className="mt-0.5 size-5 shrink-0 text-[#82204f]" /><div><h2 className="text-xl font-black">Tutoriais</h2><p className="mt-1 text-sm leading-relaxed text-[#6f5360]">Os tutoriais são somente para administradores. Reiniciar um tutorial apenas mostra as explicações novamente; não redefine nenhum dado da loja.</p></div></div><div className="mt-5 grid gap-3 lg:grid-cols-2">{ADMIN_TUTORIALS.map((tutorial) => { const progress = tutorialProgress[tutorial.id]; return <article key={tutorial.id} className="rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h3 className="font-black">{tutorial.title}</h3><p className="mt-1 text-sm leading-relaxed text-[#6f5360]">{tutorial.description}</p><span className={`mt-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-black ${progress?.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : progress?.status === 'skipped' ? 'bg-amber-50 text-amber-700' : 'bg-white text-[#826a75]'}`}>{progress?.status === 'completed' ? 'Concluído' : progress?.status === 'skipped' ? 'Pulado' : 'Ainda não visto'}</span></div><div className="flex shrink-0 gap-2"><Button type="button" onClick={() => openAdminTutorial(tutorial.id)} className="h-10 rounded-full bg-[#82204f] px-4 text-xs font-black text-white">Mostrar</Button><Button type="button" onClick={() => { if (!user?.uid) return; resetAdminTutorial(user.uid, tutorial.id); openAdminTutorial(tutorial.id); }} className="h-10 rounded-full border border-[#82204f]/15 bg-white px-4 text-xs font-black text-[#82204f]">Reiniciar</Button></div></div></article>; })}</div></section>
+    <section className="mt-5 rounded-[26px] bg-white p-5 shadow-sm sm:p-6"><div className="flex items-start gap-3"><BookOpen className="mt-0.5 size-5 shrink-0 text-[#82204f]" /><div><h2 className="text-xl font-black">Tutoriais</h2><p className="mt-1 text-sm leading-relaxed text-[#6f5360]">Os tutoriais são somente para administradores. Reiniciar um tutorial apenas mostra as explicações novamente; não redefine nenhum dado da loja.</p></div></div><div className="mt-5 grid gap-3 lg:grid-cols-2">{ADMIN_TUTORIALS.map((tutorial) => { const progress = tutorialProgress[tutorial.id]; return <article key={tutorial.id} className="rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-4"><div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start"><div><h3 className="font-black">{tutorial.title}</h3><p className="mt-1 text-sm leading-relaxed text-[#6f5360]">{tutorial.description}</p><span className={`mt-3 inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-black ${progress?.status === 'completed' ? 'bg-emerald-50 text-emerald-700' : progress?.status === 'skipped' ? 'bg-amber-50 text-amber-700' : 'bg-white text-[#826a75]'}`}>{progress?.status === 'completed' ? 'Concluído' : progress?.status === 'skipped' ? 'Pulado' : 'Ainda não visto'}</span></div><div className="flex shrink-0 gap-2"><Button type="button" onClick={() => openAdminTutorial(tutorial.id)} className="h-10 rounded-full bg-[#82204f] px-4 text-xs font-black text-white">Mostrar</Button><Button type="button" onClick={() => { if (!user?.uid || !tenantId) return; resetAdminTutorial(tenantId, user.uid, tutorial.id); openAdminTutorial(tutorial.id); }} className="h-10 rounded-full border border-[#82204f]/15 bg-white px-4 text-xs font-black text-[#82204f]">Reiniciar</Button></div></div></article>; })}</div></section>
     <form onSubmit={save} className="mt-7 max-w-4xl space-y-5">
       <SettingsSection title="Identificação" description="Como o cliente encontra e reconhece sua loja.">
         <div className="grid gap-4 sm:grid-cols-2"><AdminField label="Nome da loja" name="storeName" required defaultValue={config.storeName} /><AdminField label="Instagram" name="instagramHandle" defaultValue={config.instagramHandle} /><AdminField label="Endereço" name="address" defaultValue={config.address} /><AdminField label="Cidade/UF" name="city" defaultValue={config.city} /><AdminField label="Telefone exibido" name="phoneDisplay" defaultValue={config.phoneDisplay} /><AdminField label="WhatsApp (55 + DDD + número)" name="whatsappNumber" defaultValue={config.whatsappNumber} /></div>

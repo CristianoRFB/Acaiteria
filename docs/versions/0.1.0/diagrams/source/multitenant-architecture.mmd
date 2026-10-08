@@ -1,0 +1,15 @@
+flowchart TD
+  URL["/{tenantSlug}/..."] --> Middleware[Middleware resolve path]
+  Middleware --> TenantMap["tenantSlugs/{slug}"]
+  TenantMap --> TenantDoc["tenants/{tenantId}"]
+  TenantDoc --> Boundary[ACTIVE tenant context]
+  Boundary --> Client[Frontend tenant-scoped refs]
+  Client --> StoreData[("tenants/{tenantId}/...")]
+  Client --> Callable[Callable + tenantSlug]
+  Callable --> Resolver[Server resolves slug/status]
+  Resolver --> Scope[Async tenant scope]
+  Scope --> TenantDb[tenantDb proxy]
+  TenantDb --> StoreData
+  URL --> Platform[/platform global route/]
+  Platform --> PlatformFunctions[Platform Owner callables]
+  PlatformFunctions --> GlobalData[("tenants, tenantSlugs, platformAuditLogs")]

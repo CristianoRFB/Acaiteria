@@ -3,10 +3,11 @@ import type { Metadata, Viewport } from 'next';
 import './globals.css';
 import { AppProviders } from '@/components/providers';
 import { PwaServiceWorker } from '@/components/pwa-service-worker';
+import { TenantBoundary } from '@/components/tenant-provider';
 
 export const metadata: Metadata = {
-  title: 'Açaí + Sabor | Monte do seu jeito',
-  description: 'Monte seu açaí, acompanhe o preço e envie seu pedido direto para a loja.',
+  title: 'Cardápio online | Faça seu pedido',
+  description: 'Confira o cardápio, monte seu pedido e acompanhe a preparação.',
   manifest: '/manifest.webmanifest',
   icons: {
     icon: [{ url: '/favicon.svg', type: 'image/svg+xml' }],
@@ -23,5 +24,5 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="pt-BR"><body className="antialiased"><AppProviders><PwaServiceWorker />{children}</AppProviders></body></html>;
+  return <html lang="pt-BR"><body className="antialiased"><AppProviders><TenantBoundary><PwaServiceWorker />{children}</TenantBoundary></AppProviders></body></html>;
 }

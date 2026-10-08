@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant Order as Pedido tenant-scoped
+  participant Fn as Function financeira
+  participant Cash as Caixa do tenant
+  participant Finance as Finanças do tenant
+  Order->>Fn: conclusão ou estorno autenticado
+  Fn->>Fn: tenant + membership + idempotência
+  Fn->>Finance: entrada da venda/estorno
+  Fn->>Cash: movimento e reconciliação se caixa aberto
+  Fn->>Fn: retry seguro e trilha de auditoria
+  Fn-->>Order: resultado persistido

@@ -1,7 +1,7 @@
 'use client';
 
-import { doc, onSnapshot, Timestamp } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { onSnapshot, Timestamp } from 'firebase/firestore';
+import { tenantCallable } from '@/lib/firebase/callable';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -16,10 +16,13 @@ import { useParams } from 'next/navigation';
 import { useEffect, useState, type FormEvent } from 'react';
 import { IntegrationOrderPanel } from '@/components/integration-order-panel';
 import { KitchenTicket } from '@/components/kitchen-ticket';
+import { useTenant } from '@/components/tenant-provider';
 import type { IntegrationState } from '@/shared/integration';
 import { AdminShell } from '@/components/admin-shell';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantDoc } from '@/lib/firebase/tenant';
+import { tenantPath } from '@/shared/tenancy';
 import type { CustomerEditDecision, PublicOrderEditProposal } from '@/lib/direct-orders';
 import { useCatalog } from '@/components/providers';
 import {
@@ -71,6 +74,8 @@ const labels: Record<OrderStatus, string> = {
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { catalog } = useCatalog();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [order, setOrder] = useState<FullOrder | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -90,9 +95,10 @@ export default function OrderDetailPage() {
   const [editFields, setEditFields] = useState({ name: '', whatsapp: '', street: '', number: '', complement: '', neighborhood: '', reference: '', notes: '' });
   useEffect(() => {
     if (!hasFirebaseConfig) { setError('Firebase não configurado.'); return undefined; }
+    if (!tenantId) return undefined;
     try {
       return onSnapshot(
-        doc(getFirebaseClient().db, 'orders', id),
+        tenantDoc(getFirebaseClient().db, tenantId, 'orders', id),
         (snapshot) => setOrder(snapshot.exists() ? ({ id: snapshot.id, ...snapshot.data() } as FullOrder) : null),
         (cause) => setError(cause.message),
       );
@@ -100,7 +106,7 @@ export default function OrderDetailPage() {
       setError(cause instanceof Error ? cause.message : 'Não foi possível carregar o pedido.');
       return undefined;
     }
-  }, [id]);
+  }, [id, tenantId]);
   useEffect(() => {
     if (!order) return;
     setEditFields({ name: order.customer.name, whatsapp: order.customer.whatsapp, street: order.customer.address?.street ?? '', number: order.customer.address?.number ?? '', complement: order.customer.address?.complement ?? '', neighborhood: order.customer.address?.neighborhood ?? '', reference: order.customer.address?.reference ?? '', notes: order.notes ?? '' });
@@ -110,14 +116,14 @@ export default function OrderDetailPage() {
   }, [order]);
   useEffect(() => { if (order?.estimatedMinutes) setEstimateMinutes(String(order.estimatedMinutes)); }, [order?.estimatedMinutes]);
   useEffect(() => {
-    if (!hasFirebaseConfig || !order?.publicCode) { setPublicEditProposal(null); return undefined; }
+    if (!hasFirebaseConfig || !tenantId || !order?.publicCode) { setPublicEditProposal(null); return undefined; }
     try {
-      return onSnapshot(doc(getFirebaseClient().db, 'publicOrders', order.publicCode), (snapshot) => setPublicEditProposal((snapshot.data()?.editProposal as PublicOrderEditProposal | undefined) ?? null), () => setPublicEditProposal(null));
+      return onSnapshot(tenantDoc(getFirebaseClient().db, tenantId, 'publicOrders', order.publicCode), (snapshot) => setPublicEditProposal((snapshot.data()?.editProposal as PublicOrderEditProposal | undefined) ?? null), () => setPublicEditProposal(null));
     } catch {
       setPublicEditProposal(null);
       return undefined;
     }
-  }, [order?.publicCode]);
+  }, [order?.publicCode, tenantId]);
   async function update(status: OrderStatus, reason?: string): Promise<boolean> {
     if (!order) return false;
     const needsFinalize = status === 'CONFIRMED' && order.customerEditApproval?.status === 'PENDING';
@@ -146,9 +152,9 @@ export default function OrderDetailPage() {
       } else {
         if (needsFinalize) {
           // The customer's public response is finalized privately before the status transition.
-          await httpsCallable(getFirebaseClient().functions, 'finalizeOrderEdit')({ orderId: order.id, decision: 'ACCEPTED' });
+          await tenantCallable(getFirebaseClient().functions, 'finalizeOrderEdit')({ orderId: order.id, decision: 'ACCEPTED' });
         }
-        await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId: order.id, status, ...(reason ? { reason } : {}) });
+        await tenantCallable(getFirebaseClient().functions, 'updateOrderStatus')({ orderId: order.id, status, ...(reason ? { reason } : {}) });
         setNotice(status === 'COMPLETED' ? 'Pedido concluído e registrado em Finanças e no Caixa.' : status === 'CANCELLED' ? 'Pedido cancelado.' : status === 'PREPARING' ? 'Pedido enviado para a cozinha.' : `Pedido marcado como ${labels[status].toLowerCase()}.`);
       }
       setCancelOpen(false);
@@ -203,7 +209,7 @@ export default function OrderDetailPage() {
       }
       if (editFulfillmentMode === 'DELIVERY' && (!customer.address?.street || !customer.address.number || !customer.address.neighborhood)) throw new Error('Preencha o endereço para delivery.');
       const changeForCents = editPaymentMethod === 'CASH' && editChangeFor.trim() ? parseCurrencyToCents(editChangeFor) : null;
-      await httpsCallable(getFirebaseClient().functions, 'updateOrderDetails')({ orderId: order.id, customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode, ...(order.fulfillment.zoneId ? { zoneId: order.fulfillment.zoneId } : {}) }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } });
+      await tenantCallable(getFirebaseClient().functions, 'updateOrderDetails')({ orderId: order.id, customer, notes: editFields.notes.trim(), fulfillment: { mode: editFulfillmentMode, ...(order.fulfillment.zoneId ? { zoneId: order.fulfillment.zoneId } : {}) }, payment: { method: editPaymentMethod, needsChange: editPaymentMethod === 'CASH' && changeForCents !== null, ...(changeForCents !== null ? { changeForCents } : {}) } });
       setEditOpen(false);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível editar o pedido.');
@@ -243,7 +249,7 @@ export default function OrderDetailPage() {
     setBusy(true); setItemsError(''); setError('');
     try {
       calculateCartPreview(itemDrafts, catalog);
-      await httpsCallable(getFirebaseClient().functions, 'updateOrderDetails')({ orderId: order.id, customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP', ...(order.fulfillment.zoneId ? { zoneId: order.fulfillment.zoneId } : {}) } });
+      await tenantCallable(getFirebaseClient().functions, 'updateOrderDetails')({ orderId: order.id, customer: order.customer, notes: order.notes ?? '', items: itemDrafts, fulfillment: { mode: order.fulfillment.mode === 'DELIVERY' ? 'DELIVERY' : 'PICKUP', ...(order.fulfillment.zoneId ? { zoneId: order.fulfillment.zoneId } : {}) } });
       setItemsOpen(false);
     } catch (cause) {
       setItemsError(cause instanceof Error ? cause.message : 'Confira os itens e tente novamente.');
@@ -252,7 +258,7 @@ export default function OrderDetailPage() {
   async function finalizeEdit(decision: CustomerEditDecision) {
     if (!order) return;
     setBusy(true); setError('');
-    try { await httpsCallable(getFirebaseClient().functions, 'finalizeOrderEdit')({ orderId: order.id, decision }); }
+    try { await tenantCallable(getFirebaseClient().functions, 'finalizeOrderEdit')({ orderId: order.id, decision }); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível registrar a decisão.'); }
     finally { setBusy(false); }
   }
@@ -263,7 +269,7 @@ export default function OrderDetailPage() {
     if (!Number.isSafeInteger(minutes) || minutes < 5 || minutes > 240) { setError('Informe uma previsão entre 5 e 240 minutos.'); return; }
     setBusy(true); setError('');
     try {
-      await httpsCallable(getFirebaseClient().functions, 'updateOrderEstimate')({ orderId: order.id, estimatedMinutes: minutes });
+      await tenantCallable(getFirebaseClient().functions, 'updateOrderEstimate')({ orderId: order.id, estimatedMinutes: minutes });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar a previsão.'); }
     finally { setBusy(false); }
   }
@@ -271,7 +277,7 @@ export default function OrderDetailPage() {
     if (!order) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await httpsCallable<{ orderId: string }, { verified: boolean; alreadyVerified?: boolean; totalCents?: number }>(getFirebaseClient().functions, 'verifyOrderPricing')({ orderId: order.id });
+      const result = await tenantCallable<{ orderId: string }, { verified: boolean; alreadyVerified?: boolean; totalCents?: number }>(getFirebaseClient().functions, 'verifyOrderPricing')( { orderId: order.id });
       setNotice(result.data.alreadyVerified ? 'Os preços já estavam validados pelo servidor.' : 'Itens e total conferidos com o cardápio atual. O pedido pode continuar.');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível validar os preços.');
@@ -286,7 +292,7 @@ export default function OrderDetailPage() {
       ) : (
         <>
           <a
-            href="/admin/pedidos"
+            href={tenant ? tenantPath(tenant.slug, '/admin/pedidos') : '#'}
             className="inline-flex items-center gap-2 text-sm font-bold text-[#82204f]"
           >
             <ArrowLeft className="size-4" /> Voltar
@@ -570,7 +576,7 @@ export default function OrderDetailPage() {
           </section>
         </div>
       )}
-      {order && <KitchenTicket orderNumber={order.orderNumber} customerName={order.customer.name} fulfillmentMode={order.fulfillment.mode} items={order.items} notes={order.notes} paymentMethod={order.payment.method} totalCents={order.pricing.totalCents} />}
+      {order && <KitchenTicket storeName={tenant?.displayName} orderNumber={order.orderNumber} customerName={order.customer.name} fulfillmentMode={order.fulfillment.mode} items={order.items} notes={order.notes} paymentMethod={order.payment.method} totalCents={order.pricing.totalCents} />}
     </AdminShell>
   );
 }

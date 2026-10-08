@@ -1,14 +1,18 @@
 'use client';
 
-import { collection, limit, onSnapshot, query } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { limit, onSnapshot, query } from 'firebase/firestore';
+import { tenantCallable } from '@/lib/firebase/callable';
 import { Bike, KeyRound, Pencil, Phone, Plus, UserRound } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
 
 import { AdminShell } from '@/components/admin-shell';
+import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantCollection } from '@/lib/firebase/tenant';
 import type { DeliveryDriverStatus } from '@/shared/delivery';
+import { isTenantAdminRole } from '@/shared/tenancy';
 
 interface DriverRow {
   id: string;
@@ -33,6 +37,9 @@ const statusTone: Record<DeliveryDriverStatus, string> = {
 };
 
 export default function DriversPage() {
+  const { role } = useAuth();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -41,9 +48,9 @@ export default function DriversPage() {
   const [toggleBusyId, setToggleBusyId] = useState<string | null>(null);
   const [editing, setEditing] = useState<DriverRow | null>(null);
   useEffect(() => {
-    if (!hasFirebaseConfig) return undefined;
+    if (!hasFirebaseConfig || !tenantId || !isTenantAdminRole(role)) return undefined;
     return onSnapshot(
-      query(collection(getFirebaseClient().db, 'deliveryDrivers'), limit(200)),
+      query(tenantCollection(getFirebaseClient().db, tenantId, 'deliveryDrivers'), limit(200)),
       (snapshot) =>
         setDrivers(
           snapshot.docs.map(
@@ -52,7 +59,7 @@ export default function DriversPage() {
         ),
       () => setError('Não foi possível carregar os entregadores.'),
     );
-  }, []);
+  }, [role, tenantId]);
   async function create(event: FormEvent<HTMLFormElement>) {
     const form = event.currentTarget;
     event.preventDefault();
@@ -77,7 +84,7 @@ export default function DriversPage() {
       return;
     }
     try {
-      const result = await httpsCallable<
+      const result = await tenantCallable<
         { name: string; phone: string; email: string; password: string },
         { email: string }
       >(
@@ -104,7 +111,7 @@ export default function DriversPage() {
     setError('');
     setNotice('');
     try {
-      await httpsCallable(
+      await tenantCallable(
         getFirebaseClient().functions,
         'setDeliveryDriverEnabled',
       )({ driverId: driver.id, enabled: driver.enabled === false });
@@ -127,7 +134,7 @@ export default function DriversPage() {
     setBusy(true); setError(''); setNotice('');
     const data = new FormData(event.currentTarget);
     try {
-      await httpsCallable(getFirebaseClient().functions, 'updateDeliveryDriver')({ driverId: editing.id, name: String(data.get('name') ?? '').trim(), phone: String(data.get('phone') ?? '').trim(), email: String(data.get('email') ?? '').trim() });
+      await tenantCallable(getFirebaseClient().functions, 'updateDeliveryDriver')({ driverId: editing.id, name: String(data.get('name') ?? '').trim(), phone: String(data.get('phone') ?? '').trim(), email: String(data.get('email') ?? '').trim() });
       setNotice('Cadastro do motoboy atualizado.'); setEditing(null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Não foi possível atualizar o cadastro.');

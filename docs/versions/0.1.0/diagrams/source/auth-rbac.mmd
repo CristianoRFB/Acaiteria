@@ -1,0 +1,17 @@
+flowchart TD
+  Auth[Firebase Auth UID] --> Identity["users/{uid}"]
+  Identity --> Active{active?}
+  Active -->|não| Deny[Negar]
+  Active -->|sim| Global{platformRole?}
+  Global -->|platform_owner| Platform[Área /platform + logs globais]
+  Global -->|sem papel global| Slug[Resolve tenant slug]
+  Slug --> Status{tenant ACTIVE?}
+  Status -->|não| Deny
+  Status -->|sim| Membership["tenants/{id}/members/{uid}"]
+  Membership --> MemberState{membership ACTIVE?}
+  MemberState -->|não| Deny
+  MemberState -->|sim| Role{tenant role}
+  Role --> Owner[tenant_owner: administração do tenant]
+  Role --> Admin[admin: operação administrativa local]
+  Role --> Staff[staff: operação permitida]
+  Role --> Driver[driver: entregas atribuídas]

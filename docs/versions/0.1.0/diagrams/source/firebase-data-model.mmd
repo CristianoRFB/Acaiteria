@@ -1,0 +1,62 @@
+erDiagram
+  USER ||--o{ MEMBERSHIP : has
+  TENANT ||--o{ MEMBERSHIP : contains
+  TENANT ||--o{ PRODUCT : owns
+  TENANT ||--o{ ORDER : owns
+  TENANT ||--o{ DELIVERY : owns
+  TENANT ||--o{ FINANCE_ENTRY : owns
+  TENANT ||--o{ CASH_REGISTER : owns
+  TENANT ||--o{ PLATFORM_PRIVATE : stores
+  USER ||--o{ PLATFORM_AUDIT : performs
+  TENANT ||--o{ PLATFORM_AUDIT : target
+  USER {
+    string uid PK
+    boolean active
+    string platformRole
+  }
+  TENANT {
+    string id PK
+    string slug
+    string status
+    string displayName
+    string timezone
+  }
+  MEMBERSHIP {
+    string uid PK
+    string tenantId
+    string role
+    string status
+  }
+  PRODUCT {
+    string id PK
+    string name
+    boolean active
+  }
+  ORDER {
+    string id PK
+    string status
+    int totalCents
+  }
+  DELIVERY {
+    string id PK
+    string status
+    string driverId
+  }
+  FINANCE_ENTRY {
+    string id PK
+    int amountCents
+    string status
+  }
+  CASH_REGISTER {
+    string id PK
+    string status
+    int expectedCashCents
+  }
+  PLATFORM_PRIVATE {
+    string ownerUserId
+  }
+  PLATFORM_AUDIT {
+    string id PK
+    string action
+    string actorUid
+  }

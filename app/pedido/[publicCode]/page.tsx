@@ -1,17 +1,20 @@
 'use client';
 
 import { Check, ChefHat, Clock3, Copy, KeyRound, MessageCircle, PackageCheck, RefreshCw } from 'lucide-react';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { getDoc, onSnapshot } from 'firebase/firestore';
 import { useParams, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { PublicHeader } from '@/components/public-header';
 import { Button } from '@/components/ui/button';
 import { useCatalog } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { respondToOrderEditDirect, type PublicOrderEditProposal } from '@/lib/direct-orders';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantDoc } from '@/lib/firebase/tenant';
 import { formatBRL, getCustomerOrderStatusMessage, getOrderEstimateForStatus, type OrderStatus, type PricedItem } from '@/shared/domain';
 import { deliveryStatusLabels, type DeliveryStatus } from '@/shared/delivery';
+import { tenantStorageKey } from '@/shared/tenancy';
 
 interface PublicOrder {
   integrationMessage?: string; statusMessage?: string; pricingReviewStatus?: 'PENDING' | 'VERIFIED'; publicCode?: string; orderNumber: string; createdAt?: string; updatedAt?: string; estimatedMinutes?: number;
@@ -20,30 +23,27 @@ interface PublicOrder {
 const baseSteps: Array<{ statuses: OrderStatus[]; label: string; icon: typeof Clock3 }> = [
   { statuses: ['NEW'], label: 'Recebido', icon: Check }, { statuses: ['CONFIRMED'], label: 'Confirmado', icon: Clock3 }, { statuses: ['PREPARING'], label: 'Em preparo', icon: ChefHat }, { statuses: ['READY', 'OUT_FOR_DELIVERY'], label: 'Pronto', icon: PackageCheck }, { statuses: ['COMPLETED'], label: 'Concluído', icon: Check },
 ];
-function rememberOrder(publicCode: string, orderNumber: string) { try { const saved = JSON.parse(localStorage.getItem('acai-mais-sabor-recent-orders') || '[]') as Array<{ publicCode: string; orderNumber: string; savedAt: number }>; localStorage.setItem('acai-mais-sabor-recent-orders', JSON.stringify([{ publicCode, orderNumber, savedAt: Date.now() }, ...saved.filter((item) => item.publicCode !== publicCode)].slice(0, 5))); } catch { /* opcional */ } }
+function rememberOrder(tenantId: string, publicCode: string, orderNumber: string) { try { const storageKey = tenantStorageKey(tenantId, 'recent-orders'); const saved = JSON.parse(localStorage.getItem(storageKey) || '[]') as Array<{ publicCode: string; orderNumber: string; savedAt: number }>; localStorage.setItem(storageKey, JSON.stringify([{ publicCode, orderNumber, savedAt: Date.now() }, ...saved.filter((item) => item.publicCode !== publicCode)].slice(0, 5))); } catch { /* opcional */ } }
 async function copyText(value: string) { if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(value); const input = document.createElement('textarea'); input.value = value; input.setAttribute('readonly', ''); input.style.position = 'fixed'; input.style.opacity = '0'; document.body.appendChild(input); input.select(); document.execCommand('copy'); input.remove(); }
 function formatUpdatedAt(value: unknown): string | null { try { const date = value && typeof value === 'object' && 'seconds' in value ? new Date(Number((value as { seconds: unknown }).seconds) * 1000) : new Date(String(value)); if (Number.isNaN(date.getTime())) return null; return date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }); } catch { return null; } }
 
 export default function OrderPage() {
-  const { publicCode } = useParams<{ publicCode: string }>(); const search = useSearchParams(); const { config } = useCatalog();
+  const { publicCode } = useParams<{ publicCode: string }>(); const search = useSearchParams(); const { config } = useCatalog(); const { tenant } = useTenant();
   const routeCode = (() => { try { return decodeURIComponent(publicCode); } catch { return publicCode; } })();
   const [order, setOrder] = useState<PublicOrder | null>(null); const [loading, setLoading] = useState(true); const [error, setError] = useState(''); const [legacyMode, setLegacyMode] = useState(false); const [copied, setCopied] = useState(false); const [statusNotice, setStatusNotice] = useState(''); const [editBusy, setEditBusy] = useState(false); const [editError, setEditError] = useState(''); const previousStatus = useRef<OrderStatus | null>(null); const resolvedCodeRef = useRef(publicCode);
-  const load = useCallback(async () => { if (!hasFirebaseConfig) { setError('Firebase não configurado.'); setLoading(false); return; } try { const snapshot = await getDoc(doc(getFirebaseClient().db, 'publicOrders', resolvedCodeRef.current)); if (!snapshot.exists()) throw new Error('not-found'); setOrder(snapshot.data() as PublicOrder); setError(''); } catch { setError('Pedido não encontrado ou temporariamente indisponível.'); } finally { setLoading(false); } }, []);
+  const load = useCallback(async () => { if (!hasFirebaseConfig) { setError('Firebase não configurado.'); setLoading(false); return; } const tenantId = tenant?.id; if (!tenantId) { setError('Loja não encontrada.'); setLoading(false); return; } try { const snapshot = await getDoc(tenantDoc(getFirebaseClient().db, tenantId, 'publicOrders', resolvedCodeRef.current)); if (!snapshot.exists()) throw new Error('not-found'); setOrder(snapshot.data() as PublicOrder); setError(''); } catch { setError('Pedido não encontrado ou temporariamente indisponível.'); } finally { setLoading(false); } }, [tenant?.id]);
   useEffect(() => {
     resolvedCodeRef.current = routeCode;
-    if (!hasFirebaseConfig) { void load(); return undefined; }
-    const { db } = getFirebaseClient(); let stop = () => {}; let cancelled = false;
-    async function subscribe() {
-      if (cancelled) return;
-      resolvedCodeRef.current = routeCode;
-      stop = onSnapshot(doc(db, 'publicOrders', routeCode), (snapshot) => { if (snapshot.exists()) { setOrder(snapshot.data() as PublicOrder); setLoading(false); setError(''); setLegacyMode(false); } else { setLegacyMode(true); void load(); } }, () => { setLegacyMode(true); void load(); });
-    }
-    void subscribe();
-    return () => { cancelled = true; stop(); };
-  }, [load, routeCode]);
+    const tenantId = tenant?.id;
+    if (!hasFirebaseConfig || !tenantId) { void load(); return undefined; }
+    const { db } = getFirebaseClient();
+    resolvedCodeRef.current = routeCode;
+    const stop = onSnapshot(tenantDoc(db, tenantId, 'publicOrders', routeCode), (snapshot) => { if (snapshot.exists()) { setOrder(snapshot.data() as PublicOrder); setLoading(false); setError(''); setLegacyMode(false); } else { setLegacyMode(true); void load(); } }, () => { setLegacyMode(true); void load(); });
+    return stop;
+  }, [load, routeCode, tenant?.id]);
   useEffect(() => { if (!legacyMode) return undefined; const timer = setInterval(() => void load(), 8000); return () => clearInterval(timer); }, [legacyMode, load]);
-  useEffect(() => { if (!order) return; rememberOrder(resolvedCodeRef.current, order.orderNumber); if (previousStatus.current && previousStatus.current !== order.status) { setStatusNotice(`Atualização: ${order.statusMessage ?? getCustomerOrderStatusMessage(order.status)}`); const timer = window.setTimeout(() => setStatusNotice(''), 7000); previousStatus.current = order.status; return () => window.clearTimeout(timer); } previousStatus.current = order.status; return undefined; }, [order]);
-  async function respondToEdit(decision: 'ACCEPTED' | 'REJECTED') { if (!order?.editProposal || order.editProposal.status !== 'PENDING') return; setEditBusy(true); setEditError(''); try { await respondToOrderEditDirect(getFirebaseClient().db, resolvedCodeRef.current, decision); } catch (cause) { setEditError(cause instanceof Error ? cause.message : 'Não foi possível registrar sua decisão.'); } finally { setEditBusy(false); } }
+  useEffect(() => { if (!order || !tenant?.id) return; rememberOrder(tenant.id, resolvedCodeRef.current, order.orderNumber); if (previousStatus.current && previousStatus.current !== order.status) { setStatusNotice(`Atualização: ${order.statusMessage ?? getCustomerOrderStatusMessage(order.status)}`); const timer = window.setTimeout(() => setStatusNotice(''), 7000); previousStatus.current = order.status; return () => window.clearTimeout(timer); } previousStatus.current = order.status; return undefined; }, [order, tenant?.id]);
+  async function respondToEdit(decision: 'ACCEPTED' | 'REJECTED') { if (!order?.editProposal || order.editProposal.status !== 'PENDING' || !tenant?.id) return; setEditBusy(true); setEditError(''); try { await respondToOrderEditDirect(getFirebaseClient().db, tenant.id, resolvedCodeRef.current, decision); } catch (cause) { setEditError(cause instanceof Error ? cause.message : 'Não foi possível registrar sua decisão.'); } finally { setEditBusy(false); } }
   function whatsappUrl() { if (!order || !config.whatsappNumber) return '#'; const summary = order.items.map((item) => `${item.quantity}x ${item.productName} (${item.sizeLabel})`).join('\n'); const message = `Olá! Pedido ${order.orderNumber}\n${summary}\nTotal: ${formatBRL(order.pricing.totalCents)}\n${order.fulfillment.mode === 'PICKUP' ? 'Retirada' : 'Delivery'}`; return `https://wa.me/${config.whatsappNumber.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`; }
   if (loading) return <main className="grid min-h-screen place-items-center bg-[#fffaf5]"><RefreshCw className="size-6 animate-spin text-[#82204f]" /></main>;
   if (!order) return <main className="min-h-screen bg-[#fffaf5]"><PublicHeader /><div className="mx-auto max-w-lg px-6 py-24 text-center"><h1 className="text-3xl font-black">Não encontramos esse pedido</h1><p className="mt-2 text-sm text-[#826a75]">{error}</p><Button className="mt-6 rounded-full bg-[#82204f] text-white" onClick={load}>Tentar novamente</Button></div></main>;
@@ -64,7 +64,7 @@ export default function OrderPage() {
       <p className="mt-4 max-w-sm text-base leading-relaxed text-white/75">Ele é a referência do seu pedido. Mantenha-o salvo para acompanhar as atualizações da loja.</p>
       <div className="mt-7 rounded-[26px] border border-[#d2ae47] bg-[#1f1018] p-4 sm:p-5"><p className="text-xs font-black uppercase tracking-[.2em] text-[#e7bc54]">Código do pedido</p><p className="mt-2 break-all font-mono text-2xl font-black tracking-[.16em] text-white sm:text-3xl">{orderCode}</p><button type="button" onClick={copyCode} className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-[#d7f04a] px-5 text-sm font-black text-[#351924] transition hover:bg-[#c5df35]" aria-label="Copiar código do pedido"><Copy className="size-4" /> {copied ? 'Código copiado!' : 'Copiar código'}</button></div>
       <div className="mt-5 flex flex-wrap items-baseline gap-x-2 gap-y-1 text-sm text-white/75"><span>Previsão:</span><strong className="text-white">{estimate.label}</strong><span>·</span><span>{order.fulfillment.mode === 'PICKUP' ? 'Retirada na loja' : 'Entrega'}</span></div>
-      <a href="/" className="mt-7 inline-flex min-h-11 items-center rounded-full bg-[#c83d51] px-5 text-sm font-black text-white transition hover:bg-[#b93448]">Voltar ao início</a>
+      <a href={tenant ? `/${tenant.slug}` : '#'} className="mt-7 inline-flex min-h-11 items-center rounded-full bg-[#c83d51] px-5 text-sm font-black text-white transition hover:bg-[#b93448]">Voltar ao início</a>
       <div className="mt-8 border-t border-white/10 pt-6">
         <p className="rounded-2xl bg-white/10 p-4 text-sm font-bold leading-relaxed text-white" role="status" aria-live="polite">
           {order.statusMessage ?? getCustomerOrderStatusMessage(order.status) ?? order.integrationMessage ?? 'Pedido recebido pela loja. Acompanhe a atualização nesta página.'}

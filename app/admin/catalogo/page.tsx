@@ -2,8 +2,6 @@
 
 import {
   addDoc,
-  collection,
-  doc,
   onSnapshot,
   orderBy,
   query,
@@ -16,8 +14,10 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { AdminShell } from '@/components/admin-shell';
 import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantCollection, tenantDoc } from '@/lib/firebase/tenant';
 import {
   formatBRL,
   type ModifierGroup,
@@ -27,6 +27,7 @@ import {
 } from '@/shared/domain';
 import { normalizeCatalogProduct } from '@/shared/catalog-normalization';
 import { resolveProductImage } from '@/shared/catalog-images';
+import { isTenantAdminRole } from '@/shared/tenancy';
 
 type SizeDraft = { id: string; label: string; price: string; active: boolean };
 const defaultSizes: SizeDraft[] = [
@@ -69,6 +70,8 @@ function toDraftSizes(sizes: ProductSize[] | undefined): SizeDraft[] {
 
 export default function CatalogPage() {
   const { role } = useAuth();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<ProductCategory[]>([]);
   const [groups, setGroups] = useState<ModifierGroup[]>([]);
@@ -81,32 +84,56 @@ export default function CatalogPage() {
   const [sizes, setSizes] = useState<SizeDraft[]>(defaultSizes);
   const [imageUrl, setImageUrl] = useState('');
   useEffect(() => {
-    if (!hasFirebaseConfig || role !== 'admin') return;
+    if (!hasFirebaseConfig || !tenantId || !isTenantAdminRole(role)) return;
     const db = getFirebaseClient().db;
     const productsUnsubscribe = onSnapshot(
-      query(collection(db, 'products'), orderBy('displayOrder')),
+      query(
+        tenantCollection(db, tenantId, 'products'),
+        orderBy('displayOrder'),
+      ),
       (snap) =>
-        setProducts(snap.docs.map((item) => normalizeCatalogProduct({ id: item.id, ...item.data() }))),
-      (cause) => setError(`Não foi possível carregar os produtos: ${cause.message}`),
+        setProducts(
+          snap.docs.map((item) =>
+            normalizeCatalogProduct({ id: item.id, ...item.data() }),
+          ),
+        ),
+      (cause) =>
+        setError(`Não foi possível carregar os produtos: ${cause.message}`),
     );
     const categoriesUnsubscribe = onSnapshot(
-      query(collection(db, 'categories'), orderBy('displayOrder')),
+      query(
+        tenantCollection(db, tenantId, 'categories'),
+        orderBy('displayOrder'),
+      ),
       (snap) =>
-          setCategories(snap.docs.map((item) => ({ id: item.id, ...item.data() }) as ProductCategory)),
-        (cause) => setError(`Não foi possível carregar as categorias: ${cause.message}`),
+        setCategories(
+          snap.docs.map(
+            (item) => ({ id: item.id, ...item.data() }) as ProductCategory,
+          ),
+        ),
+      (cause) =>
+        setError(`Não foi possível carregar as categorias: ${cause.message}`),
     );
     const groupsUnsubscribe = onSnapshot(
-      query(collection(db, 'modifierGroups'), orderBy('displayOrder')),
+      query(
+        tenantCollection(db, tenantId, 'modifierGroups'),
+        orderBy('displayOrder'),
+      ),
       (snap) =>
-        setGroups(snap.docs.map((item) => ({ id: item.id, ...item.data() }) as ModifierGroup)),
-        (cause) => setError(`Não foi possível carregar os adicionais: ${cause.message}`),
+        setGroups(
+          snap.docs.map(
+            (item) => ({ id: item.id, ...item.data() }) as ModifierGroup,
+          ),
+        ),
+      (cause) =>
+        setError(`Não foi possível carregar os adicionais: ${cause.message}`),
     );
     return () => {
       productsUnsubscribe();
       categoriesUnsubscribe();
       groupsUnsubscribe();
     };
-  }, [role]);
+  }, [role, tenantId]);
   function openNew() {
     setEditing(null);
     setSizes(defaultSizes);
@@ -145,8 +172,13 @@ export default function CatalogPage() {
       if (!parsedSizes.length)
         throw new Error('Adicione pelo menos um tamanho.');
       const active = data.get('active') === 'on';
-      if (active && parsedSizes.some((size) => size.active && size.basePriceCents <= 0))
-        throw new Error('Informe um preço maior que R$ 0,00 para ativar este produto.');
+      if (
+        active &&
+        parsedSizes.some((size) => size.active && size.basePriceCents <= 0)
+      )
+        throw new Error(
+          'Informe um preço maior que R$ 0,00 para ativar este produto.',
+        );
       const selectedGroups = new Set(
         data.getAll('modifierGroupIds').map(String),
       );
@@ -165,10 +197,14 @@ export default function CatalogPage() {
           .map((group) => group.id),
         updatedAt: serverTimestamp(),
       };
+      if (!tenantId)
+        throw new Error('Estabelecimento ainda não foi identificado.');
       const db = getFirebaseClient().db;
       if (editing)
-        await setDoc(doc(db, 'products', editing.id), payload, { merge: true });
-      else await addDoc(collection(db, 'products'), payload);
+        await setDoc(tenantDoc(db, tenantId, 'products', editing.id), payload, {
+          merge: true,
+        });
+      else await addDoc(tenantCollection(db, tenantId, 'products'), payload);
       setShowForm(false);
       setEditing(null);
     } catch (cause) {
@@ -188,12 +224,22 @@ export default function CatalogPage() {
       return;
     }
     try {
-      await setDoc(doc(getFirebaseClient().db, 'categories', slugify(name)), {
-        name,
-        active: true,
-        displayOrder: categories.length + 1,
-        updatedAt: serverTimestamp(),
-      });
+      if (!tenantId)
+        throw new Error('Estabelecimento ainda não foi identificado.');
+      await setDoc(
+        tenantDoc(
+          getFirebaseClient().db,
+          tenantId,
+          'categories',
+          slugify(name),
+        ),
+        {
+          name,
+          active: true,
+          displayOrder: categories.length + 1,
+          updatedAt: serverTimestamp(),
+        },
+      );
       setCategoryName('');
       setShowCategoryForm(false);
     } catch {
@@ -243,57 +289,70 @@ export default function CatalogPage() {
             className="surface overflow-hidden rounded-3xl"
           >
             <div className="relative aspect-[16/8] overflow-hidden bg-surface-warm">
-              <img src={resolveProductImage(product.id, product.imageUrl)} alt="" loading="lazy" className="size-full object-cover" />
-              <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-black text-brand-deep">{product.sizes.filter((size) => size.active).length} tamanhos ativos</span>
+              <img
+                src={resolveProductImage(product.id, product.imageUrl)}
+                alt=""
+                loading="lazy"
+                className="size-full object-cover"
+              />
+              <span className="absolute bottom-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-black text-brand-deep">
+                {product.sizes.filter((size) => size.active).length} tamanhos
+                ativos
+              </span>
             </div>
             <div className="p-5">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="text-xs font-bold text-[#a62c63]">
-                  {categories.find(
-                    (category) => category.id === product.categoryId,
-                  )?.name ?? 'Sem categoria'}
-                </span>
-                <h2 className="mt-1 text-lg font-black">{product.name}</h2>
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="text-xs font-bold text-[#a62c63]">
+                    {categories.find(
+                      (category) => category.id === product.categoryId,
+                    )?.name ?? 'Sem categoria'}
+                  </span>
+                  <h2 className="mt-1 text-lg font-black">{product.name}</h2>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    updateDoc(
+                      tenantDoc(
+                        getFirebaseClient().db,
+                        tenantId!,
+                        'products',
+                        product.id,
+                      ),
+                      { active: !product.active, updatedAt: serverTimestamp() },
+                    )
+                  }
+                  className={`rounded-full px-2.5 py-1 text-[10px] font-black ${product.active ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}
+                >
+                  {product.active ? 'ATIVO' : 'INATIVO'}
+                </button>
+              </div>
+              <p className="mt-2 line-clamp-2 text-sm text-[#826a75]">
+                {product.description}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {product.sizes.map((size) => (
+                  <span
+                    key={size.id}
+                    className="rounded-full bg-[#fff0f5] px-2.5 py-1 text-xs font-bold text-[#82204f]"
+                  >
+                    {size.label} • {formatBRL(size.basePriceCents)}
+                  </span>
+                ))}
+                {!product.sizes.length && (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800">
+                    Precisa de revisão: adicione tamanho e preço
+                  </span>
+                )}
               </div>
               <button
                 type="button"
-                onClick={() =>
-                  updateDoc(
-                    doc(getFirebaseClient().db, 'products', product.id),
-                    { active: !product.active, updatedAt: serverTimestamp() },
-                  )
-                }
-                className={`rounded-full px-2.5 py-1 text-[10px] font-black ${product.active ? 'bg-emerald-50 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}
+                onClick={() => openEdit(product)}
+                className="mt-5 text-sm font-black text-[#82204f]"
               >
-                {product.active ? 'ATIVO' : 'INATIVO'}
+                Editar produto
               </button>
-            </div>
-            <p className="mt-2 line-clamp-2 text-sm text-[#826a75]">
-              {product.description}
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2">
-              {product.sizes.map((size) => (
-                <span
-                  key={size.id}
-                  className="rounded-full bg-[#fff0f5] px-2.5 py-1 text-xs font-bold text-[#82204f]"
-                >
-                  {size.label} • {formatBRL(size.basePriceCents)}
-                </span>
-              ))}
-              {!product.sizes.length && (
-                <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800">
-                  Precisa de revisão: adicione tamanho e preço
-                </span>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={() => openEdit(product)}
-              className="mt-5 text-sm font-black text-[#82204f]"
-            >
-              Editar produto
-            </button>
             </div>
           </article>
         ))}
@@ -465,27 +524,49 @@ export default function CatalogPage() {
                   </option>
                   <option value="SIMPLE">Produto pronto, sem montagem</option>
                 </select>
-                <span className="mt-1 block text-xs font-normal text-[#826a75]">Use a primeira opção para açaí, milk-shake e produtos que o cliente monta.</span>
+                <span className="mt-1 block text-xs font-normal text-[#826a75]">
+                  Use a primeira opção para açaí, milk-shake e produtos que o
+                  cliente monta.
+                </span>
               </label>
             </div>
-            <section className="mt-5 rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-4" aria-labelledby="image-help-title">
+            <section
+              className="mt-5 rounded-2xl border border-[#82204f]/10 bg-[#fffaf5] p-4"
+              aria-labelledby="image-help-title"
+            >
               <div>
-                <h3 id="image-help-title" className="font-black">Imagem do cardápio</h3>
+                <h3 id="image-help-title" className="font-black">
+                  Imagem do cardápio
+                </h3>
                 <p className="mt-1 text-xs leading-relaxed text-[#826a75]">
-                  Cole o link público de uma foto. Se deixar em branco, o sistema usa a imagem padrão deste produto.
+                  Cole o link público de uma foto. Se deixar em branco, o
+                  sistema usa a imagem padrão deste produto.
                 </p>
               </div>
               <div className="mt-4 grid gap-4 sm:grid-cols-[150px_1fr] sm:items-start">
                 <div className="aspect-square overflow-hidden rounded-2xl border border-[#82204f]/10 bg-white">
                   <img
-                    src={imageUrl || resolveProductImage(editing?.id ?? 'acai-monte-seu', editing?.imageUrl)}
+                    src={
+                      imageUrl ||
+                      resolveProductImage(
+                        editing?.id ?? 'acai-monte-seu',
+                        editing?.imageUrl,
+                      )
+                    }
                     alt="Prévia da imagem do produto"
                     className="size-full object-cover"
-                    onError={(event) => { event.currentTarget.src = resolveProductImage(editing?.id ?? 'acai-monte-seu'); }}
+                    onError={(event) => {
+                      event.currentTarget.src = resolveProductImage(
+                        editing?.id ?? 'acai-monte-seu',
+                      );
+                    }}
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold" htmlFor="product-image-url">
+                  <label
+                    className="block text-sm font-bold"
+                    htmlFor="product-image-url"
+                  >
                     Link da foto
                     <input
                       id="product-image-url"
@@ -504,7 +585,10 @@ export default function CatalogPage() {
                   >
                     Usar imagem padrão
                   </button>
-                  <p className="mt-2 text-xs text-[#826a75]">Dica: use JPG, PNG ou WebP em formato quadrado para o melhor resultado.</p>
+                  <p className="mt-2 text-xs text-[#826a75]">
+                    Dica: use JPG, PNG ou WebP em formato quadrado para o melhor
+                    resultado.
+                  </p>
                 </div>
               </div>
             </section>
@@ -561,7 +645,8 @@ export default function CatalogPage() {
                 />
                 <input type="hidden" name="slug" defaultValue={editing?.slug} />
                 <p className="text-xs text-[#826a75]">
-                  A posição menor aparece primeiro. O link do produto é criado automaticamente.
+                  A posição menor aparece primeiro. O link do produto é criado
+                  automaticamente.
                 </p>
               </div>
             </details>

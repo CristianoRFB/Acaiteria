@@ -1,9 +1,9 @@
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { getAuth } from 'firebase-admin/auth';
 import { getApps, initializeApp } from 'firebase-admin/app';
-import { FieldValue, getFirestore, Timestamp, type DocumentSnapshot } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type DocumentSnapshot } from 'firebase-admin/firestore';
 import { logger } from 'firebase-functions';
-import { HttpsError, onCall } from 'firebase-functions/v2/https';
+import { HttpsError } from 'firebase-functions/v2/https';
 import { onRequest } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 import { onDocumentCreated } from 'firebase-functions/v2/firestore';
@@ -13,6 +13,8 @@ import { processIntegration } from './integration/service.js';
 import { customerIntegrationMessage } from '../../shared/integration.js';
 import { withBeverageOptions } from '../../shared/beverage-options.js';
 export { getIntegrationReadiness, saveIntegrationMappings, retryOrderIntegration } from './integration/admin.js';
+export { platformCreateTenant, platformUpdateTenant, platformStartTenantSupport } from './platform/admin.js';
+import { currentTenant, rawDb, requireTenantRole, tenantCollection, tenantDb as db, tenantOnCall as onCall } from './tenant.js';
 
 import {
   calculateCartPreview,
@@ -31,7 +33,6 @@ import {
 import { canTransitionDelivery, deliveryStatusMessage, recordDeliveryCodeFailure, type DeliveryStatus } from '../../shared/delivery.js';
 
 if (!getApps().length) initializeApp();
-const db = getFirestore();
 const region = 'southamerica-east1';
 // App Check is mandatory in production. Firebase's Emulator Suite bypasses this
 // requirement so local integration tests can exercise callable functions.
@@ -57,7 +58,7 @@ export const createOrderSchema = z.object({
 
 async function loadCatalog(): Promise<{ catalog: CatalogSnapshot; config: StorePublicConfig }> {
   const [configSnap, productsSnap, categoriesSnap, groupsSnap, modifiersSnap] = await Promise.all([
-    db.doc('storePublicConfig/main').get(), db.collection('products').get(), db.collection('categories').get(), db.collection('modifierGroups').get(), db.collection('modifiers').get(),
+    db.doc('settings/public').get(), db.collection('products').get(), db.collection('categories').get(), db.collection('modifierGroups').get(), db.collection('modifiers').get(),
   ]);
   if (!configSnap.exists) throw new HttpsError('failed-precondition', 'Loja ainda não configurada.');
   return {
@@ -178,12 +179,7 @@ export const getPublicOrder = onCall({ region, timeoutSeconds: 15, memory: '256M
 });
 
 async function requireRole(uid: string | undefined, allowed: Role[]): Promise<Role> {
-  if (!uid) throw new HttpsError('unauthenticated', 'Entre novamente no painel.');
-  const snapshot = await db.doc(`users/${uid}`).get();
-  if (!snapshot.exists || snapshot.data()?.active === false) throw new HttpsError('permission-denied', 'Esta conta está desativada. Entre em contato com a loja.');
-  const role = snapshot.data()?.role as Role | undefined;
-  if (!role || !allowed.includes(role)) throw new HttpsError('permission-denied', 'Usuário sem permissão.');
-  return role;
+  return requireTenantRole(uid, allowed);
 }
 
 const cashOperationSchema = z.discriminatedUnion('operation', [
@@ -830,10 +826,12 @@ export const createDeliveryDriver = onCall({ region, timeoutSeconds: 20, memory:
     await db.runTransaction(async (transaction) => {
       const userRef = db.doc(`users/${created.uid}`);
       const driverRef = db.doc(`deliveryDrivers/${created.uid}`);
+      const membershipRef = rawDb.doc(`tenants/${currentTenant().tenantId}/members/${created.uid}`);
       const existing = await transaction.get(driverRef);
       if (existing.exists) throw new HttpsError('already-exists', 'Este motoboy já está cadastrado.');
       const now = FieldValue.serverTimestamp();
       transaction.set(userRef, { role: 'driver', name: input.name, email: input.email, phone: input.phone, active: true, createdAt: now, updatedAt: now }, { merge: true });
+      transaction.create(membershipRef, { userId: created.uid, tenantId: currentTenant().tenantId, role: 'driver', status: 'ACTIVE', createdAt: now, updatedAt: now });
       transaction.create(driverRef, { userId: created.uid, name: input.name, email: input.email, phone: input.phone, status: 'OFFLINE', enabled: true, createdAt: now, updatedAt: now });
     });
   } catch (cause) {
@@ -960,7 +958,7 @@ export const setDriverAvailability = onCall({ region, timeoutSeconds: 15, memory
     if (snapshot.data()?.status === 'BUSY' || snapshot.data()?.currentDeliveryId) {
       throw new HttpsError('failed-precondition', 'Conclua ou devolva a entrega atual antes de alterar sua disponibilidade.');
     }
-    transaction.update(ref, { status: parsed.data.status, updatedAt: FieldValue.serverTimestamp(), ...(role === 'admin' ? { enabled: true } : {}) });
+    transaction.update(ref, { status: parsed.data.status, updatedAt: FieldValue.serverTimestamp(), ...(role === 'admin' || role === 'tenant_owner' ? { enabled: true } : {}) });
   });
   return { ok: true, status: parsed.data.status };
 });
@@ -995,14 +993,16 @@ export const assignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256M
     const deliveryRef = db.doc(`deliveries/${deliveryId}`);
     const driverRef = db.doc(`deliveryDrivers/${driverId}`);
     const driverUserRef = db.doc(`users/${driverId}`);
+    const driverMembershipRef = rawDb.doc(`tenants/${currentTenant().tenantId}/members/${driverId}`);
     const delivery = await transaction.get(deliveryRef);
     const driver = await transaction.get(driverRef);
     const driverUser = await transaction.get(driverUserRef);
+    const driverMembership = await transaction.get(driverMembershipRef);
     if (!delivery.exists) throw new HttpsError('not-found', 'Entrega não encontrada.');
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
     const order = await transaction.get(orderRef);
     if (!order.exists || order.data()?.fulfillment?.mode !== 'DELIVERY') throw new HttpsError('failed-precondition', 'O pedido vinculado à entrega não é válido.');
-    if (!driver.exists || driver.data()?.enabled !== true || !driverUser.exists || driverUser.data()?.role !== 'driver' || driverUser.data()?.active === false) throw new HttpsError('failed-precondition', 'Motoboy indisponível.');
+    if (!driver.exists || driver.data()?.enabled !== true || !driverUser.exists || driverUser.data()?.active === false || !driverMembership.exists || driverMembership.data()?.role !== 'driver' || driverMembership.data()?.status !== 'ACTIVE' || driverMembership.data()?.tenantId !== currentTenant().tenantId) throw new HttpsError('failed-precondition', 'Motoboy indisponível.');
     if (delivery.data()?.status !== 'READY_FOR_DELIVERY') throw new HttpsError('failed-precondition', 'Esta entrega não está aguardando atribuição.');
     if (driver.data()?.status !== 'AVAILABLE' || driver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O motoboy precisa estar disponível e sem outra entrega vinculada.');
     const now = FieldValue.serverTimestamp();
@@ -1106,13 +1106,15 @@ export const reassignDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
     const oldDriverRef = db.doc(`deliveryDrivers/${oldDriverId}`);
     const newDriverRef = db.doc(`deliveryDrivers/${driverId}`);
     const newDriverUserRef = db.doc(`users/${driverId}`);
+    const newDriverMembershipRef = rawDb.doc(`tenants/${currentTenant().tenantId}/members/${driverId}`);
     const oldDriver = await transaction.get(oldDriverRef);
     const newDriver = await transaction.get(newDriverRef);
     const newDriverUser = await transaction.get(newDriverUserRef);
+    const newDriverMembership = await transaction.get(newDriverMembershipRef);
     const orderRef = db.doc(`orders/${String(delivery.data()?.orderId ?? '')}`);
     const order = await transaction.get(orderRef);
     if (!oldDriver.exists || oldDriver.data()?.status !== 'BUSY' || oldDriver.data()?.currentDeliveryId !== deliveryId) throw new HttpsError('failed-precondition', 'O vínculo do motoboy atual está inconsistente.');
-    if (!newDriver.exists || newDriver.data()?.enabled !== true || !newDriverUser.exists || newDriverUser.data()?.role !== 'driver' || newDriverUser.data()?.active === false || newDriver.data()?.status !== 'AVAILABLE' || newDriver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O novo motoboy precisa estar disponível e sem outra entrega vinculada.');
+    if (!newDriver.exists || newDriver.data()?.enabled !== true || !newDriverUser.exists || newDriverUser.data()?.active === false || !newDriverMembership.exists || newDriverMembership.data()?.role !== 'driver' || newDriverMembership.data()?.status !== 'ACTIVE' || newDriverMembership.data()?.tenantId !== currentTenant().tenantId || newDriver.data()?.status !== 'AVAILABLE' || newDriver.data()?.currentDeliveryId) throw new HttpsError('failed-precondition', 'O novo motoboy precisa estar disponível e sem outra entrega vinculada.');
     if (!order.exists) throw new HttpsError('not-found', 'Pedido vinculado não encontrado.');
     const now = FieldValue.serverTimestamp();
     const driverName = String(newDriver.data()?.name ?? 'Motoboy');
@@ -1272,15 +1274,20 @@ export const confirmDelivery = onCall({ region, timeoutSeconds: 15, memory: '256
   return { ok: true };
 });
 
-export const integrateCreatedOrder = onDocumentCreated({ document: 'orders/{orderId}', region, retry: true }, async (event) => { if (event.data?.data().integration) await processIntegration(event.params.orderId); });
+export const integrateCreatedOrder = onDocumentCreated({ document: 'tenants/{tenantId}/orders/{orderId}', region, retry: true }, async (event) => {
+  if (event.data?.data().integration) await processIntegration(event.params.tenantId, event.params.orderId);
+});
 export const recoverOrderIntegrations = onSchedule({ schedule: 'every 5 minutes', region }, async () => {
-  // Bounded work per run; composite index is versioned in firestore.indexes.json.
-  for (const status of ['PENDING', 'SENDING', 'ERROR']) {
-    const pending = await db.collection('orders').where('integration.status', '==', status).orderBy('updatedAt').limit(25).get();
-    for (const order of pending.docs) {
-      await processIntegration(order.id);
-      // Rotate deferred/permanent entries so they cannot starve later records.
-      await order.ref.update({ updatedAt: FieldValue.serverTimestamp() });
+  const tenants = await rawDb.collection('tenants').where('status', '==', 'ACTIVE').get();
+  for (const tenant of tenants.docs) {
+    // Bounded work per tenant and status; index is versioned in firestore.indexes.json.
+    for (const status of ['PENDING', 'SENDING', 'ERROR']) {
+      const pending = await tenantCollection(tenant.id, 'orders').where('integration.status', '==', status).orderBy('updatedAt').limit(25).get();
+      for (const order of pending.docs) {
+        await processIntegration(tenant.id, order.id);
+        // Rotate deferred/permanent entries so they cannot starve later records.
+        await order.ref.update({ updatedAt: FieldValue.serverTimestamp() });
+      }
     }
   }
 });

@@ -1,0 +1,12 @@
+flowchart LR
+  Browser[Browser / PWA] --> Worker[Cloudflare Worker]
+  Worker --> App[Aplicação compartilhada por path]
+  App --> Auth[Firebase Authentication]
+  App --> Rules[Firestore Security Rules]
+  App --> Callable[Cloud Functions]
+  Callable --> AdminSdk[Firebase Admin SDK]
+  AdminSdk --> Firestore[(Firestore)]
+  Callable --> Saipos[Saipos parcial / opcional]
+  Emulator[Firebase Emulator Suite] -. testes locais .-> Auth
+  Emulator -. testes locais .-> Rules
+  Emulator -. testes locais .-> Callable

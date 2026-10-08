@@ -1,0 +1,14 @@
+sequenceDiagram
+  actor Customer as Cliente
+  participant Web as Storefront do tenant
+  participant Fn as Cloud Function
+  participant DB as Firestore do tenant
+  participant Staff as Admin/entregador
+  Customer->>Web: monta carrinho e checkout
+  Web->>Fn: createOrder + tenantSlug + requestId
+  Fn->>Fn: resolve tenant, valida catálogo/preço
+  Fn->>DB: grava pedido idempotente
+  DB-->>Web: código público
+  Staff->>Fn: atualiza status/entrega autenticado
+  Fn->>DB: grava estado e eventos
+  Web->>DB: acompanha somente o código do pedido

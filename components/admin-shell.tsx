@@ -22,6 +22,8 @@ import { AdminTutorial } from '@/components/admin-tutorial';
 import { BrandLogo } from '@/components/brand-logo';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
 import { usePathname } from 'next/navigation';
+import { useTenant } from '@/components/tenant-provider';
+import { isTenantAdminRole, resolveTenantRoute, tenantPath } from '@/shared/tenancy';
 
 const links = [
   {
@@ -50,11 +52,14 @@ export function AdminShell({
 }) {
   const { user, role, loading } = useAuth();
   const pathname = usePathname();
+  const { slug, tenant } = useTenant();
+  const route = resolveTenantRoute(pathname ?? '/');
+  const activePath = route.kind === 'tenant' ? route.internalPath : pathname;
   useEffect(() => {
     if (!hasFirebaseConfig) return;
-    if (!loading && (!user || !role)) window.location.href = '/admin/login';
-    if (!loading && user && role === 'driver') window.location.href = '/entregador';
-  }, [loading, user, role]);
+    if (!loading && (!user || !role) && slug) window.location.href = tenantPath(slug, '/admin/login');
+    if (!loading && user && role === 'driver' && slug) window.location.href = tenantPath(slug, '/entregador');
+  }, [loading, user, role, slug]);
   if (!hasFirebaseConfig)
     return (
       <AdminMessage
@@ -70,7 +75,7 @@ export function AdminShell({
       />
     );
   if (!user || !role || role === 'driver') return null;
-  if (adminOnly && role !== 'admin')
+  if (adminOnly && !isTenantAdminRole(role))
     return (
       <AdminMessage
         title="Acesso restrito"
@@ -80,16 +85,17 @@ export function AdminShell({
   return (
     <div className="min-h-screen bg-surface-warm text-text-strong">
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col bg-[#351924] p-5 text-white lg:flex">
-        <a href="/admin" className="flex items-center gap-3">
-          <BrandLogo inverse />
+        <a href={slug ? tenantPath(slug, '/admin') : '#'} className="flex items-center gap-3">
+          <BrandLogo inverse brandName={tenant?.displayName ?? 'Estabelecimento'} logoUrl={tenant?.branding.logoUrl ?? ''} primaryColor={tenant?.branding.primaryColor} />
           <span className="sr-only">Painel operacional</span>
         </a>
         <nav className="mt-8 space-y-1">
           {links.map(({ href, label, icon: Icon }) => {
-            const active = pathname === href || (href !== '/admin' && pathname.startsWith(`${href}/`));
+            const active = activePath === href || (href !== '/admin' && activePath?.startsWith(`${href}/`));
+            const destination = slug ? tenantPath(slug, href) : '#';
             return <a
               key={href}
-              href={href}
+              href={destination}
               aria-current={active ? 'page' : undefined}
               className={`flex h-11 items-center gap-3 rounded-xl px-3 text-sm font-bold transition ${active ? 'bg-white text-brand-deep' : 'text-white/70 hover:bg-white/10 hover:text-white'}`}
             >
@@ -114,21 +120,22 @@ export function AdminShell({
       <div className="min-w-0 lg:pl-64">
         <header className="sticky top-0 z-20 flex h-16 min-w-0 items-center gap-2 border-b bg-white/90 px-3 backdrop-blur sm:px-4 lg:px-8">
           <a
-            href="/admin"
+            href={slug ? tenantPath(slug, '/admin') : '#'}
             className="shrink-0 font-black lg:hidden"
-            aria-label="Açaí + Sabor, painel"
+            aria-label={`${tenant?.displayName ?? 'Estabelecimento'}, painel`}
           >
-            <BrandLogo compact />
+            <BrandLogo compact brandName={tenant?.displayName ?? 'Estabelecimento'} logoUrl={tenant?.branding.logoUrl ?? ''} primaryColor={tenant?.branding.primaryColor} />
           </a>
           <nav
             className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain py-1 lg:hidden"
             aria-label="Navegação do painel"
           >
             {links.map(({ href, label, icon: Icon }) => {
-              const active = pathname === href || (href !== '/admin' && pathname.startsWith(`${href}/`));
+              const active = activePath === href || (href !== '/admin' && activePath?.startsWith(`${href}/`));
+              const destination = slug ? tenantPath(slug, href) : '#';
               return <a
                 key={href}
-                href={href}
+                href={destination}
                 aria-label={label}
                 aria-current={active ? 'page' : undefined}
                 title={label}

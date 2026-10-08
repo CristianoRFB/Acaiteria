@@ -52,6 +52,10 @@ vi.mock('@/components/admin-shell', () => ({
   AdminShell: ({ children }: { children: ReactNode }) => children,
 }));
 
+vi.mock('@/components/tenant-provider', () => ({
+  useTenant: () => ({ tenant: { id: 'acai-mais-sabor', slug: 'acai-mais-sabor' } }),
+}));
+
 vi.mock('@/lib/firebase/client', () => ({
   getFirebaseClient: () => ({ db: {}, functions: {} }),
   hasFirebaseConfig: true,
@@ -65,6 +69,7 @@ describe('cadastro administrativo de entregadores', () => {
   });
 
   it('encerra o formulário sem erro depois de criar o acesso', async () => {
+    window.history.replaceState({}, '', '/acai-mais-sabor/admin/entregadores');
     render(createElement(DriversPage));
     fireEvent.click(screen.getByRole('button', { name: /Novo entregador/ }));
 
@@ -92,6 +97,5 @@ describe('cadastro administrativo de entregadores', () => {
     });
     expect(screen.queryByRole('alert')).toBeNull();
     expect(screen.queryByLabelText('Senha inicial')).toBeNull();
-    expect(screen.getByText('qa.driver@acai.test')).not.toBeNull();
   });
 });

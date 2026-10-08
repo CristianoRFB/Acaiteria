@@ -1,12 +1,12 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { ensureTestTenant, seedTenantMember, tenantPayload, testDb } from './tenant-testing.js';
 
 if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor' });
 const auth = getAuth();
-const db = getFirestore();
+const db = testDb;
 const projectId = process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor';
 const functionsEndpoint = `http://${process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001'}/${projectId}/southamerica-east1`;
 const authEndpoint = `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`;
@@ -19,7 +19,8 @@ let driverEmail = '';
 
 async function createSignedInUser(role: 'admin' | 'driver' | 'customer', email: string) {
   const user = await auth.createUser({ email, password: testPassword, displayName: role });
-  await db.doc(`users/${user.uid}`).set({ role, active: true, name: role, email });
+  if (role === 'admin' || role === 'driver') await seedTenantMember(user.uid, role, true, { role, name: role, email });
+  else await db.doc(`users/${user.uid}`).set({ role, active: true, name: role, email });
   if (role === 'driver') await db.doc(`deliveryDrivers/${user.uid}`).set({ userId: user.uid, name: role, email, phone: '17999999999', status: 'BUSY', enabled: true });
   const response = await fetch(authEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password: testPassword, returnSecureToken: true }) });
   const result = await response.json() as { idToken?: string; error?: { message?: string } };
@@ -39,7 +40,7 @@ async function signInWithPassword(email: string) {
 }
 
 async function call(name: string, token: string, data: unknown) {
-  const response = await fetch(`${functionsEndpoint}/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ data }) });
+  const response = await fetch(`${functionsEndpoint}/${name}`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` }, body: JSON.stringify({ data: tenantPayload(data) }) });
   return { status: response.status, body: await response.json() as { result?: Record<string, unknown>; error?: { status?: string; message?: string } } };
 }
 
@@ -78,6 +79,7 @@ async function createReadyDelivery() {
 }
 
 beforeAll(async () => {
+  await ensureTestTenant();
   const suffix = randomUUID();
   const [admin, driver] = await Promise.all([
     createSignedInUser('admin', `qa-admin-${suffix}@example.test`),

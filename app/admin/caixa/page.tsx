@@ -1,8 +1,6 @@
 'use client';
 
 import {
-  collection,
-  doc,
   limit,
   onSnapshot,
   orderBy,
@@ -30,6 +28,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
 import {
   openCashRegister,
@@ -39,8 +38,10 @@ import {
   reconcileCashRegisterControl,
 } from '@/lib/cash-register';
 import { getFirebaseClient } from '@/lib/firebase/client';
+import { tenantCollection, tenantDoc } from '@/lib/firebase/tenant';
 import { formatBRL } from '@/shared/domain';
 import { parseBRLToCents } from '@/shared/finance';
+import { isTenantAdminRole, isTenantStaffRole } from '@/shared/tenancy';
 import {
   movementLabel,
   paymentMethodLabel,
@@ -88,6 +89,8 @@ function parseRequiredMoney(value: string, label: string) {
 
 export default function CashRegisterPage() {
   const { role } = useAuth();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [registers, setRegisters] = useState<CashRegister[]>([]);
   const [openRegisters, setOpenRegisters] = useState<CashRegister[]>([]);
   const [openRegisterId, setOpenRegisterId] = useState<string | null>(null);
@@ -137,7 +140,7 @@ export default function CashRegisterPage() {
   }
 
   useEffect(() => {
-    if (!role) return undefined;
+    if (!tenantId || !isTenantStaffRole(role)) return undefined;
     setLoading(true);
     setOpenRegistersLoaded(false);
     setCashControlLoaded(false);
@@ -145,7 +148,7 @@ export default function CashRegisterPage() {
     setCashControlLoadFailed(false);
     const db = getFirebaseClient().db;
     const stopRegisters = onSnapshot(
-      query(collection(db, 'cashRegisters'), orderBy('openedAt', 'desc'), limit(100)),
+      query(tenantCollection(db, tenantId, 'cashRegisters'), orderBy('openedAt', 'desc'), limit(100)),
       (snapshot) => {
         setRegisters(
           snapshot.docs.map(
@@ -162,7 +165,7 @@ export default function CashRegisterPage() {
       },
     );
     const stopMovements = onSnapshot(
-      query(collection(db, 'cashMovements'), orderBy('createdAt', 'desc'), limit(500)),
+      query(tenantCollection(db, tenantId, 'cashMovements'), orderBy('createdAt', 'desc'), limit(500)),
       (snapshot) =>
         setMovements(
           snapshot.docs.map(
@@ -172,7 +175,7 @@ export default function CashRegisterPage() {
       () => setError('Não foi possível carregar as movimentações do caixa.'),
     );
     const stopOpenRegisters = onSnapshot(
-      query(collection(db, 'cashRegisters'), where('status', '==', 'OPEN'), limit(2)),
+      query(tenantCollection(db, tenantId, 'cashRegisters'), where('status', '==', 'OPEN'), limit(2)),
       (snapshot) => {
         setOpenRegisters(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as CashRegister));
         setOpenRegistersLoaded(true);
@@ -184,7 +187,7 @@ export default function CashRegisterPage() {
       },
     );
     const stopControl = onSnapshot(
-      doc(db, 'cashControl', 'main'),
+      tenantDoc(db, tenantId, 'cashControl', 'main'),
       (snapshot) => {
         setOpenRegisterId(String(snapshot.data()?.openRegisterId ?? '') || null);
         setCashControlLoaded(true);
@@ -196,7 +199,7 @@ export default function CashRegisterPage() {
       },
     );
     const stopControlEvents = onSnapshot(
-      query(collection(db, 'cashControlEvents'), orderBy('createdAt', 'desc'), limit(10)),
+      query(tenantCollection(db, tenantId, 'cashControlEvents'), orderBy('createdAt', 'desc'), limit(10)),
       (snapshot) => setControlEvents(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }))),
       () => setError('Não foi possível carregar as reconciliações auditáveis do Caixa.'),
     );
@@ -207,7 +210,7 @@ export default function CashRegisterPage() {
       stopControl();
       stopControlEvents();
     };
-  }, [role]);
+  }, [role, tenantId]);
 
   const current = useMemo(
     () => openRegistersLoaded && cashControlLoaded && !openRegistersLoadFailed && !cashControlLoadFailed && openRegisters.length === 1 && openRegisters[0]?.id === openRegisterId
@@ -403,7 +406,7 @@ export default function CashRegisterPage() {
   async function handleReconcile(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     resetFeedback();
-    if (role !== 'admin') {
+    if (!isTenantAdminRole(role)) {
       setError('Somente um administrador pode restaurar o vínculo do Caixa.');
       return;
     }
@@ -506,7 +509,7 @@ export default function CashRegisterPage() {
               <p className="mt-2 text-sm leading-relaxed text-amber-950">
                 Caixa {openRegisters[0]?.id} · saldo esperado {formatBRL(openRegisters[0]?.expectedCashCents ?? openRegisters[0]?.initialBalanceCents ?? 0)}. Antes de restaurar o vínculo, confirme o saldo físico e obtenha autorização da gerência. A reconciliação não altera saldo nem lançamentos.
               </p>
-              {role === 'admin' ? (
+              {isTenantAdminRole(role) ? (
                 <form onSubmit={handleReconcile} className="mt-4 grid gap-3">
                   <AdminTextarea
                     label="Motivo registrado no histórico"

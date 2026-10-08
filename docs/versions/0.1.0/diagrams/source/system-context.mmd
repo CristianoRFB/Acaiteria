@@ -1,0 +1,12 @@
+flowchart LR
+  Customer[Cliente] --> Storefront[Cardápio por tenant]
+  Driver[Entregador] --> DriverApp[Portal do entregador por tenant]
+  Owner[Owner / staff] --> StoreAdmin[Admin da loja por tenant]
+  PlatformOwner[Platform Owner] --> PlatformAdmin[Admin global]
+  Storefront --> FirebaseAuth[Firebase Auth opcional]
+  Storefront --> Firestore[(Firestore tenant-scoped)]
+  StoreAdmin --> Functions[Cloud Functions]
+  DriverApp --> Functions
+  PlatformAdmin --> Functions
+  Functions --> Firestore
+  Storefront --> Worker[Cloudflare Worker compartilhado]

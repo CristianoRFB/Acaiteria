@@ -4,6 +4,8 @@ import { ArrowDownRight, ArrowLeft, ArrowRight, BookOpen, CheckCircle2, X } from
 import { useEffect, useMemo, useState } from 'react';
 
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
+import { isTenantAdminRole } from '@/shared/tenancy';
 import {
   ADMIN_TUTORIAL_OPEN_EVENT,
   ADMIN_TUTORIALS,
@@ -14,14 +16,15 @@ import {
 
 export function AdminTutorial() {
   const { role, user } = useAuth();
+  const { tenant } = useTenant();
   const [activeId, setActiveId] = useState<AdminTutorialId | null>(null);
   const [stepIndex, setStepIndex] = useState(0);
   const active = useMemo(() => ADMIN_TUTORIALS.find((tutorial) => tutorial.id === activeId) ?? null, [activeId]);
 
   useEffect(() => {
-    if (role !== 'admin' || !user?.uid) return undefined;
+    if (!isTenantAdminRole(role) || !user?.uid || !tenant?.id) return undefined;
     const showFirstUse = () => {
-      if (!readAdminTutorialProgress(user.uid)['admin-first-use']) {
+      if (!readAdminTutorialProgress(tenant.id, user.uid)['admin-first-use']) {
         setActiveId('admin-first-use');
         setStepIndex(0);
       }
@@ -35,14 +38,14 @@ export function AdminTutorial() {
     showFirstUse();
     window.addEventListener(ADMIN_TUTORIAL_OPEN_EVENT, openRequested);
     return () => window.removeEventListener(ADMIN_TUTORIAL_OPEN_EVENT, openRequested);
-  }, [role, user?.uid]);
+  }, [role, tenant?.id, user?.uid]);
 
-  if (!active || !user?.uid || role !== 'admin') return null;
+  if (!active || !user?.uid || !tenant?.id || !isTenantAdminRole(role)) return null;
   const step = active.steps[stepIndex];
   const isLast = stepIndex === active.steps.length - 1;
 
   function finish(status: 'completed' | 'skipped') {
-    setAdminTutorialProgress(user!.uid, active!.id, status);
+    setAdminTutorialProgress(tenant!.id, user!.uid, active!.id, status);
     setActiveId(null);
   }
 

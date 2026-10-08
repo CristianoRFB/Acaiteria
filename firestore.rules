@@ -1,57 +1,231 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    function signedIn() { return request.auth != null; }
-    function activeUser() { return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (!get(/databases/$(database)/documents/users/$(request.auth.uid)).data.keys().hasAny(['active']) || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active != false); }
-    function userRole() { return activeUser() ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role : null; }
-    function isStaff() { return userRole() == 'staff' || userRole() == 'admin'; }
-    function isAdmin() { return userRole() == 'admin'; }
-    function isDriver() { return userRole() == 'driver'; }
-    function validProduct(data) { return data.name is string && data.slug is string && data.description is string && data.active is bool && data.categoryId is string && data.productType in ['CUSTOMIZABLE', 'SIMPLE'] && data.displayOrder is int && data.sizes is list && data.modifierGroupIds is list; }
-    match /storePublicConfig/{id} { allow read: if true; allow create, update, delete: if isAdmin(); }
-    match /storePrivateConfig/{id} { allow read, write: if isAdmin(); }
-    match /categories/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
-    match /products/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update: if isAdmin() && validProduct(request.resource.data); allow delete: if isAdmin(); }
-    match /modifierGroups/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
-    match /modifiers/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
-    match /promotions/{id} { allow read: if isStaff() || resource.data.active == true; allow create, update, delete: if isAdmin(); }
-    match /financeEntries/{id} {
-      allow read: if isStaff();
-      allow write: if false;
+    function signedIn() {
+      return request.auth != null;
     }
-    match /cashControl/{id} { allow read: if isStaff(); allow write: if false; }
-    match /cashControlEvents/{id} { allow read: if isStaff(); allow write: if false; }
-    match /cashRegisters/{id} { allow read: if isStaff(); allow write: if false; }
-    match /cashMovements/{id} { allow read: if isStaff(); allow write: if false; }
-    match /orders/{id} {
-      allow read: if isStaff();
+
+    function identityExists() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function activeIdentity() {
+      return identityExists() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.active != false;
+    }
+
+    function isPlatformOwner() {
+      return activeIdentity() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.platformRole == 'platform_owner';
+    }
+
+    function tenantExists(tenantId) {
+      return exists(/databases/$(database)/documents/tenants/$(tenantId));
+    }
+
+    function tenantIsActive(tenantId) {
+      return tenantExists(tenantId) && get(/databases/$(database)/documents/tenants/$(tenantId)).data.status == 'ACTIVE';
+    }
+
+    function membershipExists(tenantId) {
+      return activeIdentity() && tenantIsActive(tenantId) &&
+        exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)).data.status == 'ACTIVE' &&
+        get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)).data.tenantId == tenantId;
+    }
+
+    function memberRole(tenantId) {
+      return membershipExists(tenantId)
+        ? get(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isTenantAdmin(tenantId) {
+      return membershipExists(tenantId) && memberRole(tenantId) in ['tenant_owner', 'admin'];
+    }
+
+    function isTenantStaff(tenantId) {
+      return membershipExists(tenantId) && memberRole(tenantId) in ['tenant_owner', 'admin', 'staff'];
+    }
+
+    function isTenantDriver(tenantId) {
+      return membershipExists(tenantId) && memberRole(tenantId) == 'driver';
+    }
+
+    function isPublicTenant(data) {
+      return data.keys().hasOnly([
+        'slug', 'displayName', 'status', 'branding', 'locale', 'timezone', 'currency', 'createdAt', 'updatedAt'
+      ]) && data.slug is string && data.displayName is string &&
+        data.status in ['ACTIVE', 'SUSPENDED', 'ARCHIVED'] && data.branding is map &&
+        data.locale is string && data.timezone is string && data.currency is string;
+    }
+
+    function validProduct(data) {
+      return data.name is string && data.slug is string && data.description is string &&
+        data.active is bool && data.categoryId is string &&
+        data.productType in ['CUSTOMIZABLE', 'SIMPLE'] && data.displayOrder is int &&
+        data.sizes is list && data.modifierGroupIds is list;
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isPlatformOwner());
+      allow list: if isPlatformOwner();
       allow create, update, delete: if false;
     }
-    match /publicOrders/{id} {
-      allow get: if isStaff() || (!signedIn() && resource.data.publicCode == id);
-      allow list: if isStaff();
-      allow create: if false;
-      allow update: if !signedIn() && resource.data.publicCode == id && resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' && request.resource.data.editProposal is map && request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] && request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']);
-      allow delete: if false;
+
+    match /tenantSlugs/{slug} {
+      allow get: if resource.data.tenantId is string &&
+        exists(/databases/$(database)/documents/tenants/$(resource.data.tenantId));
+      allow list, create, update, delete: if false;
     }
-    match /users/{uid} { allow read: if signedIn() && (request.auth.uid == uid || isAdmin()); allow write: if false; }
-    match /deliveryDrivers/{uid} {
-      allow read: if isStaff() || (isDriver() && request.auth.uid == uid);
-      allow write: if false;
-      match /deliveryHistory/{deliveryId} {
-        allow read: if isStaff() || (isDriver() && request.auth.uid == uid);
+
+    match /platformAuditLogs/{entryId} {
+      allow get, list: if isPlatformOwner();
+      allow create, update, delete: if false;
+    }
+
+    match /tenants/{tenantId} {
+      allow get: if isPublicTenant(resource.data);
+      allow list: if isPlatformOwner();
+      allow create, update, delete: if isPlatformOwner();
+
+      match /members/{uid} {
+        allow get: if activeIdentity() && (request.auth.uid == uid || isTenantAdmin(tenantId) || isPlatformOwner());
+        allow list: if isTenantAdmin(tenantId) || isPlatformOwner();
+        allow create, update, delete: if false;
+      }
+
+      match /settings/{settingId} {
+        allow get: if tenantIsActive(tenantId) && settingId == 'public';
+        allow list: if false;
+        allow create, update, delete: if isTenantAdmin(tenantId) && settingId == 'public';
+      }
+
+      match /categories/{id} {
+        allow read: if tenantIsActive(tenantId) && (isTenantStaff(tenantId) || resource.data.active == true);
+        allow create, update, delete: if isTenantAdmin(tenantId);
+      }
+
+      match /products/{id} {
+        allow read: if tenantIsActive(tenantId) && (isTenantStaff(tenantId) || resource.data.active == true);
+        allow create, update: if isTenantAdmin(tenantId) && validProduct(request.resource.data);
+        allow delete: if isTenantAdmin(tenantId);
+      }
+
+      match /modifierGroups/{id} {
+        allow read: if tenantIsActive(tenantId) && (isTenantStaff(tenantId) || resource.data.active == true);
+        allow create, update, delete: if isTenantAdmin(tenantId);
+      }
+
+      match /modifiers/{id} {
+        allow read: if tenantIsActive(tenantId) && (isTenantStaff(tenantId) || resource.data.active == true);
+        allow create, update, delete: if isTenantAdmin(tenantId);
+      }
+
+      match /promotions/{id} {
+        allow read: if tenantIsActive(tenantId) && (isTenantStaff(tenantId) || resource.data.active == true);
+        allow create, update, delete: if isTenantAdmin(tenantId);
+      }
+
+      match /orders/{id} {
+        allow get, list: if isTenantStaff(tenantId);
+        allow create, update, delete: if false;
+        match /integrationAttempts/{attemptId} {
+          allow get, list: if isTenantStaff(tenantId);
+          allow create, update, delete: if false;
+        }
+      }
+
+      match /publicOrders/{id} {
+        allow get: if tenantIsActive(tenantId) && (
+          isTenantStaff(tenantId) || (!signedIn() && resource.data.publicCode == id)
+        );
+        allow list: if isTenantStaff(tenantId);
+        allow create, delete: if false;
+        allow update: if tenantIsActive(tenantId) && !signedIn() &&
+          resource.data.publicCode == id &&
+          resource.data.editProposal is map && resource.data.editProposal.status == 'PENDING' &&
+          request.resource.data.editProposal is map &&
+          request.resource.data.editProposal.status in ['ACCEPTED', 'REJECTED'] &&
+          request.resource.data.editProposal.diff(resource.data.editProposal).affectedKeys().hasOnly(['status', 'respondedAt']) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['editProposal', 'updatedAt']);
+      }
+
+      match /deliveryDrivers/{uid} {
+        allow read: if isTenantStaff(tenantId) || (isTenantDriver(tenantId) && request.auth.uid == uid);
+        allow create, update, delete: if false;
+        match /deliveryHistory/{deliveryId} {
+          allow read: if isTenantStaff(tenantId) || (isTenantDriver(tenantId) && request.auth.uid == uid);
+          allow write: if false;
+        }
+      }
+
+      match /deliveries/{id} {
+        allow read: if isTenantStaff(tenantId) ||
+          (isTenantDriver(tenantId) && resource.data.driverId == request.auth.uid);
         allow write: if false;
       }
+
+      match /deliveryEvents/{id} {
+        allow read: if isTenantStaff(tenantId) ||
+          (isTenantDriver(tenantId) && exists(/databases/$(database)/documents/tenants/$(tenantId)/deliveries/$(resource.data.deliveryId)) &&
+            get(/databases/$(database)/documents/tenants/$(tenantId)/deliveries/$(resource.data.deliveryId)).data.driverId == request.auth.uid);
+        allow write: if false;
+      }
+
+      match /deliverySecrets/{id} {
+        allow read, write: if false;
+      }
+
+      match /financeEntries/{id} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /cashControl/{id} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /cashControlEvents/{id} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /cashRegisters/{id} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /cashMovements/{id} {
+        allow read: if isTenantStaff(tenantId);
+        allow write: if false;
+      }
+
+      match /integrationConfig/{id} {
+        allow read, write: if false;
+      }
+
+      match /private/{document=**} {
+        allow read, write: if isTenantAdmin(tenantId);
+      }
+
+      match /auditLogs/{id} {
+        allow read: if isTenantAdmin(tenantId) || isPlatformOwner();
+        allow write: if false;
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
     }
-    match /deliveries/{id} { allow read: if isStaff() || (isDriver() && resource.data.driverId == request.auth.uid); allow write: if false; }
-    match /deliveryEvents/{id} {
-      allow read: if isStaff() || (isDriver() && get(/databases/$(database)/documents/deliveries/$(resource.data.deliveryId)).data.driverId == request.auth.uid);
-      allow write: if false;
+
+    // Legacy single-tenant documents are intentionally no longer client-accessible.
+    // The migration tool uses Admin SDK and can copy data without weakening these rules.
+    match /{collection}/{document=**} {
+      allow read, write: if false;
     }
-    match /deliverySecrets/{id} { allow read, write: if false; }
-    match /orderRequests/{id} { allow read, write: if false; }
-    match /integrationConfig/{id} { allow read, write: if false; }
-    match /orders/{id}/integrationAttempts/{attempt} { allow read: if isStaff(); allow write: if false; }
-    match /{document=**} { allow read, write: if false; }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }

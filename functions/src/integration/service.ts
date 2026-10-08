@@ -5,9 +5,9 @@ import { emptyMappings, type IntegrationState, type IntegrationMappings } from '
 import { IntegrationError, MAX_ATTEMPTS, missingMappings, providerFor, retryDelay, safeError, type ProviderOrder } from './provider.js';
 
 // The persisted integration field is the outbox. Claims are atomic and never silently expire into a replay.
-export async function processIntegration(orderId: string): Promise<IntegrationState | null> {
+export async function processIntegration(tenantId: string, orderId: string): Promise<IntegrationState | null> {
   const db = getFirestore();
-  const ref = db.doc(`orders/${orderId}`);
+  const ref = db.doc(`tenants/${tenantId}/orders/${orderId}`);
   const correlationId = randomUUID();
   const claimed = await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
@@ -38,7 +38,7 @@ export async function processIntegration(orderId: string): Promise<IntegrationSt
   try {
     const provider = providerFor(claimed.state.provider);
     if (provider.mode === 'saipos') {
-      const mappingDoc = await db.doc('integrationConfig/saipos').get();
+      const mappingDoc = await db.doc(`tenants/${tenantId}/integrationConfig/saipos`).get();
       const mappings = (mappingDoc.data()?.mappings ?? emptyMappings()) as IntegrationMappings;
       const missing = missingMappings(claimed.order, mappings);
       if (missing.length) throw new IntegrationError('MAPPING_MISSING', 'PERMANENT', `Mapeamentos ausentes: ${missing.slice(0, 12).join(', ')}`);

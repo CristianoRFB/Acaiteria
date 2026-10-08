@@ -2,6 +2,7 @@ import type { PricedItem } from '@/shared/domain';
 import { formatBRL } from '@/shared/domain';
 
 interface KitchenTicketProps {
+  storeName?: string;
   orderNumber: string;
   customerName: string;
   fulfillmentMode: string;
@@ -11,11 +12,11 @@ interface KitchenTicketProps {
   totalCents: number;
 }
 
-export function KitchenTicket({ orderNumber, customerName, fulfillmentMode, items, notes, paymentMethod, totalCents }: KitchenTicketProps) {
+export function KitchenTicket({ storeName = 'Estabelecimento', orderNumber, customerName, fulfillmentMode, items, notes, paymentMethod, totalCents }: KitchenTicketProps) {
   return (
     <section id="kitchen-ticket" className="kitchen-ticket" aria-label={`Ficha de cozinha ${orderNumber}`}>
       <header className="kitchen-ticket__header">
-        <p>Açaí + Sabor • Cozinha</p>
+        <p>{storeName} • Cozinha</p>
         <h1>{orderNumber}</h1>
         <strong>{fulfillmentMode === 'DELIVERY' ? 'ENTREGA' : 'RETIRADA'} • {customerName}</strong>
       </header>

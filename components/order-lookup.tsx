@@ -2,6 +2,8 @@
 
 import { ArrowRight, Search, TicketCheck } from 'lucide-react';
 import { useEffect, useState, type FormEvent } from 'react';
+import { useTenant } from '@/components/tenant-provider';
+import { tenantStorageKey, tenantPath } from '@/shared/tenancy';
 
 interface RecentOrder {
   publicCode: string;
@@ -10,15 +12,17 @@ interface RecentOrder {
 }
 
 export function OrderLookup() {
+  const { tenant } = useTenant();
   const [code, setCode] = useState('');
   const [recent, setRecent] = useState<RecentOrder | null>(null);
   const [error, setError] = useState('');
   const [searching, setSearching] = useState(false);
 
   useEffect(() => {
+    if (!tenant?.id) return;
     try {
       const saved = JSON.parse(
-        localStorage.getItem('acai-mais-sabor-recent-orders') || '[]',
+        localStorage.getItem(tenantStorageKey(tenant.id, 'recent-orders')) || '[]',
       ) as RecentOrder[];
       const first = Array.isArray(saved)
         ? saved.find(
@@ -28,9 +32,9 @@ export function OrderLookup() {
         : undefined;
       if (first) setRecent(first);
     } catch {
-      localStorage.removeItem('acai-mais-sabor-recent-orders');
+      localStorage.removeItem(tenantStorageKey(tenant.id, 'recent-orders'));
     }
-  }, []);
+  }, [tenant?.id]);
 
   async function go(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -59,7 +63,7 @@ export function OrderLookup() {
     }
     setSearching(true);
     setError('');
-    window.location.href = `/pedido/${encodeURIComponent(token)}`;
+    window.location.href = tenant ? tenantPath(tenant.slug, `/pedido/${encodeURIComponent(token)}`) : '/';
   }
 
   return (
@@ -123,7 +127,7 @@ export function OrderLookup() {
               {recent.orderNumber || `#${recent.publicCode.slice(-6).toUpperCase()}`}
             </p>
             <a
-              href={`/pedido/${encodeURIComponent(recent.publicCode)}`}
+              href={tenant ? tenantPath(tenant.slug, `/pedido/${encodeURIComponent(recent.publicCode)}`) : '#'}
               className="mt-3 inline-flex items-center gap-1 text-sm font-black text-[#82204f]"
             >
               Abrir acompanhamento <ArrowRight className="size-4" />

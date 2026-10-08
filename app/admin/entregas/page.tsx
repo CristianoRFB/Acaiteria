@@ -1,7 +1,7 @@
 'use client';
 
-import { collection, getDocs, limit, onSnapshot, orderBy, query, Timestamp, where } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { getDocs, limit, onSnapshot, orderBy, query, Timestamp, where } from 'firebase/firestore';
+import { tenantCallable } from '@/lib/firebase/callable';
 import {
   CheckCircle2,
   Clock3,
@@ -14,15 +14,19 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantCollection } from '@/lib/firebase/tenant';
 import { formatBRL } from '@/shared/domain';
+import { tenantPath } from '@/shared/tenancy';
 import {
   deliveryStatusLabels,
   type DeliveryRecord,
   type DeliveryDriverStatus,
   type DeliveryStatus,
 } from '@/shared/delivery';
+import { isTenantAdminRole, isTenantStaffRole } from '@/shared/tenancy';
 
 interface DeliveryRow extends DeliveryRecord {
   id: string;
@@ -63,6 +67,8 @@ const statusTone: Record<DeliveryStatus, string> = {
 
 export default function DeliveriesPage() {
   const { role } = useAuth();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [deliveries, setDeliveries] = useState<DeliveryRow[]>([]);
   const [deliveredToday, setDeliveredToday] = useState(0);
   const [drivers, setDrivers] = useState<DriverRow[]>([]);
@@ -78,7 +84,7 @@ export default function DeliveriesPage() {
   const [cancelReason, setCancelReason] = useState('');
 
   useEffect(() => {
-    if (!hasFirebaseConfig || !role || !['admin', 'staff'].includes(role))
+    if (!hasFirebaseConfig || !tenantId || !isTenantStaffRole(role))
       return undefined;
     const db = getFirebaseClient().db;
     const combineDeliverySnapshots = (active: DeliveryRow[], failedRows: DeliveryRow[]) => {
@@ -88,7 +94,7 @@ export default function DeliveriesPage() {
     let activeRows: DeliveryRow[] = [];
     let failedRows: DeliveryRow[] = [];
     const stopActiveDeliveries = onSnapshot(
-      query(collection(db, 'deliveries'), where('status', 'in', activeStatuses), orderBy('updatedAt', 'desc')),
+      query(tenantCollection(db, tenantId, 'deliveries'), where('status', 'in', activeStatuses), orderBy('updatedAt', 'desc')),
       (snapshot) => {
         activeRows = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryRow);
         combineDeliverySnapshots(activeRows, failedRows);
@@ -99,7 +105,7 @@ export default function DeliveriesPage() {
       ),
     );
     const stopFailedDeliveries = onSnapshot(
-      query(collection(db, 'deliveries'), where('status', '==', 'DELIVERY_FAILED'), orderBy('updatedAt', 'desc')),
+      query(tenantCollection(db, tenantId, 'deliveries'), where('status', '==', 'DELIVERY_FAILED'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
         failedRows = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryRow);
         combineDeliverySnapshots(activeRows, failedRows);
@@ -109,12 +115,12 @@ export default function DeliveriesPage() {
     const todayInBrazil = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
     const startOfToday = new Date(`${todayInBrazil}T00:00:00.000-03:00`);
     const stopDeliveredToday = onSnapshot(
-      query(collection(db, 'deliveries'), where('status', '==', 'DELIVERED'), where('deliveredAt', '>=', Timestamp.fromDate(startOfToday)), orderBy('deliveredAt', 'desc')),
+      query(tenantCollection(db, tenantId, 'deliveries'), where('status', '==', 'DELIVERED'), where('deliveredAt', '>=', Timestamp.fromDate(startOfToday)), orderBy('deliveredAt', 'desc')),
       (snapshot) => setDeliveredToday(snapshot.size),
       () => setError('Não foi possível carregar o total de entregas concluídas hoje.'),
     );
     const stopDrivers = onSnapshot(
-      query(collection(db, 'deliveryDrivers'), where('enabled', '==', true), where('status', '==', 'AVAILABLE'), orderBy('updatedAt', 'desc')),
+      query(tenantCollection(db, tenantId, 'deliveryDrivers'), where('enabled', '==', true), where('status', '==', 'AVAILABLE'), orderBy('updatedAt', 'desc')),
       (snapshot) => {
         setDrivers(
           snapshot.docs.map(
@@ -130,16 +136,16 @@ export default function DeliveriesPage() {
       stopDeliveredToday();
       stopDrivers();
     };
-  }, [role]);
+  }, [role, tenantId]);
 
   useEffect(() => {
-    if (role !== 'admin' || !hasFirebaseConfig) return;
+    if (!isTenantAdminRole(role) || !hasFirebaseConfig) return;
     let cancelled = false;
     void (async () => {
       let totalSanitized = 0;
       try {
         for (let page = 0; page < 10; page += 1) {
-          const result = await httpsCallable<undefined, { sanitized: number; hasMore: boolean }>(getFirebaseClient().functions, 'sanitizeLegacyDeliveryLinks')();
+          const result = await tenantCallable<Record<string, never>, { sanitized: number; hasMore: boolean }>(getFirebaseClient().functions, 'sanitizeLegacyDeliveryLinks')({});
           totalSanitized += result.data.sanitized;
           if (!result.data.hasMore) break;
         }
@@ -201,7 +207,7 @@ export default function DeliveriesPage() {
     setError('');
     setNotice('');
     try {
-      await httpsCallable(
+      await tenantCallable(
         getFirebaseClient().functions,
         'assignDelivery',
       )({ deliveryId, driverId });
@@ -223,7 +229,7 @@ export default function DeliveriesPage() {
     setError('');
     setNotice('');
     try {
-      await httpsCallable(
+      await tenantCallable(
         getFirebaseClient().functions,
         'requeueDelivery',
       )({ deliveryId });
@@ -249,7 +255,7 @@ export default function DeliveriesPage() {
     setError('');
     setNotice('');
     try {
-      await httpsCallable(getFirebaseClient().functions, 'updateOrderStatus')({
+      await tenantCallable(getFirebaseClient().functions, 'updateOrderStatus')({
         orderId: delivery.orderId,
         status: 'CANCELLED',
         reason: cancelReason.trim(),
@@ -268,7 +274,7 @@ export default function DeliveriesPage() {
     if (!driverId) { setError('Escolha o novo motoboy disponível.'); return; }
     setBusyId(deliveryId); setError(''); setNotice('');
     try {
-      await httpsCallable(getFirebaseClient().functions, 'reassignDelivery')({ deliveryId, driverId });
+      await tenantCallable(getFirebaseClient().functions, 'reassignDelivery')({ deliveryId, driverId });
       setNotice('Motoboy trocado. A entrega foi devolvida à etapa de aceite.');
       setSelectedDriver((current) => ({ ...current, [deliveryId]: '' }));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível trocar o motoboy.'); }
@@ -277,7 +283,8 @@ export default function DeliveriesPage() {
   async function showEvents(deliveryId: string) {
     setEventDeliveryId(deliveryId); setError('');
     try {
-      const snapshot = await getDocs(query(collection(getFirebaseClient().db, 'deliveryEvents'), where('deliveryId', '==', deliveryId), limit(100)));
+      if (!tenantId) throw new Error('Estabelecimento não identificado.');
+      const snapshot = await getDocs(query(tenantCollection(getFirebaseClient().db, tenantId, 'deliveryEvents'), where('deliveryId', '==', deliveryId), limit(100)));
       setEvents(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as DeliveryEventRow).sort((a, b) => (b.createdAt?.toDate?.().getTime() ?? 0) - (a.createdAt?.toDate?.().getTime() ?? 0)));
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Não foi possível carregar o histórico da entrega.'); }
   }
@@ -294,7 +301,7 @@ export default function DeliveriesPage() {
           </p>
         </div>
         <a
-          href="/admin/entregadores"
+          href={tenant ? tenantPath(tenant.slug, '/admin/entregadores') : '#'}
           className="inline-flex min-h-11 w-fit items-center gap-2 rounded-full bg-brand px-4 text-sm font-black text-white"
         >
           <UserRound className="size-4" /> Gerenciar motoboys

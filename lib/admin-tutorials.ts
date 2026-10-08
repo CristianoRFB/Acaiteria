@@ -21,7 +21,7 @@ export const ADMIN_TUTORIALS: AdminTutorialDefinition[] = [
     title: 'Primeiros passos do administrador',
     description: 'O caminho curto para deixar a loja pronta para operar.',
     steps: [
-      { title: 'Bem-vindo ao painel', text: 'Aqui você acompanha pedidos, cardápio, Caixa e Finanças da Açaí + Sabor.', image: '/docs/screens/admin-login.png', imageAlt: 'Tela de entrada do painel administrativo', hint: 'Entre por aqui' },
+      { title: 'Bem-vindo ao painel', text: 'Aqui você acompanha pedidos, cardápio, Caixa e Finanças do seu estabelecimento.', image: '/docs/screens/admin-login.png', imageAlt: 'Tela de entrada do painel administrativo', hint: 'Entre por aqui' },
       { title: 'Configure o básico', text: 'Em Configurações, confira nome, endereço, horários, formas de pagamento e entrega antes de abrir os pedidos.', image: '/docs/screens/admin-configuracoes.png', imageAlt: 'Tela de configurações da loja', hint: 'Confira estas seções' },
       { title: 'Prepare o cardápio', text: 'Em Catálogo, mantenha produtos, tamanhos, preços e disponibilidade corretos para o cliente.', image: '/docs/screens/admin-catalogo.png', imageAlt: 'Tela de catálogo de produtos', hint: 'Edite o produto' },
       { title: 'Abra o Caixa', text: 'Abra o turno informando o dinheiro disponível para troco antes de concluir o primeiro pedido.', image: '/docs/screens/admin-pedido.png', imageAlt: 'Tela operacional de um pedido', hint: 'Acompanhe o turno' },
@@ -66,14 +66,14 @@ export const ADMIN_TUTORIALS: AdminTutorialDefinition[] = [
 export const ADMIN_TUTORIAL_OPEN_EVENT = 'acai-admin-tutorial-open';
 export const ADMIN_TUTORIAL_PROGRESS_EVENT = 'acai-admin-tutorial-progress';
 
-function storageKey(uid: string) {
-  return `acai-admin-tutorials-v1:${uid}`;
+function storageKey(tenantId: string, uid: string) {
+  return `tenant:${tenantId}:acai-admin-tutorials-v1:${uid}`;
 }
 
-export function readAdminTutorialProgress(uid: string): AdminTutorialProgress {
+export function readAdminTutorialProgress(tenantId: string, uid: string): AdminTutorialProgress {
   if (typeof window === 'undefined') return {};
   try {
-    const parsed = JSON.parse(window.localStorage.getItem(storageKey(uid)) ?? '{}') as Record<string, unknown>;
+    const parsed = JSON.parse(window.localStorage.getItem(storageKey(tenantId, uid)) ?? '{}') as Record<string, unknown>;
     return Object.fromEntries(
       ADMIN_TUTORIALS.flatMap(({ id }) => {
         const value = parsed[id];
@@ -90,18 +90,18 @@ export function readAdminTutorialProgress(uid: string): AdminTutorialProgress {
   }
 }
 
-export function setAdminTutorialProgress(uid: string, id: AdminTutorialId, status: 'completed' | 'skipped') {
+export function setAdminTutorialProgress(tenantId: string, uid: string, id: AdminTutorialId, status: 'completed' | 'skipped') {
   if (typeof window === 'undefined') return;
-  const next = { ...readAdminTutorialProgress(uid), [id]: { status, at: new Date().toISOString() } };
-  window.localStorage.setItem(storageKey(uid), JSON.stringify(next));
+  const next = { ...readAdminTutorialProgress(tenantId, uid), [id]: { status, at: new Date().toISOString() } };
+  window.localStorage.setItem(storageKey(tenantId, uid), JSON.stringify(next));
   window.dispatchEvent(new CustomEvent(ADMIN_TUTORIAL_PROGRESS_EVENT));
 }
 
-export function resetAdminTutorial(uid: string, id: AdminTutorialId) {
+export function resetAdminTutorial(tenantId: string, uid: string, id: AdminTutorialId) {
   if (typeof window === 'undefined') return;
-  const next = readAdminTutorialProgress(uid);
+  const next = readAdminTutorialProgress(tenantId, uid);
   delete next[id];
-  window.localStorage.setItem(storageKey(uid), JSON.stringify(next));
+  window.localStorage.setItem(storageKey(tenantId, uid), JSON.stringify(next));
   window.dispatchEvent(new CustomEvent(ADMIN_TUTORIAL_PROGRESS_EVENT));
 }
 

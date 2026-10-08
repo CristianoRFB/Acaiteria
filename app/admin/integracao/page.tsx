@@ -1,11 +1,12 @@
 'use client';
 import { useCallback, useEffect, useState } from 'react';
-import { httpsCallable } from 'firebase/functions';
+import { tenantCallable } from '@/lib/firebase/callable';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
 import { Button } from '@/components/ui/button';
 import { getFirebaseClient } from '@/lib/firebase/client';
 import type { IntegrationMappings } from '@/shared/integration';
+import { isTenantAdminRole } from '@/shared/tenancy';
 
 interface Readiness { mode: string; status: string; message: string; revision: number; missingCount: number; mappings: IntegrationMappings; rows: Array<{ kind: keyof IntegrationMappings; key: string; label: string }> }
 export default function IntegrationPage() {
@@ -21,14 +22,14 @@ export default function IntegrationPage() {
       setMessage('Integração Saipos não configurada neste ambiente. O sistema de pedidos continua funcionando normalmente; a ativação exige credenciais e Functions no servidor.');
       return;
     }
-    try { setData((await httpsCallable<unknown, Readiness>(getFirebaseClient().functions, 'getIntegrationReadiness')({})).data); }
+    try { setData((await tenantCallable<Record<string, never>, Readiness>(getFirebaseClient().functions, 'getIntegrationReadiness')({})).data); }
     catch { setMessage('Não foi possível consultar a integração Saipos. O sistema de pedidos continua funcionando; verifique a implantação das Functions quando a integração for contratada.'); }
   }, [saiposEnabled]);
-  useEffect(() => { if (role === 'admin') void load(); }, [role, load]);
+  useEffect(() => { if (isTenantAdminRole(role)) void load(); }, [role, load]);
   async function save() {
     if (!data) return;
     setBusy(true); setMessage('');
-    try { await httpsCallable(getFirebaseClient().functions, 'saveIntegrationMappings')({ mappings: data.mappings, revision: data.revision }); await load(); setMessage('Códigos salvos. Isso não habilita a conexão Saipos.'); }
+    try { await tenantCallable(getFirebaseClient().functions, 'saveIntegrationMappings')({ mappings: data.mappings, revision: data.revision }); await load(); setMessage('Códigos salvos. Isso não habilita a conexão Saipos.'); }
     catch { setMessage('Não foi possível salvar. Recarregue para verificar alterações de outro administrador.'); }
     finally { setBusy(false); }
   }

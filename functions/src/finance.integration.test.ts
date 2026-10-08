@@ -1,12 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { getApps, initializeApp } from 'firebase-admin/app';
 import { getAuth } from 'firebase-admin/auth';
-import { getFirestore } from 'firebase-admin/firestore';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { ensureTestTenant, seedTenantMember, tenantPayload, testDb } from './tenant-testing.js';
 
 if (!getApps().length) initializeApp({ projectId: process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor' });
 const auth = getAuth();
-const db = getFirestore();
+const db = testDb;
 const projectId = process.env.GCLOUD_PROJECT || 'demo-acai-mais-sabor';
 const functionsEndpoint = `http://${process.env.FUNCTIONS_EMULATOR_HOST || '127.0.0.1:5001'}/${projectId}/southamerica-east1`;
 const authEndpoint = `http://${process.env.FIREBASE_AUTH_EMULATOR_HOST || '127.0.0.1:9099'}/identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=fake-api-key`;
@@ -17,7 +17,7 @@ let inactiveAdminToken = '';
 
 async function createSignedInUser(role: 'admin' | 'staff', email: string, active = true) {
   const user = await auth.createUser({ email, password: testPassword, displayName: role });
-  await db.doc(`users/${user.uid}`).set({ role, active, name: role, email });
+  await seedTenantMember(user.uid, role === 'admin' ? 'admin' : 'staff', active, { role, name: role, email });
   const response = await fetch(authEndpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -32,7 +32,7 @@ async function call(name: string, token: string, data: unknown) {
   const response = await fetch(`${functionsEndpoint}/${name}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify({ data }),
+    body: JSON.stringify({ data: tenantPayload(data) }),
   });
   return { status: response.status, body: await response.json() as { result?: Record<string, unknown>; error?: { status?: string; message?: string } } };
 }
@@ -52,6 +52,7 @@ function entryPayload(clientRequestId = randomUUID()) {
 }
 
 beforeAll(async () => {
+  await ensureTestTenant();
   const suffix = randomUUID();
   [adminToken, staffToken, inactiveAdminToken] = await Promise.all([
     createSignedInUser('admin', `qa-finance-admin-${suffix}@example.test`),

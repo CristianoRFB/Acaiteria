@@ -11,6 +11,8 @@ import {
 } from 'lucide-react';
 
 import { AdminShell } from '@/components/admin-shell';
+import { useTenant } from '@/components/tenant-provider';
+import { tenantPath } from '@/shared/tenancy';
 
 const topics = [
   {
@@ -55,6 +57,7 @@ const topics = [
 ];
 
 export default function HelpPage() {
+  const { tenant } = useTenant();
   return (
     <AdminShell>
       <div className="max-w-4xl">
@@ -103,7 +106,7 @@ export default function HelpPage() {
                 registre a observação se houver diferença.
               </p>
               <a
-                href="/admin/caixa"
+                href={tenant ? tenantPath(tenant.slug, '/admin/caixa') : '#'}
                 className="mt-5 inline-flex h-10 items-center rounded-full bg-[#d7f04a] px-5 text-sm font-black text-[#351924]"
               >
                 Ir para o Caixa

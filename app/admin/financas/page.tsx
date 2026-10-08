@@ -1,7 +1,6 @@
 'use client';
 
 import {
-  collection,
   limit,
   onSnapshot,
   orderBy,
@@ -9,17 +8,20 @@ import {
   Timestamp,
   where,
 } from 'firebase/firestore';
-import { httpsCallable } from 'firebase/functions';
+import { tenantCallable } from '@/lib/firebase/callable';
 import { ArrowDownLeft, ArrowUpRight, CalendarDays, Pencil, Plus, Save, WalletCards, X } from 'lucide-react';
 import { lazy, Suspense, useEffect, useMemo, useState, type FormEvent } from 'react';
 
 import { AdminField, AdminTextarea } from '@/components/admin-form';
 import { AdminShell } from '@/components/admin-shell';
 import { useAuth } from '@/components/providers';
+import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
 import type { FinanceInsightOrder } from '@/components/finance-insights';
 import { getFirebaseClient } from '@/lib/firebase/client';
+import { tenantCollection } from '@/lib/firebase/tenant';
 import { formatBRL } from '@/shared/domain';
+import { isTenantAdminRole } from '@/shared/tenancy';
 import { paymentMethodLabel } from '@/shared/cash-register';
 import {
   FINANCE_CATEGORIES,
@@ -50,6 +52,8 @@ function moneyInputValue(cents?: number) {
 
 export default function FinancesPage() {
   const { role } = useAuth();
+  const { tenant } = useTenant();
+  const tenantId = tenant?.id;
   const [entries, setEntries] = useState<FinanceEntry[]>([]);
   const [month, setMonth] = useState(currentMonth);
   const [kind, setKind] = useState<'ALL' | FinanceEntryKind>('ALL');
@@ -65,12 +69,12 @@ export default function FinancesPage() {
   const [notice, setNotice] = useState('');
 
   useEffect(() => {
-    if (role !== 'admin') return undefined;
+    if (!tenantId || !isTenantAdminRole(role)) return undefined;
     const start = `${month}-01`;
     const end = nextMonthStart(month);
     return onSnapshot(
       query(
-        collection(getFirebaseClient().db, 'financeEntries'),
+        tenantCollection(getFirebaseClient().db, tenantId, 'financeEntries'),
         where('date', '>=', start),
         where('date', '<', end),
         orderBy('date', 'desc'),
@@ -82,10 +86,10 @@ export default function FinancesPage() {
       },
       () => setError('Não foi possível carregar o caixa. Confira sua conexão e tente novamente.'),
     );
-  }, [month, role]);
+  }, [month, role, tenantId]);
 
   useEffect(() => {
-    if (role !== 'admin' || view !== 'INSIGHTS') {
+    if (!tenantId || !isTenantAdminRole(role) || view !== 'INSIGHTS') {
       setInsightOrders([]);
       setInsightLoading(false);
       return undefined;
@@ -98,7 +102,7 @@ export default function FinancesPage() {
     const end = Timestamp.fromDate(new Date(Date.UTC(endYear, endMonth - 1, 1, 3)));
     return onSnapshot(
       query(
-        collection(getFirebaseClient().db, 'orders'),
+        tenantCollection(getFirebaseClient().db, tenantId, 'orders'),
         where('status', '==', 'COMPLETED'),
         where('updatedAt', '>=', start),
         where('updatedAt', '<', end),
@@ -114,7 +118,7 @@ export default function FinancesPage() {
         setError('Não foi possível carregar os pedidos para a visão comercial.');
       },
     );
-  }, [month, role, view]);
+  }, [month, role, tenantId, view]);
 
   const visibleEntries = useMemo(
     () => entries.filter((entry) => entry.date.startsWith(month) && (kind === 'ALL' || entry.kind === kind)),
@@ -174,7 +178,7 @@ export default function FinancesPage() {
       ...(String(data.get('notes') ?? '').trim() ? { notes: String(data.get('notes') ?? '').trim() } : {}),
     };
     try {
-      await httpsCallable(getFirebaseClient().functions, 'saveFinanceEntry')({ ...payload, ...(editing ? { id: editing.id } : {}) });
+      await tenantCallable(getFirebaseClient().functions, 'saveFinanceEntry')({ ...payload, ...(editing ? { id: editing.id } : {}) });
       setFormOpen(false);
       setEditing(null);
       setFinanceRequestId(null);
@@ -193,7 +197,7 @@ export default function FinancesPage() {
     setError('');
     setStatusBusyId(entry.id);
     try {
-      await httpsCallable(getFirebaseClient().functions, 'updateFinanceStatus')({ id: entry.id, status: entry.status === 'PAID' ? 'PENDING' : 'PAID' });
+      await tenantCallable(getFirebaseClient().functions, 'updateFinanceStatus')({ id: entry.id, status: entry.status === 'PAID' ? 'PENDING' : 'PAID' });
       setNotice(entry.status === 'PAID' ? 'Lançamento marcado como pendente.' : 'Lançamento marcado como pago.');
     } catch {
       setError('Não foi possível atualizar o status do lançamento.');
