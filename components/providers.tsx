@@ -95,7 +95,10 @@ interface CartState {
   clear: () => void;
 }
 const CartContext = createContext<CartState | null>(null);
+// The old global key is only imported once for Tenant A; Tenant B never reads it.
 const CART_KEY = 'acai-mais-sabor-cart-v2';
+const EMPTY_CART_ITEMS: CartItemDraft[] = [];
+interface CartSnapshot { key: string | null; items: CartItemDraft[]; hydrated: boolean }
 
 function newCartItemId(prefix = 'cart') {
   try { return `${prefix}-${crypto.randomUUID()}`; } catch { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`; }
@@ -152,38 +155,34 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const { tenant, status: tenantStatus } = useTenant();
   const tenantId = tenant?.id;
   const cartKey = tenantId && tenantStatus === 'active' ? tenantStorageKey(tenantId, CART_KEY) : null;
-  const [items, setItems] = useState<CartItemDraft[]>([]);
-  const [hydrated, setHydrated] = useState(false);
-  const itemsRef = useRef<CartItemDraft[]>([]);
+  const [snapshot, setSnapshot] = useState<CartSnapshot>({ key: null, items: [], hydrated: false });
+  const itemsRef = useRef<{ key: string | null; items: CartItemDraft[] }>({ key: null, items: [] });
   useEffect(() => {
-    setHydrated(false);
     if (!cartKey) {
-      itemsRef.current = [];
-      setItems([]);
-      setHydrated(true);
+      itemsRef.current = { key: null, items: [] };
+      setSnapshot({ key: null, items: [], hydrated: true });
       return;
     }
     try {
       const saved = localStorage.getItem(cartKey);
       const legacySaved = !saved && tenantId === TENANT_A.id ? localStorage.getItem(CART_KEY) : null;
       const stored = saved ?? legacySaved;
-      const loaded = stored ? JSON.parse(stored) : [];
-      itemsRef.current = sanitizeCartDrafts(loaded);
-      setItems(itemsRef.current);
-      if (legacySaved && persistCart(cartKey, itemsRef.current)) removeStoredCart(CART_KEY);
-      setHydrated(true);
+      const items = sanitizeCartDrafts(stored ? JSON.parse(stored) : []);
+      itemsRef.current = { key: cartKey, items };
+      setSnapshot({ key: cartKey, items, hydrated: true });
+      if (legacySaved && persistCart(cartKey, items)) removeStoredCart(CART_KEY);
     } catch {
       removeStoredCart(cartKey);
-      itemsRef.current = [];
-      setItems([]);
-      setHydrated(true);
+      itemsRef.current = { key: cartKey, items: [] };
+      setSnapshot({ key: cartKey, items: [], hydrated: true });
     }
   }, [cartKey, tenantId]);
   const commit = useCallback((updateItems: (current: CartItemDraft[]) => CartItemDraft[]) => {
-    const next = updateItems(itemsRef.current);
-    itemsRef.current = next;
-    if (cartKey) persistCart(cartKey, next);
-    setItems(next);
+    if (!cartKey || itemsRef.current.key !== cartKey) return;
+    const next = updateItems(itemsRef.current.items);
+    itemsRef.current = { key: cartKey, items: next };
+    persistCart(cartKey, next);
+    setSnapshot({ key: cartKey, items: next, hydrated: true });
   }, [cartKey]);
   const add = useCallback((item: Omit<CartItemDraft, 'cartItemId'>) => { const id = newCartItemId(); commit((old) => [...old, { ...item, cartItemId: id }].slice(0, 30)); return id; }, [commit]);
   const update = useCallback((id: string, item: Omit<CartItemDraft, 'cartItemId'>) => commit((old) => old.map((candidate) => candidate.cartItemId === id ? { ...item, cartItemId: id } : candidate)), [commit]);
@@ -191,6 +190,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
   const setQuantity = useCallback((id: string, quantity: number) => commit((old) => old.map((item) => item.cartItemId === id ? { ...item, quantity: Math.max(1, Math.min(20, quantity)) } : item)), [commit]);
   const duplicate = useCallback((id: string) => commit((old) => { const item = old.find((candidate) => candidate.cartItemId === id); return item ? [...old, { ...item, cartItemId: newCartItemId() }].slice(0, 30) : old; }), [commit]);
   const clear = useCallback(() => commit(() => []), [commit]);
+  const currentSnapshot = snapshot.key === cartKey && snapshot.hydrated;
+  const items = cartKey !== null && currentSnapshot ? snapshot.items : EMPTY_CART_ITEMS;
+  const hydrated = currentSnapshot;
   const value = useMemo(() => ({ items, hydrated, add, update, remove, setQuantity, duplicate, clear }), [items, hydrated, add, update, remove, setQuantity, duplicate, clear]);
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 }

@@ -28,9 +28,9 @@ async function findFreePort(usedPorts) {
 }
 
 const usedPorts = new Set();
-const [authPort, firestorePort, firestoreWebsocketPort, functionsPort] = await Promise.all([
-  findFreePort(usedPorts), findFreePort(usedPorts), findFreePort(usedPorts), findFreePort(usedPorts),
-]);
+const [authPort, firestorePort, firestoreWebsocketPort, functionsPort, loggingPort, hubPort, eventarcPort, tasksPort] = await Promise.all(
+  Array.from({ length: 8 }, () => findFreePort(usedPorts)),
+);
 const configPath = join(projectRoot, `.firebase.integration.${randomUUID()}.json`);
 const firebaseConfig = JSON.parse(await readFile(join(projectRoot, 'firebase.json'), 'utf8'));
 firebaseConfig.emulators = {
@@ -38,6 +38,10 @@ firebaseConfig.emulators = {
   auth: { ...firebaseConfig.emulators.auth, port: authPort },
   firestore: { ...firebaseConfig.emulators.firestore, port: firestorePort, websocketPort: firestoreWebsocketPort },
   functions: { ...firebaseConfig.emulators.functions, port: functionsPort },
+  logging: { ...firebaseConfig.emulators.logging, port: loggingPort },
+  hub: { ...firebaseConfig.emulators.hub, port: hubPort },
+  eventarc: { ...firebaseConfig.emulators.eventarc, port: eventarcPort },
+  tasks: { ...firebaseConfig.emulators.tasks, port: tasksPort },
   ui: { enabled: false },
 };
 

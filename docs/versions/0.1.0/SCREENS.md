@@ -16,3 +16,5 @@ Esta versão não registra screenshots como prova até que cada imagem seja real
 | Portal do entregador | `/{slug}/entregador` | driver tenant | mobile | — | Não | captura real pendente; requer identidade de entregador no demo |
 
 As três capturas registradas foram feitas da aplicação real em `localhost:3001`, com seed de desenvolvimento, sem escrever dados nem criar pedidos. As telas administrativas, de entregador e Platform Owner continuam pendentes porque exigem identidade demo autorizada. A imagem em `generated/` é conceitual e não substitui capturas. O checklist está em [STATUS.md](STATUS.md).
+
+Na tentativa de repetição em 2026-10-08, a porta 3001 estava ocupada por outro aplicativo. Uma instância isolada do Acaiteria em 3002 respondeu, mas permaneceu em “Carregando estabelecimento”; o processo indicou configuração de `.env.local`, então foi encerrado sem enviar formulário, criar pedido ou executar migração. As capturas existentes continuam sendo as evidências reais anteriores; nenhuma tela protegida foi recapturada nem representada como concluída.
