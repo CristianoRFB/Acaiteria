@@ -1,5 +1,5 @@
 {
-  "functions": [{ "source": "functions", "codebase": "default", "runtime": "nodejs22", "predeploy": ["npm run build:firebase"], "ignore": ["node_modules", ".git", "firebase-debug.log", "*.local"] }],
+  "functions": [{ "source": "functions", "codebase": "default", "runtime": "nodejs22", "predeploy": ["npm run build:firebase"], "ignore": ["node_modules", ".git", "firebase-debug.log", "*.local", "**/.dev.vars"] }],
   "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
   "hosting": { "public": "dist/client", "ignore": ["firebase.json", "**/.*", "**/node_modules/**"], "rewrites": [{ "source": "**", "function": { "functionId": "web", "region": "southamerica-east1" } }] },
   "emulators": {

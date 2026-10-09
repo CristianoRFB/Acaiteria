@@ -12,6 +12,9 @@ const captures = [
   { slug: 'acai-mais-sabor', file: 'storefront-tenant-a-desktop-viewport.png', viewport: { width: 1440, height: 1000 } },
   { slug: 'amora-acai-demo', file: 'storefront-tenant-b-desktop-viewport.png', viewport: { width: 1440, height: 1000 } },
   { slug: 'acai-mais-sabor', file: 'storefront-tenant-a-mobile-viewport.png', viewport: { width: 390, height: 844 }, mobile: true },
+  { slug: 'acai-mais-sabor', path: '/acai-mais-sabor/montar/acai-monte-seu', file: 'product-builder-tenant-a-desktop-viewport.png', viewport: { width: 1440, height: 1100 }, expectedText: 'Escolha o tamanho' },
+  { slug: 'acai-mais-sabor', path: '/acai-mais-sabor/carrinho', file: 'cart-empty-tenant-a-mobile-viewport.png', viewport: { width: 390, height: 844 }, mobile: true, expectedText: 'Seu carrinho está vazio' },
+  { slug: 'acai-mais-sabor', path: '/acai-mais-sabor/checkout', file: 'checkout-empty-tenant-a-mobile-viewport.png', viewport: { width: 390, height: 844 }, mobile: true, expectedText: 'Carrinho vazio' },
 ];
 
 await mkdir(outputDirectory, { recursive: true });
@@ -27,25 +30,29 @@ try {
     const pageErrors = [];
     page.on('pageerror', (error) => pageErrors.push(error.message));
     await page.setViewport({ ...capture.viewport, isMobile: Boolean(capture.mobile), deviceScaleFactor: capture.mobile ? 2 : 1 });
-    const url = `${baseUrl}/${capture.slug}`;
+    const url = `${baseUrl}${capture.path ?? `/${capture.slug}`}`;
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     if (!response?.ok()) throw new Error(`${url} respondeu ${response?.status() ?? 'sem resposta'}.`);
     await page.waitForSelector('main', { timeout: 20000 });
     const expectedBrand = capture.slug === 'acai-mais-sabor' ? 'Açaí + Sabor' : 'Amora Açaí';
     const expectedColor = capture.slug === 'acai-mais-sabor' ? '#82204f' : '#5634a5';
-    await page.waitForFunction(({ brand, color }) => {
+    await page.waitForFunction(({ brand, color, expectedText }) => {
+      if (expectedText) return document.body.innerText.includes(expectedText);
       const tenantRoot = document.querySelector('[data-tenant-root]');
       return Boolean(tenantRoot && document.body.innerText.includes(brand) && getComputedStyle(tenantRoot).getPropertyValue('--brand').trim().toLowerCase() === color);
-    }, { timeout: 25000 }, { brand: expectedBrand, color: expectedColor });
+    }, { timeout: 25000 }, { brand: expectedBrand, color: expectedColor, expectedText: capture.expectedText });
     await page.evaluate(() => document.fonts?.ready);
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
     const bodyText = await page.$eval('body', (element) => element.innerText);
+    if (capture.expectedText && !bodyText.includes(capture.expectedText)) {
+      throw new Error(`${capture.path}: estado esperado ausente (${capture.expectedText}).`);
+    }
     const browserContext = await page.evaluate(() => {
       const tenantRoot = document.querySelector('[data-tenant-root]');
       return { pathname: location.pathname, title: document.title, tenantRoot: tenantRoot?.getAttribute('data-tenant-root'), brandColor: tenantRoot ? getComputedStyle(tenantRoot).getPropertyValue('--brand').trim() : '' };
     });
-    if (!bodyText.includes(expectedBrand)) throw new Error(`${capture.slug}: identidade ausente. Browser=${JSON.stringify(browserContext)}. Conteúdo: ${bodyText.slice(0, 500)}`);
-    if (browserContext.brandColor.toLowerCase() !== expectedColor) throw new Error(`${capture.slug}: token de cor esperado ${expectedColor}, recebido ${browserContext.brandColor || 'vazio'}.`);
+    if (!capture.expectedText && !bodyText.includes(expectedBrand)) throw new Error(`${capture.slug}: identidade ausente. Browser=${JSON.stringify(browserContext)}. Conteúdo: ${bodyText.slice(0, 500)}`);
+    if (!capture.expectedText && browserContext.brandColor.toLowerCase() !== expectedColor) throw new Error(`${capture.slug}: token de cor esperado ${expectedColor}, recebido ${browserContext.brandColor || 'vazio'}.`);
     if (capture.slug === 'amora-acai-demo' && ['Santa Fé do Sul', '98165-2600', 'Navarro de Andrade'].some((value) => bodyText.includes(value))) {
       throw new Error('Tenant B mostrou contato/endereço operacional de Tenant A. Screenshot bloqueada para evitar registrar vazamento de dados.');
     }

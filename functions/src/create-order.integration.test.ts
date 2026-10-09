@@ -39,7 +39,7 @@ describe('createOrder no Emulator Suite', () => {
     expect(responses[0].body.result?.publicCode).toBe(responses[1].body.result?.publicCode);
     expect((await db.collection('orders').where('clientRequestId', '==', clientRequestId).get()).size).toBe(1);
     expect((await call({ ...basePayload, clientRequestId, notes: 'different order' })).status).not.toBe(200);
-  }, 15000);
+  }, 60000);
   it('separa catálogo e pedidos por tenant e impede um admin de operar outra loja', async () => {
     const clientRequestId = crypto.randomUUID();
     const response = await call({
@@ -125,7 +125,7 @@ describe('createOrder no Emulator Suite', () => {
     const edited = await call({ orderId: mismatchingId, customer: basePayload.customer, notes: '', items: basePayload.items, fulfillment: { mode: 'PICKUP' } }, 'updateOrderDetails', adminToken);
     expect(edited.status).toBe(200);
     expect((await db.doc(`orders/${mismatchingId}`).get()).data()).toMatchObject({ pricing: { totalCents: 1800 }, pricingVerification: { status: 'VERIFIED', source: 'SERVER' }, customerEditApproval: { status: 'PENDING' } });
-  }, 20000);
+  }, 120000);
 });
 
 describe('persisted integration outbox', () => {
@@ -143,7 +143,7 @@ describe('persisted integration outbox', () => {
     expect(order.integration.status).toBe('ACCEPTED');
     expect(order.integration.externalOrderId).toBe(`LOCAL-${ref.id}`);
     expect((await ref.collection('integrationAttempts').get()).size).toBe(1);
-  }, 15000);
+  }, 60000);
   it('preserves a failed order, respects backoff, retries transient failures and retains attempts', async () => {
     process.env.FUNCTIONS_EMULATOR = 'true'; process.env.LOCAL_PROVIDER_SCENARIO = 'transient';
     const ref = await fixture('local');

@@ -130,10 +130,13 @@ const demoOwner = await createOrFindUser(
 await writeIdentityAndMembership(demoOwner, 'amora-acai-demo', 'tenant_owner');
 
 const demoDriver = await createOrFindUser(
-  'driver@amora-acai.test',
-  randomBytes(24).toString('base64url'),
+  process.env.SEED_DEMO_DRIVER_EMAIL ?? 'driver@amora-acai.test',
+  process.env.SEED_DEMO_DRIVER_PASSWORD ?? randomBytes(24).toString('base64url'),
   'Entregador de demonstração Amora Açaí',
 );
+if (process.env.SEED_DEMO_DRIVER_PASSWORD) {
+  await auth.updateUser(demoDriver.uid, { password: process.env.SEED_DEMO_DRIVER_PASSWORD });
+}
 await writeIdentityAndMembership(demoDriver, 'amora-acai-demo', 'driver');
 await db.doc(`tenants/amora-acai-demo/deliveryDrivers/${demoDriver.uid}`).set({
   name: 'Entregador Amora Demo',

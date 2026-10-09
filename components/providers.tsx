@@ -229,6 +229,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setState({ user, role, loading: false });
           return;
         }
+        // TenantProvider resolves the browser path and the public tenant record
+        // asynchronously. Keep authorization pending during that transition;
+        // publishing a null role here makes AdminShell redirect a valid member
+        // back to login before the tenant membership can be checked.
+        if (tenantStatus === 'loading') {
+          setState({ user, role: null, loading: true });
+          return;
+        }
         if (tenantStatus !== 'active' || !tenantId) {
           setState({ user, role: null, loading: false });
           return;

@@ -10,26 +10,26 @@
 - Carrinho, histórico, tutoriais e caches locais namespaced por tenant; o carrinho só é exposto após hidratar a chave do tenant ativo, sem mostrar o snapshot anterior na troca A→B.
 - White-label básico por tenant: nome, logo, cores, metadata, idioma, timezone e configuração operacional.
 - Migração de Tenant A com dry-run e cópia sem remoção da origem; integração local cobre repetição, conflito, referência inválida e recuperação de cópia parcial.
-- Documentação canônica, sete diagramas Mermaid com renders, manifesto de visuais/leads e três screenshots reais do storefront local A/B.
+- Documentação canônica, sete diagramas Mermaid com renders, manifesto de visuais/leads e seis screenshots reais de rotas públicas do Tenant A/B, montagem do produto e estados vazios de carrinho/checkout.
 
 ## Evidências locais
 
 - `npm run lint`: passou.
 - `npm run typecheck`: passou.
-- `npm test`: 14 arquivos, 58 testes passaram; `npm run ci` (lint, typecheck, testes e build) passou na última execução.
+- `npm test`: 15 arquivos, 59 testes passaram; inclui regressão para garantir que `.dev.vars` local não seja copiado para o pacote Firebase.
 - `tests/cart-tenant-isolation.test.ts`: três casos provam que A→estado sem tenant→B não expõe itens de A, B não importa a chave global legada e a migração histórica da chave só copia para A.
 - `npm run test:functions`: 2 arquivos, 14 testes passaram.
 - `npm run test:rules`: 11 testes passaram no Firestore Emulator.
 - `npm run test:functions:integration`: passou na execução conjunta mais recente — 4 arquivos, 54/54 testes. Os dois cenários que haviam apresentado timeout também passaram na suíte conjunta; a falha intermitente não foi reproduzida. O runner agora escolhe portas livres também para Logging, Hub, Eventarc e Tasks, reduzindo colisões com outros processos locais.
 - `npm run test:migration:integration`: cinco cenários passaram em emulador temporário, sem acesso a projeto real.
-- `npm run build:firebase`: passou nesta rodada; não equivale a deploy. O build avisa sobre middleware legado do Vinext e um chunk cliente de aproximadamente 567 KiB.
-- Wrangler `deploy --dry-run --config dist/server/wrangler.json`: passou; pacote de 16,7 MiB (4,0 MiB gzip) foi apenas simulado, nenhum Worker foi publicado.
+- `npm run build:firebase`: passou nesta rodada; não equivale a deploy. O empacotamento remove `.dev.vars` do servidor local antes de copiar o runtime para Cloud Functions, e `firebase.json` também ignora esse arquivo. O build avisa sobre middleware legado do Vinext e um chunk cliente de aproximadamente 568 KiB.
+- Wrangler `deploy --dry-run --config dist/server/wrangler.json`: passou novamente; pacote de aproximadamente 18,5 MiB (4,26 MiB gzip) foi apenas simulado, nenhum Worker foi publicado. A listagem do dry-run não incluiu `.dev.vars`.
 - `npm run docs:diagrams`: sete diagramas renderizados.
 - `npm run docs:check`: passou, validando 27 documentos, manifestos e referências locais.
 - `npm run docs:leads`: passou; zero leads confirmados e nenhum lead inventado.
 - `npm audit --omit=dev --audit-level=high`: passou sem vulnerabilidades de produção reportadas.
-- As capturas reais disponíveis são apenas os storefronts Tenant A desktop/mobile e Tenant B desktop; telas protegidas não foram falsificadas nem capturadas sem identidade demo autorizada.
-- A documentação visual mantém essas três capturas reais separadas de três imagens conceituais (uma capa e dois mockups), todas registradas em `GENERATED_VISUALS.md`; os mockups não comprovam funcionalidades.
+- As capturas reais disponíveis são os storefronts Tenant A desktop/mobile e Tenant B desktop, montagem do produto Tenant A desktop, carrinho vazio e checkout vazio Tenant A mobile. Foram recapturadas em 2026-10-09 na cópia temporária isolada do projeto, sem `.env.local`, com seed de desenvolvimento; o script validou HTTP 200, identidade/cores de cada tenant, estado esperado das rotas públicas e ausência de exceções `pageerror`. O servidor dev registrou o aviso React sobre `eval()` não suportado nesse ambiente, que não substitui nem invalida a checagem de build. Nenhum item, pedido ou dado foi gravado. Tracking com código válido e telas protegidas não foram falsificados nem capturados sem identidade demo autorizada.
+- A documentação visual mantém essas seis capturas reais separadas de três imagens conceituais (uma capa e dois mockups), todas registradas em `GENERATED_VISUALS.md`; os mockups não comprovam funcionalidades.
 
 ## Não comprovado em ambiente real / ação necessária
 

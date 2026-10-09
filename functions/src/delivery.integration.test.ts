@@ -141,7 +141,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     }
     const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
     expect(events.docs.filter((event) => event.data().type === 'ASSIGNED')).toHaveLength(1);
-  }, 20000);
+  }, 60000);
 
   it('handles a duplicate assign click for the same order and driver exactly once', async () => {
     const fixture = await createReadyDelivery();
@@ -156,7 +156,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()).toMatchObject({ status: 'BUSY', currentDeliveryId: fixture.deliveryId });
     const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
     expect(events.docs.filter((event) => event.data().type === 'ASSIGNED')).toHaveLength(1);
-  }, 20000);
+  }, 60000);
 
   it('does not assign a delivery to a driver whose user account was deactivated separately', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-inactive-user-${randomUUID()}@example.test`);
@@ -170,7 +170,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(assigned.status).not.toBe(200);
     expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()).toMatchObject({ status: 'READY_FOR_DELIVERY' });
     expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ status: 'AVAILABLE' });
-  }, 20000);
+  }, 60000);
 
   it('accepts a corrida once when two sessions of the same driver tap aceitar concurrently', async () => {
     const fixture = await createReadyDelivery();
@@ -187,7 +187,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.currentDeliveryId).toBe(fixture.deliveryId);
     const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
     expect(events.docs.filter((event) => event.data().type === 'ACCEPTED')).toHaveLength(1);
-  }, 20000);
+  }, 60000);
 
   it('rejects assignment and driver mutations when the current-delivery pointer is inconsistent', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-stale-pointer-${randomUUID()}@example.test`);
@@ -206,7 +206,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const disable = await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false });
     expect(disable.status).not.toBe(200);
     expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: true, status: 'AVAILABLE', currentDeliveryId: activeDeliveryId });
-  }, 20000);
+  }, 60000);
 
   it('rejects accepting or advancing another delivery when the driver pointer changed', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-other-run-${randomUUID()}@example.test`);
@@ -225,7 +225,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const advance = await call('progressDelivery', driver.token, { deliveryId: fixture.deliveryId, status: 'PICKED_UP' });
     expect(advance.status).not.toBe(200);
     expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.status).toBe('ACCEPTED');
-  }, 20000);
+  }, 60000);
 
   it('does not let a driver mutate a delivery that is not the current linked run', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
@@ -286,7 +286,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const replayedCode = await call('confirmDelivery', driverToken, { deliveryId: fixture.deliveryId, code: fixture.code });
     expect(replayedCode.status).not.toBe(200);
     expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.expectedCashCents).toBe(3450);
-  }, 20000);
+  }, 60000);
 
   it('records a delivery failure, requeues without finance writes, reassigns, and completes with the new driver', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
@@ -323,7 +323,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).data()?.cashAmountCents).toBe(2450);
     const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
     expect(events.docs.map((event) => event.data().type)).toEqual(expect.arrayContaining(['DELIVERY_FAILED', 'READY_FOR_DELIVERY', 'ASSIGNED', 'PICKED_UP', 'ON_THE_WAY', 'ARRIVED', 'DELIVERED']));
-  }, 30000);
+  }, 60000);
 
   it('lets the admin cancel a failed delivery while retaining failure history and avoiding finance entries', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
@@ -340,7 +340,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`orders/${fixture.orderId}`).get()).data()?.status).toBe('CANCELLED');
     const events = await db.collection('deliveryEvents').where('deliveryId', '==', fixture.deliveryId).get();
     expect(events.docs.map((event) => event.data().type)).toEqual(expect.arrayContaining(['DELIVERY_FAILED', 'CANCELLED']));
-  }, 20000);
+  }, 60000);
 
   it('records local cash sales once and keeps Pix and card out of physical cash', async () => {
     const openingRequestId = randomUUID();
@@ -405,7 +405,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(changedSupplyReplay.status).not.toBe(200);
     expect(changedSupplyReplay.body.error?.status).toBe('ALREADY_EXISTS');
     expect((await db.doc(`cashRegisters/${registerId}`).get()).data()?.expectedCashCents).toBe(4050);
-  }, 20000);
+  }, 60000);
 
   it('allows only one of two concurrent new cash-register openings', async () => {
     expect((await db.collection('cashRegisters').where('status', '==', 'OPEN').get()).empty).toBe(true);
@@ -431,7 +431,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
       else await controlRef.delete();
     }
-  }, 20000);
+  }, 60000);
 
   it('blocks opening a new register when an open register has no valid control link', async () => {
     const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
@@ -462,7 +462,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
       else await controlRef.delete();
     }
-  }, 20000);
+  }, 60000);
 
   it('reconciles one orphan register link with an immutable audit event and idempotent retry', async () => {
     const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
@@ -521,7 +521,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
       else await controlRef.delete();
     }
-  }, 20000);
+  }, 60000);
 
   it('refuses automatic cash-link reconciliation when multiple open registers make ownership ambiguous', async () => {
     const openRegisters = await db.collection('cashRegisters').where('status', '==', 'OPEN').get();
@@ -550,7 +550,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
       if (previousControl.exists) await controlRef.set({ openRegisterId: previousOpenRegisterId }, { merge: true });
       else await controlRef.delete();
     }
-  }, 20000);
+  }, 60000);
 
   it('blocks overdraft, requires an explanation for a cash difference, and preserves the first close', async () => {
     const openingRequestId = randomUUID();
@@ -585,7 +585,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const changedReplay = await call('operateCashRegister', adminToken, { ...close, countedCashCents: 950 });
     expect(changedReplay.status).not.toBe(200);
     expect((await db.doc(`cashRegisters/${registerId}`).get()).data()).toMatchObject({ status: 'CLOSED', countedCashCents: 900, differenceCents: -100 });
-  }, 20000);
+  }, 60000);
 
   it('refuses pickup completion against an invalid expected cash balance without partial writes', async () => {
     const opened = await call('operateCashRegister', adminToken, {
@@ -616,7 +616,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     } finally {
       await registerRef.update({ expectedCashCents: 1000 });
     }
-  }, 20000);
+  }, 60000);
 
   it('refuses to confirm a delivery against an invalid expected cash balance without partial writes', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
@@ -634,7 +634,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     } finally {
       await registerRef.update({ expectedCashCents: 1000 });
     }
-  }, 20000);
+  }, 60000);
 
   it('refuses to refund against an invalid expected cash balance without partial writes', async () => {
     const opened = await call('operateCashRegister', adminToken, {
@@ -666,7 +666,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     } finally {
       await registerRef.update({ expectedCashCents: 1000 });
     }
-  }, 20000);
+  }, 60000);
 
   it('makes a completed-order refund idempotent by reason and rejects altered retries', async () => {
     const opened = await call('operateCashRegister', adminToken, {
@@ -720,7 +720,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(inconsistentRetry.status).not.toBe(200);
     expect(inconsistentRetry.body.error?.message).toMatch(/não corresponde integralmente/i);
     await db.doc(`financeEntries/refund-${orderId}`).update({ amountCents: 1200 });
-  }, 20000);
+  }, 60000);
 
   it('blocks delivery completion after cash closure without partially changing order, delivery, or finance', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
@@ -747,7 +747,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).exists).toBe(false);
     expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).exists).toBe(false);
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('BUSY');
-  }, 20000);
+  }, 60000);
 
   it('records completed Pix delivery in finance without increasing physical cash', async () => {
     const fixture = await createArrivedCashDelivery(driverUid);
@@ -757,7 +757,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`financeEntries/order-${fixture.orderId}`).get()).data()).toMatchObject({ amountCents: 2450, paymentMethod: 'PIX' });
     expect((await db.doc(`cashMovements/order-${fixture.orderId}`).get()).data()?.cashAmountCents).toBe(0);
     expect((await db.doc(`cashRegisters/${fixture.registerId}`).get()).data()?.expectedCashCents).toBe(1000);
-  }, 20000);
+  }, 60000);
 
   it('cancelling an assigned delivery frees its driver and updates both tracking records', async () => {
     const orderId = `order-${randomUUID()}`;
@@ -772,7 +772,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveries/${deliveryId}`).get()).data()?.status).toBe('CANCELLED');
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.status).toBe('AVAILABLE');
     expect((await db.doc(`publicOrders/${publicCode}`).get()).data()?.deliveryStatus).toBe('CANCELLED');
-  }, 20000);
+  }, 60000);
 
   it('reassigns safely before pickup, edits the new driver profile, and retains both histories', async () => {
     const suffix = randomUUID();
@@ -797,7 +797,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const edited = await call('updateDeliveryDriver', adminToken, { driverId: newDriver.uid, name: 'Motoboy Editado', phone: '17988887777', email: `edited-${suffix}@example.test` });
     expect(edited.status).toBe(200);
     expect((await db.doc(`deliveryDrivers/${newDriver.uid}`).get()).data()).toMatchObject({ name: 'Motoboy Editado', phone: '17988887777' });
-  }, 30000);
+  }, 60000);
 
   it('does not reassign an active delivery to a driver whose user account is inactive', async () => {
     const newDriver = await createSignedInUser('driver', `qa-driver-inactive-reassign-${randomUUID()}@example.test`);
@@ -816,7 +816,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveries/${deliveryId}`).get()).data()).toMatchObject({ status: 'ACCEPTED', driverId: driverUid });
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()).toMatchObject({ status: 'BUSY', currentDeliveryId: deliveryId });
     expect((await db.doc(`deliveryDrivers/${newDriver.uid}`).get()).data()).toMatchObject({ status: 'AVAILABLE' });
-  }, 20000);
+  }, 60000);
 
   it('disables and re-enables a driver through Auth, user status, and assignment eligibility', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-toggle-${randomUUID()}@example.test`);
@@ -842,7 +842,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`deliveries/${fixture.deliveryId}`).get()).data()?.driverId).toBe(driver.uid);
     expect((await call('setDeliveryDriverEnabled', adminToken, { driverId: driver.uid, enabled: false })).status).not.toBe(200);
     expect((await db.doc(`deliveryDrivers/${driver.uid}`).get()).data()).toMatchObject({ enabled: true, status: 'BUSY', currentDeliveryId: fixture.deliveryId });
-  }, 30000);
+  }, 60000);
 
   it('allows an active driver to update only their own name and phone', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-contact-${randomUUID()}@example.test`);
@@ -862,7 +862,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect((await db.doc(`users/${driver.uid}`).get()).data()).toMatchObject({ name: 'Joana Motoboy', phone: '(17) 98888-7777', role: 'driver', active: true, email: driver.email });
     expect((await auth.getUser(driver.uid)).email).toBe(originalAuth.email);
     expect((await db.doc(`deliveryDrivers/${driverUid}`).get()).data()?.name).toBe('driver');
-  }, 20000);
+  }, 60000);
 
   it('rejects invalid contact data, disabled drivers, and non-driver callers', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-contact-invalid-${randomUUID()}@example.test`);
@@ -873,7 +873,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(admin.status).not.toBe(200);
     const customer = await createSignedInUser('customer', `qa-customer-driver-contact-${randomUUID()}@example.test`);
     expect((await call('updateDriverContact', customer.token, { name: 'Cliente', phone: '17988887777' })).status).not.toBe(200);
-  }, 20000);
+  }, 60000);
 
   it('keeps Auth aligned when two admins toggle the same driver concurrently', async () => {
     const driver = await createSignedInUser('driver', `qa-driver-toggle-race-${randomUUID()}@example.test`);
@@ -892,7 +892,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     const enabled = driverRecord.data()?.enabled === true && userRecord.data()?.active === true;
     expect(driverRecord.data()?.enabled).toBe(userRecord.data()?.active);
     expect(authRecord.disabled).toBe(!enabled);
-  }, 30000);
+  }, 60000);
 
   it('does not partially disable a driver record without a matching Auth account', async () => {
     const driverId = `missing-auth-${randomUUID()}`;
@@ -903,7 +903,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(result.status).not.toBe(200);
     expect((await db.doc(`deliveryDrivers/${driverId}`).get()).data()).toMatchObject({ enabled: true, status: 'AVAILABLE' });
     expect((await db.doc(`users/${driverId}`).get()).data()?.active).toBe(true);
-  }, 20000);
+  }, 60000);
 
   it('creates a driver access that can authenticate without storing its initial password in Firestore', async () => {
     const suffix = randomUUID();
@@ -933,7 +933,7 @@ describe('delivery operations in Firebase Emulator Suite', () => {
     expect(login.ok).toBe(true);
     expect(typeof loginResult.idToken).toBe('string');
     expect((await call('setDriverAvailability', String(loginResult.idToken), { status: 'AVAILABLE' })).status).toBe(200);
-  }, 30000);
+  }, 60000);
 
   it('removes legacy tracking tokens from old delivery documents', async () => {
     const deliveryId = `legacy-${randomUUID()}`;

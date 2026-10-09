@@ -31,6 +31,7 @@
     "bootstrap:platform-owner": "node functions/scripts/bootstrap-platform-owner.mjs",
     "docs:diagrams": "node scripts/render-doc-diagrams.mjs",
     "docs:screenshots": "node scripts/capture-public-doc-screenshots.mjs",
+    "docs:screenshots:protected": "node scripts/capture-protected-doc-screenshots.mjs",
     "docs:check": "node scripts/check-docs.mjs",
     "docs:leads": "node scripts/check-doc-leads.mjs",
     "ci": "npm run lint && npm run typecheck && npm test && npm run build",
