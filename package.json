@@ -102,8 +102,7 @@
     "fast-uri": "3.1.9",
     "body-parser": "2.4.0",
     "dompurify": "3.4.17",
-    "ip-address": "10.7.4",
-    "katex": "0.18.2"
+    "ip-address": "10.7.4"
   },
   "type": "module"
 }
