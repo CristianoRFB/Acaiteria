@@ -16,6 +16,7 @@ export { getIntegrationReadiness, saveIntegrationMappings, retryOrderIntegration
 export { platformCreateTenant, platformUpdateTenant, platformStartTenantSupport } from './platform/admin.js';
 export { platformAssignTenantPlan } from './platform/plans.js';
 import { currentTenant, rawDb, requireTenantRole, tenantCollection, tenantDb as db, tenantOnCall as onCall } from './tenant.js';
+import { requireCommercialFeature } from './commercial.js';
 
 import {
   calculateCartPreview,
@@ -208,6 +209,9 @@ export const saveFinanceEntry = onCall({ region, timeoutSeconds: 15, memory: '25
   const parsed = financeEntrySchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Lançamento financeiro inválido.');
   const input = parsed.data;
+  // Existing financial records remain correctable after downgrade; only
+  // creating a new manual entry is gated.
+  if (!input.id) await requireCommercialFeature('FINANCE');
   const requestFingerprint = JSON.stringify({
     kind: input.kind,
     category: input.category,
@@ -258,6 +262,11 @@ export const operateCashRegister = onCall({ region, timeoutSeconds: 15, memory: 
   const parsed = cashOperationSchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Operação de caixa inválida.');
   const input = parsed.data;
+  // A downgraded tenant can still reconcile and close an existing register;
+  // opening new registers and recording new local sales requires the plan.
+  if (input.operation === 'OPEN' || input.operation === 'LOCAL_SALE') {
+    await requireCommercialFeature('CASH_REGISTER');
+  }
   const uid = request.auth!.uid;
   const email = typeof request.auth?.token.email === 'string' ? request.auth.token.email : null;
 
