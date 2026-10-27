@@ -1,4 +1,4 @@
-import { getCommercialPlan, type CommercialFeature, type PlanLimits } from './plan-catalog';
+import { getCommercialPlan, type CommercialFeature, type PlanLimits } from './plan-catalog.js';
 
 /**
  * Read-only commercial entitlement resolution. This does NOT authorize any
