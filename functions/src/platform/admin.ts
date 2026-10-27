@@ -114,6 +114,12 @@ export const platformCreateTenant = onCall({ region, timeoutSeconds: 20, memory:
       ...defaultStorePublicConfig,
       storeName: input.displayName,
       timezone: input.timezone,
+      // Onboarding creates a tenant before its catalog, contact and fulfillment
+      // details have been verified. Do not accept real orders by default.
+      orderingEnabled: false,
+      whatsappEnabled: false,
+      fulfillmentModes: ['PICKUP'],
+      deliveryConfig: { mode: 'NONE' },
       status: 'ACTIVE',
       updatedAt: FieldValue.serverTimestamp(),
     });
