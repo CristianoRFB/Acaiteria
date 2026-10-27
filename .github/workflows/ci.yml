@@ -13,6 +13,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Use the npm major that generates the committed lockfile
+        run: npm install --global npm@11 --no-fund
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
