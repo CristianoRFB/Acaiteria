@@ -45,11 +45,14 @@ export const platformAssignTenantPlan = onCall({
     const existingPlan = subscription.data()?.planId;
     const currentPlanId = existingPlan === 'ESSENTIAL' || existingPlan === 'PRO' || existingPlan === 'PREMIUM'
       ? existingPlan : null;
-    if (currentPlanId !== expectedPlanId) {
-      throw new HttpsError('aborted', 'O plano foi alterado por outra sessão. Atualize antes de salvar.');
-    }
+    // A replay that already reached the requested state is idempotent, even
+    // when its original expectedPlanId was null. Different targets must still
+    // satisfy the optimistic concurrency precondition.
     if (currentPlanId === planId) {
       return { tenantId, planId, unchanged: true };
+    }
+    if (currentPlanId !== expectedPlanId) {
+      throw new HttpsError('aborted', 'O plano foi alterado por outra sessão. Atualize antes de salvar.');
     }
 
     transaction.set(subscriptionRef, {
