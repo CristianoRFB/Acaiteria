@@ -99,6 +99,58 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.collection('platformAuditLogs').where('tenantId', '==', tenantId).get()).size).toBe(4);
   });
 
+  it('atribui planos aprovados apenas pelo platform_owner com precondição e audit log', async () => {
+    const slug = `qa-plano-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'Loja QA Planos',
+      slug,
+      ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const assignment = { tenantId, planId: 'ESSENTIAL', expectedPlanId: null, reason: 'Atribuição manual aprovada para QA' };
+
+    const denied = await call('platformAssignTenantPlan', assignment, regularToken);
+    expect(denied.body.error?.status).toBe('PERMISSION_DENIED');
+    const anonymous = await call('platformAssignTenantPlan', assignment);
+    expect(anonymous.status).not.toBe(200);
+    const invalid = await call('platformAssignTenantPlan', { ...assignment, planId: 'FREE' }, platformToken);
+    expect(invalid.body.error?.status).toBe('INVALID_ARGUMENT');
+    expect((await db.doc(`tenants/${tenantId}/private/subscription`).get()).exists).toBe(false);
+
+    const first = await call('platformAssignTenantPlan', assignment, platformToken);
+    expect(first.status).toBe(200);
+    expect(first.body.result?.unchanged).toBe(false);
+    const subscriptionRef = db.doc(`tenants/${tenantId}/private/subscription`);
+    expect((await subscriptionRef.get()).data()).toMatchObject({
+      planId: 'ESSENTIAL',
+      subscriptionStatus: 'active',
+      assignmentMode: 'MANUAL',
+      paymentVerified: false,
+    });
+    expect((await db.doc(`tenants/${tenantId}`).get()).data()).not.toHaveProperty('planId');
+
+    const repeat = await call('platformAssignTenantPlan', assignment, platformToken);
+    expect(repeat.status).toBe(200);
+    expect(repeat.body.result?.unchanged).toBe(true);
+
+    const conflict = await call('platformAssignTenantPlan', { ...assignment, planId: 'PREMIUM' }, platformToken);
+    expect(conflict.body.error?.status).toBe('ABORTED');
+
+    const update = await call('platformAssignTenantPlan', {
+      ...assignment, expectedPlanId: 'ESSENTIAL', planId: 'PRO',
+    }, platformToken);
+    expect(update.status).toBe(200);
+    expect((await subscriptionRef.get()).data()?.planId).toBe('PRO');
+
+    const audits = await db.collection('platformAuditLogs')
+      .where('tenantId', '==', tenantId).get();
+    expect(audits.docs.filter((doc) => doc.data().action === 'PLAN_ASSIGNED_MANUALLY')).toHaveLength(2);
+    expect((await db.doc(`tenants/${tenantId}/private/platform`).get()).data()?.ownerUserId).toBeTruthy();
+  });
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
