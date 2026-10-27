@@ -151,6 +151,76 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.doc(`tenants/${tenantId}/private/platform`).get()).data()?.ownerUserId).toBeTruthy();
   });
 
+  it('aplica feature gates no backend sem bloquear tenant legado ou reconciliação após downgrade', async () => {
+    const slug = `qa-gating-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'Loja QA Gating', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+
+    const newEntry = () => ({
+      tenantSlug: slug,
+      clientRequestId: randomUUID(),
+      kind: 'EXPENSE',
+      category: 'Insumos',
+      description: 'Despesas de QA',
+      amountCents: 1350,
+      date: '2026-10-27',
+      status: 'PAID',
+    });
+    const createEntry = await call('saveFinanceEntry', newEntry(), ownerToken);
+    expect(createEntry.status).toBe(200); // no plan: grandfathered until explicitly assigned
+    const priorId = String(createEntry.body.result?.entryId);
+    expect((await db.doc(`tenants/${tenantId}/financeEntries/${priorId}`).get()).exists).toBe(true);
+
+    const assign = async (planId: 'ESSENTIAL' | 'PRO', expectedPlanId: 'ESSENTIAL' | 'PRO' | null) =>
+      call('platformAssignTenantPlan', {
+        tenantId, planId, expectedPlanId, reason: 'Validação de gating com regressão no emulador',
+      }, platformToken);
+    expect((await assign('ESSENTIAL', null)).status).toBe(200);
+    const blockedFinance = await call('saveFinanceEntry', newEntry(), ownerToken);
+    expect(blockedFinance.body.error?.status).toBe('FAILED_PRECONDITION');
+    expect(blockedFinance.body.error?.message).toMatch(/plano atual/i);
+
+    const cashOpenPayload = {
+      tenantSlug: slug, operation: 'OPEN', clientRequestId: randomUUID(),
+      initialBalanceCents: 2500, openingDate: '2026-10-27',
+    };
+    const blockedCash = await call('operateCashRegister', cashOpenPayload, ownerToken);
+    expect(blockedCash.body.error?.status).toBe('FAILED_PRECONDITION');
+
+    // Existing documents can still be corrected, never deleted or hidden.
+    const corrected = await call('saveFinanceEntry', { ...newEntry(), id: priorId, description: 'Correção de QA' }, ownerToken);
+    expect(corrected.status).toBe(200);
+    expect((await db.doc(`tenants/${tenantId}/financeEntries/${priorId}`).get()).data()?.description).toBe('Correção de QA');
+
+    expect((await assign('PRO', 'ESSENTIAL')).status).toBe(200);
+    const allowedFinance = await call('saveFinanceEntry', newEntry(), ownerToken);
+    expect(allowedFinance.status).toBe(200);
+    const opened = await call('operateCashRegister', cashOpenPayload, ownerToken);
+    expect(opened.status).toBe(200);
+    const registerId = String(opened.body.result?.registerId);
+    expect(registerId).toBe(cashOpenPayload.clientRequestId);
+
+    // Downgrade stops NEW premium operations but allows register closure.
+    expect((await assign('ESSENTIAL', 'PRO')).status).toBe(200);
+    const blockedAgain = await call('operateCashRegister', {
+      tenantSlug: slug, operation: 'LOCAL_SALE', registerId, clientRequestId: randomUUID(),
+      amountCents: 1000, paymentMethod: 'PIX', description: 'Venda QA',
+    }, ownerToken);
+    expect(blockedAgain.body.error?.status).toBe('FAILED_PRECONDITION');
+    const closed = await call('operateCashRegister', {
+      tenantSlug: slug, operation: 'CLOSE', registerId,
+      countedCashCents: 2500,
+    }, ownerToken);
+    expect(closed.status).toBe(200);
+    expect((await db.doc(`tenants/${tenantId}/cashRegisters/${registerId}`).get()).data()?.status).toBe('CLOSED');
+  });
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
