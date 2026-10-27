@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  quality:
+  security:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,7 +13,28 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Use the npm major that generates the committed lockfile
+      - name: Use the lockfile's npm major
+        run: npm install --global npm@11 --no-fund
+      - run: npm ci
+      - run: npm ci --prefix functions
+      - name: Audit frontend runtime dependencies
+        run: npm audit --omit=dev
+      - name: Audit Functions runtime dependencies
+        run: npm audit --prefix functions --omit=dev
+      - name: Audit full dependency graph, including developer tools
+        run: npm audit --audit-level=high
+
+  quality:
+    # Quality checks must run even when an unrelated tooling advisory blocks
+    # the security gate. Neither failure is waived: both jobs remain required.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Use the lockfile's npm major
         run: npm install --global npm@11 --no-fund
       - uses: actions/setup-java@v4
         with:
@@ -21,14 +42,14 @@ jobs:
           java-version: 21
       - run: npm ci
       - run: npm ci --prefix functions
-      - run: npm audit --omit=dev
-      - run: npm audit --prefix functions --omit=dev
-      - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
       - run: npm run test:functions
       - run: npm run test:rules
       - run: npm run test:functions:integration
+      - run: npm run test:migration:integration
+      - run: npm run docs:check
+      - run: npm run docs:leads
       - run: npm run build:firebase
       - run: npm exec wrangler -- deploy --dry-run --config dist/server/wrangler.json
