@@ -19,7 +19,11 @@ jobs:
       - name: Clean install baseline
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Apply strictly non-breaking audit fixes
-        run: npm audit fix --no-fund --no-progress
+        run: |
+          # npm audit fix exits 1 when advisories remain without a compatible
+          # non-breaking fix. Preserve the remediated lockfile and let the
+          # normal CI security gate report residual advisories.
+          npm audit fix --no-fund --no-progress || echo "Residual advisories remain; not marking security CI green"
       - name: Verify clean install, audit and changes
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
