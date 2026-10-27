@@ -1,0 +1,32 @@
+name: Refresh patched Miniflare lockfile (temporary)
+on:
+  push:
+    branches: [chat/pre-pc-acai-20261027]
+permissions:
+  contents: write
+jobs:
+  lockfile:
+    if: github.repository == 'CristianoRFB/Acaiteria' && github.ref == 'refs/heads/chat/pre-pc-acai-20261027'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm install --global npm@11 --no-fund
+      - name: Refresh after scoped undici patch
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Verify installation and security high gate
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev
+          npm audit --audit-level=high
+      - name: Commit only verified lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then exit 0; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add package-lock.json
+          git commit -m 'fix(security): lock patched Miniflare undici dependency'
+          git push origin HEAD:refs/heads/chat/pre-pc-acai-20261027
