@@ -221,6 +221,69 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.doc(`tenants/${tenantId}/cashRegisters/${registerId}`).get()).data()?.status).toBe('CLOSED');
   });
 
+  it('enforces five Pro driver seats atomically, preserves existing accounts on downgrade, and enables reactivation', async () => {
+    const slug = `qa-seats-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'Loja QA Entregadores', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const plan = (planId: 'ESSENTIAL' | 'PRO', expectedPlanId: 'ESSENTIAL' | 'PRO' | null) =>
+      call('platformAssignTenantPlan', {
+        tenantId, planId, expectedPlanId, reason: 'Verificar cota transacional de entregadores',
+      }, platformToken);
+    const driverPayload = () => ({
+      tenantSlug: slug,
+      name: 'Motoboy QA',
+      phone: '17999990000',
+      email: `qa-driver-seat-${randomUUID()}@example.test`,
+      password: 'Seat-QA-2026!',
+    });
+    expect((await plan('ESSENTIAL', null)).status).toBe(200);
+    const denied = await call('createDeliveryDriver', driverPayload(), ownerToken);
+    expect(denied.body.error?.status).toBe('FAILED_PRECONDITION');
+    expect((await db.collection(`tenants/${tenantId}/deliveryDrivers`).get()).empty).toBe(true);
+
+    expect((await plan('PRO', 'ESSENTIAL')).status).toBe(200);
+    // Existing drivers (for example imported during migration) consume seats.
+    await Promise.all(Array.from({ length: 4 }, (_, index) =>
+      db.doc(`tenants/${tenantId}/deliveryDrivers/legacy-${index}`).set({
+        userId: `legacy-${index}`, enabled: true, status: 'OFFLINE',
+      })));
+
+    // Both requests observe only one seat remaining. The shared transactional
+    // lock must serialize them so exactly one account is activated.
+    const [first, second] = await Promise.all([
+      call('createDeliveryDriver', driverPayload(), ownerToken),
+      call('createDeliveryDriver', driverPayload(), ownerToken),
+    ]);
+    const accepted = [first, second].filter((result) => result.status === 200);
+    const rejected = [first, second].filter((result) => result.status !== 200);
+    expect(accepted).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].body.error?.status).toMatch(/RESOURCE_EXHAUSTED|ABORTED/);
+    const driverId = String(accepted[0].body.result?.uid);
+    expect((await db.collection(`tenants/${tenantId}/deliveryDrivers`).where('enabled', '==', true).get()).size).toBe(5);
+
+    expect((await plan('ESSENTIAL', 'PRO')).status).toBe(200);
+    const existing = await db.doc(`tenants/${tenantId}/deliveryDrivers/${driverId}`).get();
+    expect(existing.data()?.enabled).toBe(true); // no deletion or forced disable
+    expect((await call('createDeliveryDriver', driverPayload(), ownerToken)).body.error?.status).toBe('FAILED_PRECONDITION');
+
+    const disabled = await call('setDeliveryDriverEnabled', { tenantSlug: slug, driverId, enabled: false }, ownerToken);
+    expect(disabled.status).toBe(200);
+    const cannotReactivate = await call('setDeliveryDriverEnabled', { tenantSlug: slug, driverId, enabled: true }, ownerToken);
+    expect(cannotReactivate.body.error?.status).toBe('FAILED_PRECONDITION');
+
+    expect((await plan('PRO', 'ESSENTIAL')).status).toBe(200);
+    const reactivated = await call('setDeliveryDriverEnabled', { tenantSlug: slug, driverId, enabled: true }, ownerToken);
+    expect(reactivated.status).toBe(200);
+    expect((await db.collection(`tenants/${tenantId}/deliveryDrivers`).where('enabled', '==', true).get()).size).toBe(5);
+  }, 60000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
