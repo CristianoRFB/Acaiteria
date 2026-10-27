@@ -177,6 +177,32 @@ describe('tenant-aware Firestore Rules', () => {
     await assertFails(setDoc(tenantDoc(db, tenantA, 'members/inactive-a'), { role: 'tenant_owner' }, { merge: true }));
   });
 
+  it('reserves platform owner and subscription metadata for audited server callables', async () => {
+    const owner = env.authenticatedContext('owner-a').firestore();
+    const platform = env.authenticatedContext('platform-uid').firestore();
+    const privatePlatform = tenantDoc(owner, tenantA, 'private/platform');
+    const privateSubscription = tenantDoc(owner, tenantA, 'private/subscription');
+
+    await assertFails(setDoc(privatePlatform, { ownerUserId: 'attacker' }, { merge: true }));
+    await assertFails(getDoc(privatePlatform));
+    await assertFails(setDoc(privateSubscription, { planId: 'PREMIUM' }, { merge: true }));
+    await assertFails(getDoc(privateSubscription));
+
+    await assertSucceeds(getDoc(tenantDoc(platform, tenantA, 'private/platform')));
+    await assertSucceeds(getDoc(tenantDoc(platform, tenantA, 'private/subscription')));
+    await assertFails(setDoc(tenantDoc(platform, tenantA, 'private/subscription'), { planId: 'PREMIUM' }, { merge: true }));
+    await assertFails(setDoc(doc(platform, 'tenants', tenantA), { status: 'SUSPENDED' }, { merge: true }));
+    await assertFails(setDoc(doc(platform, 'tenants', 'fake-tenant'), {
+      slug: 'fake-tenant',
+      displayName: 'Fake',
+      status: 'ACTIVE',
+      branding: {},
+      locale: 'pt-BR',
+      timezone: 'America/Sao_Paulo',
+      currency: 'BRL',
+    }));
+  });
+
   it('tenant-scoped queries must carry constraints that the rules can prove', async () => {
     const publicDb = env.unauthenticatedContext().firestore();
     await assertSucceeds(getDocs(query(collection(publicDb, `tenants/${tenantA}/products`), where('active', '==', true))));
