@@ -18,8 +18,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - name: Fix compatible patched dependencies
-        run: npm audit fix --no-fund --no-progress
+      - name: Regenerate locked dependency graph from pinned security floors
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Validate clean install and production security audit
         run: |
           npm ci --ignore-scripts --no-audit --no-fund
