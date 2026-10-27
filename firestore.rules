@@ -85,7 +85,8 @@ service cloud.firestore {
     match /tenants/{tenantId} {
       allow get: if isPublicTenant(resource.data);
       allow list: if isPlatformOwner();
-      allow create, update, delete: if isPlatformOwner();
+      // Tenant registry mutations must use audited Platform callables (Admin SDK).
+      allow create, update, delete: if false;
 
       match /members/{uid} {
         allow get: if activeIdentity() && (request.auth.uid == uid || isTenantAdmin(tenantId) || isPlatformOwner());
@@ -205,7 +206,16 @@ service cloud.firestore {
       }
 
       match /private/{document=**} {
-        allow read, write: if isTenantAdmin(tenantId);
+        // Reserved platform/subscription records must never be writable/readable
+        // through the general tenant-admin private document rule.
+        allow read: if document != 'platform' && document != 'subscription' && isTenantAdmin(tenantId);
+        allow write: if document != 'platform' && document != 'subscription' && isTenantAdmin(tenantId);
+      }
+
+      match /private/{protectedDocument} {
+        // Server-only billing/ownership metadata; Admin SDK manages it.
+        allow get: if protectedDocument in ['platform', 'subscription'] && isPlatformOwner();
+        allow list, create, update, delete: if false;
       }
 
       match /auditLogs/{id} {
