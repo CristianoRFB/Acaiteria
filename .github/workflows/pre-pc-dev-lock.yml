@@ -16,6 +16,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Update npm resolver for patched dependency overrides
+        run: npm install --global npm@11 --no-fund
       - name: Refresh lockfile with patched package constraints
         run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
       - name: Verify clean install and production packages
