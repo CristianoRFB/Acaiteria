@@ -36,7 +36,7 @@ function requireUser(uid: string | undefined): asserts uid is string {
   if (!uid) throw new HttpsError('unauthenticated', 'Entre com a conta de plataforma.');
 }
 
-async function requirePlatformOwner(uid: string | undefined): Promise<string> {
+export async function requirePlatformOwner(uid: string | undefined): Promise<string> {
   requireUser(uid);
   const identity = await rawDb.doc(`users/${uid}`).get();
   if (!identity.exists || identity.data()?.active === false || identity.data()?.platformRole !== 'platform_owner') {
