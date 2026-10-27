@@ -205,11 +205,12 @@ service cloud.firestore {
         allow read, write: if false;
       }
 
-      match /private/{document=**} {
-        // Reserved platform/subscription records must never be writable/readable
-        // through the general tenant-admin private document rule.
-        allow read: if document != 'platform' && document != 'subscription' && isTenantAdmin(tenantId);
-        allow write: if document != 'platform' && document != 'subscription' && isTenantAdmin(tenantId);
+      match /private/{privateId} {
+        // A single-segment wildcard is intentional. A recursive wildcard
+        // matches a Path (not a string), so comparing it with 'platform'
+        // does NOT safely exclude privileged documents.
+        allow read, write: if !(privateId in ['platform', 'subscription']) &&
+          isTenantAdmin(tenantId);
       }
 
       match /private/{protectedDocument} {
