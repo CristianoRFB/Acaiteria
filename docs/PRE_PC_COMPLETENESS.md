@@ -1,5 +1,35 @@
 # Pre-PC implementation checkpoint — Açaí SaaS
 
+> **Checkpoint adicional — 27/10/2026, commit `cc91609d86e49c1309a537b9f303acf6056a3a94`.**
+> CI remoto **PASS** no [workflow 40553552880](https://github.com/CristianoRFB/Acaiteria/actions/runs/40553552880):
+> lint, typecheck, unit tests, Functions, Rules, integração Functions, migração,
+> docs:check, docs:leads, build:firebase e Wrangler dry-run; job security PASS.
+> Este resultado substitui as notas de CI vermelho abaixo **apenas para este SHA**.
+
+## Incremento de código verificado neste ciclo
+
+- `shared/plan-catalog.ts`: matriz local dos planos aprovados (Essencial, Pro, Premium);
+  preços em centavos, features, quotas e teste de não assumir plano de tenants legados.
+- `shared/entitlements.ts`: resolução tipada de features/limits e overrides válidos por
+  tenant; ainda não é enforcement de operações nem cobrança.
+- `functions/src/platform/plans.ts`: callable `platformAssignTenantPlan`,
+  exclusiva de `platform_owner`, com precondição contra alterações concorrentes,
+  repetição idempotente, justificativa obrigatória e audit log transacional.
+- `app/platform/page.tsx`: interface de atribuição manual de plano com leitura privada
+  e justificativa; não afirma pagamento nem habilita cobrança.
+- `firestore.rules`: acesso público/privado protegido, `private/platform` e
+  `private/subscription` inacessíveis a tenant admins; mutações de registry
+  exclusivas de Functions auditadas.
+- `tests/entitlements.test.ts`, `tests/firestore.rules.test.ts` e
+  `functions/src/platform.integration.test.ts`: cobertura de status sem plano,
+  limites, overrides, isolamento, bloqueio de escrita e assignment idempotente.
+- A classificação de entitlements permanece **PARTIAL**: catálogo, resolver e
+  atribuição manual existem; backend feature/limit enforcement, usage counters,
+  downgrade, trial/DemoMode e landing SaaS ainda **não estão concluídos**.
+- A migração real do Tenant A, provisionamento real de Platform Owner, App Check
+  e deploy de produção continuam **EXTERNAL_GATE**, não foram executados.
+
+
 > Data: 2026-10-27. Este documento é rastreio do trabalho na branch isolada, não prova de homologação em produção.
 
 ## Fonte e continuidade
