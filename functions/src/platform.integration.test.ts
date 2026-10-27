@@ -68,6 +68,10 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect(platformData.data()?.ownerUserId).toBe(owner.uid);
     expect(membership.data()?.role).toBe('tenant_owner');
     expect(settings.data()?.storeName).toBe('Loja QA Amora');
+    expect(settings.data()?.orderingEnabled).toBe(false);
+    expect(settings.data()?.whatsappEnabled).toBe(false);
+    expect(settings.data()?.fulfillmentModes).toEqual(['PICKUP']);
+    expect(settings.data()?.deliveryConfig).toEqual({ mode: 'NONE' });
     expect(audits.docs.map((item) => item.data().action)).toContain('TENANT_CREATED');
 
     const suspended = await call('platformUpdateTenant', {
