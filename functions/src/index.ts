@@ -16,7 +16,7 @@ export { getIntegrationReadiness, saveIntegrationMappings, retryOrderIntegration
 export { platformCreateTenant, platformUpdateTenant, platformStartTenantSupport } from './platform/admin.js';
 export { platformAssignTenantPlan } from './platform/plans.js';
 import { currentTenant, rawDb, requireTenantRole, tenantCollection, tenantDb as db, tenantOnCall as onCall } from './tenant.js';
-import { requireCommercialFeature } from './commercial.js';
+import { requireCommercialFeature, reserveDeliveryDriverSeat } from './commercial.js';
 
 import {
   calculateCartPreview,
@@ -829,6 +829,8 @@ export const createDeliveryDriver = onCall({ region, timeoutSeconds: 20, memory:
   const parsed = createDriverSchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', parsed.error.issues[0]?.message ?? 'Dados do motoboy inválidos.');
   const input = parsed.data;
+  // Refuse an ineligible plan before creating any Firebase Auth identity.
+  await requireCommercialFeature('DRIVER_APP');
   let created;
   try { created = await getAuth().createUser({ email: input.email, password: input.password, displayName: input.name }); }
   catch (cause) { throw new HttpsError('already-exists', cause instanceof Error ? cause.message : 'Não foi possível criar o acesso.'); }
@@ -839,6 +841,7 @@ export const createDeliveryDriver = onCall({ region, timeoutSeconds: 20, memory:
       const membershipRef = rawDb.doc(`tenants/${currentTenant().tenantId}/members/${created.uid}`);
       const existing = await transaction.get(driverRef);
       if (existing.exists) throw new HttpsError('already-exists', 'Este motoboy já está cadastrado.');
+      await reserveDeliveryDriverSeat(transaction);
       const now = FieldValue.serverTimestamp();
       transaction.set(userRef, { role: 'driver', name: input.name, email: input.email, phone: input.phone, active: true, createdAt: now, updatedAt: now }, { merge: true });
       transaction.create(membershipRef, { userId: created.uid, tenantId: currentTenant().tenantId, role: 'driver', status: 'ACTIVE', createdAt: now, updatedAt: now });
@@ -872,6 +875,9 @@ export const setDeliveryDriverEnabled = onCall({ region, timeoutSeconds: 15, mem
     if (driver.data()?.status === 'BUSY' || driver.data()?.currentDeliveryId) {
       throw new HttpsError('failed-precondition', 'Finalize ou devolva a entrega atual antes de alterar este acesso.');
     }
+    // Disabling remains possible after downgrade; unchanged enabled accounts
+    // are not forcibly removed. Only a new activation consumes a seat.
+    if (enabled && driver.data()?.enabled !== true) await reserveDeliveryDriverSeat(transaction);
     const now = FieldValue.serverTimestamp();
     transaction.update(driverRef, { enabled, status: enabled ? 'OFFLINE' : 'INACTIVE', updatedAt: now });
     transaction.set(userRef, { active: enabled, updatedAt: now }, { merge: true });
