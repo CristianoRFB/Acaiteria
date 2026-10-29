@@ -284,6 +284,47 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.collection(`tenants/${tenantId}/deliveryDrivers`).where('enabled', '==', true).get()).size).toBe(5);
   }, 60000);
 
+  it('exposes tenant capabilities only to authenticated members, scoped to their tenant', async () => {
+    const slug = `qa-cap-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Capacidades', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const requested = { tenantSlug: slug };
+
+    const unassigned = await call('getTenantCommercialCapabilities', requested, ownerToken);
+    expect(unassigned.status).toBe(200);
+    expect(unassigned.body.result).toMatchObject({ mode: 'UNASSIGNED', planId: null, features: null });
+
+    const denied = await call('getTenantCommercialCapabilities', requested, regularToken);
+    expect(denied.body.error?.status).toBe('PERMISSION_DENIED');
+    const anonymous = await call('getTenantCommercialCapabilities', requested);
+    expect(anonymous.status).not.toBe(200);
+
+    const assigned = await call('platformAssignTenantPlan', {
+      tenantId, planId: 'ESSENTIAL', expectedPlanId: null,
+      reason: 'Exibir capacidades ao proprietário para testes',
+    }, platformToken);
+    expect(assigned.status).toBe(200);
+    const capabilities = await call('getTenantCommercialCapabilities', requested, ownerToken);
+    expect(capabilities.status).toBe(200);
+    expect(capabilities.body.result?.mode).toBe('ASSIGNED');
+    expect(capabilities.body.result?.planId).toBe('ESSENTIAL');
+    expect((capabilities.body.result?.features as Record<string, boolean>).CASH_REGISTER).toBe(false);
+    expect((capabilities.body.result?.limits as Record<string, number>).ordersPerMonth).toBe(300);
+    expect(capabilities.body.result).not.toHaveProperty('subscriptionStatus');
+    expect(capabilities.body.result).not.toHaveProperty('paymentVerified');
+
+    const other = await call('getTenantCommercialCapabilities', {
+      tenantSlug: `qa-other-${randomUUID().slice(0, 8)}`,
+    }, ownerToken);
+    expect(other.status).not.toBe(200);
+  });
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
