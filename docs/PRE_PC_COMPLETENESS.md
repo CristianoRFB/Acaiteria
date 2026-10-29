@@ -1,6 +1,21 @@
 # Pre-PC implementation checkpoint — Açaí SaaS
 
 
+## Incremento validado — equipe e delivery (29/10/2026)
+
+Código na branch de desenvolvimento (não deployado em produção):
+
+- `functions/src/platform/members.ts`: callable `setTenantInternalMember`, exclusiva de `tenant_owner`, vincula contas Firebase Auth já existentes com roles `admin`/`staff`; valida identidade e ownership, rejeita mudanças de entregador, nunca cria ou transmite senha, audita concessões/desativações e reserva vagas com bloqueio transacional entre operações concorrentes.
+- `app/admin/equipe/page.tsx` e `components/admin-shell.tsx`: painel de equipe para o tenant owner, indicação de usuários internos ativos e limite resolvido do plano, ações de vincular, desativar e reativar com justificativa.
+- `functions/src/platform/admin.ts`: troca de proprietário respeita limite do plano porque o proprietário antigo passa a contar como admin; considera a vaga liberada quando o novo proprietário era staff/admin.
+- `functions/src/index.ts`: novas atribuições e reatribuições de delivery exigem `DRIVER_DISPATCH` ou `DELIVERY_REASSIGNMENT` (Pro/Premium). Operações de conclusão/segurança de entregas já em andamento permanecem executáveis após downgrade.
+- Testes adicionados em `functions/src/platform.integration.test.ts`: reserva concorrente da última vaga, conta ausente, usuário não autorizado, repetição idempotente, auditoria, troca segura do owner e gates de entrega por plano.
+
+O `Platform Owner` continua global, autorizado exclusivamente por identidade segura; tenants nunca ganham role global por e-mail conhecido.
+**Ainda não concluído:** política de `SubscriptionStatus`/trial e DemoMode, janelas comerciais de relatórios, gates de todas as interfaces, landing/pricing e validação operacional da migração/deploy em produção. Nenhum dado de cliente foi apagado.
+
+
+
 ## Checkpoint 29/10/2026 — módulos de quotas e informação comercial
 
 **Fonte verificada:** commit `39e5abe893ab7a71c86dbde9276c24b0f235ee7b` (branch de desenvolvimento), CI [40956494470](https://github.com/CristianoRFB/Acaiteria/actions/runs/40956494470) com jobs de qualidade e segurança **PASS**. Não ocorreu merge em `main` nem migração/deploy de produção.
@@ -12,7 +27,7 @@
 - `components/tenant-commercial-capabilities.ts` + `components/admin-shell.tsx`: consulta segura e aviso de plano nas áreas de Caixa e Finanças; histórico permanece visível.
 - Dependências: `re2js@2.8.7`, `@hono/node-server@2.1.3`, `qs>=6.16.1` e `systeminformation@5.33.16` corrigem advisories que afetavam CI; continuam possíveis advisories **low** sem patch em ferramentas de desenvolvimento, que não devem ser ocultados.
 
-**Ainda não completo:** limite de usuários internos; gate de todas as operações de entregas (além de contas de entregador); políticas de status/trial; DemoMode Premium; janela de relatório por plano; downgrade integral; UX comercial/landing; deploy e migração reais autorizados. Dados existentes não devem ser apagados para aplicar planos.
+**Ainda não completo:** gates comerciais de operações de entrega secundárias/legadas; políticas de status/trial; DemoMode Premium; janela de relatório por plano; downgrade integral; UX comercial/landing; deploy e migração reais autorizados. Dados existentes não devem ser apagados para aplicar planos.
 
 
 > **Checkpoint adicional — 27/10/2026, commit `cc91609d86e49c1309a537b9f303acf6056a3a94`.**
