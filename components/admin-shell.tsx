@@ -12,6 +12,7 @@ import {
   CircleDollarSign,
   CircleHelp,
   Bike,
+  Users,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { useEffect, type ReactNode } from 'react';
@@ -43,6 +44,7 @@ const links = [
   { href: '/admin/promocoes', label: 'Promoções', icon: Megaphone },
   { href: '/admin/adicionais', label: 'Adicionais', icon: SlidersHorizontal },
   { href: '/admin/configuracoes', label: 'Configurações', icon: Settings },
+  { href: '/admin/equipe', label: 'Equipe', icon: Users },
 ];
 export function AdminShell({
   children,
@@ -96,7 +98,7 @@ export function AdminShell({
           <span className="sr-only">Painel operacional</span>
         </a>
         <nav className="mt-8 space-y-1">
-          {links.map(({ href, label, icon: Icon }) => {
+          {links.filter((link) => link.href !== '/admin/equipe' || role === 'tenant_owner').map(({ href, label, icon: Icon }) => {
             const active = activePath === href || (href !== '/admin' && activePath?.startsWith(`${href}/`));
             const destination = slug ? tenantPath(slug, href) : '#';
             return <a
@@ -136,7 +138,7 @@ export function AdminShell({
             className="flex min-w-0 flex-1 gap-1 overflow-x-auto overscroll-x-contain py-1 lg:hidden"
             aria-label="Navegação do painel"
           >
-            {links.map(({ href, label, icon: Icon }) => {
+            {links.filter((link) => link.href !== '/admin/equipe' || role === 'tenant_owner').map(({ href, label, icon: Icon }) => {
               const active = activePath === href || (href !== '/admin' && activePath?.startsWith(`${href}/`));
               const destination = slug ? tenantPath(slug, href) : '#';
               return <a
