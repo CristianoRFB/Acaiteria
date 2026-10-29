@@ -17,6 +17,7 @@ import { signOut } from 'firebase/auth';
 import { useEffect, type ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers';
+import { useTenantCommercialCapabilities } from '@/components/tenant-commercial-capabilities';
 import { AdminNotifications } from '@/components/admin-notifications';
 import { AdminTutorial } from '@/components/admin-tutorial';
 import { BrandLogo } from '@/components/brand-logo';
@@ -53,8 +54,13 @@ export function AdminShell({
   const { user, role, loading } = useAuth();
   const pathname = usePathname();
   const { slug, tenant } = useTenant();
+  const { capabilities } = useTenantCommercialCapabilities();
   const route = resolveTenantRoute(pathname ?? '/');
   const activePath = route.kind === 'tenant' ? route.internalPath : pathname;
+  const restrictedFeature = activePath?.startsWith('/admin/financas') ? 'FINANCE'
+    : activePath?.startsWith('/admin/caixa') ? 'CASH_REGISTER' : null;
+  const isRestricted = capabilities?.mode === 'ASSIGNED' && restrictedFeature !== null &&
+    capabilities.features[restrictedFeature] === false;
   useEffect(() => {
     if (!hasFirebaseConfig) return;
     if (!loading && (!user || !role) && slug) window.location.href = tenantPath(slug, '/admin/login');
@@ -153,7 +159,13 @@ export function AdminShell({
             Online
           </span>
         </header>
-        <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8">{children}</main>
+        <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8">
+          {isRestricted && <div role="status" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+            <p className="font-black">Recurso disponível no Pro e Premium</p>
+            <p className="mt-1">Este plano não permite novas operações deste módulo. Os registros existentes permanecem preservados para consulta e reconciliação. O controle definitivo é feito pelo servidor.</p>
+          </div>}
+          {children}
+        </main>
       </div>
       <AdminNotifications />
       <AdminTutorial />
