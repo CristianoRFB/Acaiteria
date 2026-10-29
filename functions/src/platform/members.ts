@@ -47,6 +47,8 @@ const memberSchema = z.object({
   role: z.enum(['admin', 'staff']),
   enabled: z.boolean(),
   reason: z.string().trim().min(8).max(300),
+  // tenantOnCall requires this field to resolve the scoped tenant securely.
+  tenantSlug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
 }).strict();
 
 /**
