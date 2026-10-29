@@ -392,6 +392,39 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect(JSON.stringify(noPlaintextSecrets.data())).not.toContain(password);
   }, 120000);
 
+  it('gates new dispatch/reassignment in Essential but preserves Pro behavior', async () => {
+    const slug = `qa-dispatch-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Dispatch', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const assignPlan = (planId: 'ESSENTIAL' | 'PRO', expectedPlanId: 'ESSENTIAL' | 'PRO' | null) =>
+      call('platformAssignTenantPlan', {
+        tenantId, planId, expectedPlanId, reason: 'Testes de recursos exclusivos de entregas',
+      }, platformToken);
+    expect((await assignPlan('ESSENTIAL', null)).status).toBe(200);
+    const data = { tenantSlug: slug, deliveryId: 'missing-delivery', driverId: 'missing-driver' };
+    for (const operation of ['assignDelivery', 'reassignDelivery']) {
+      const denied = await call(operation, data, ownerToken);
+      expect(denied.body.error?.status).toBe('FAILED_PRECONDITION');
+      expect(denied.body.error?.message).toMatch(/plano atual/i);
+      const unauthenticated = await call(operation, data);
+      expect(unauthenticated.status).not.toBe(200);
+    }
+    expect((await assignPlan('PRO', 'ESSENTIAL')).status).toBe(200);
+    const dispatch = await call('assignDelivery', data, ownerToken);
+    expect(dispatch.body.error?.status).toBe('NOT_FOUND');
+    // Reassignment has its own preconditions once the Pro gate is passed.
+    const reassign = await call('reassignDelivery', data, ownerToken);
+    expect(reassign.body.error?.status).toBe('FAILED_PRECONDITION');
+    expect(reassign.body.error?.message).not.toMatch(/plano atual/i);
+    expect((await db.collection(`tenants/${tenantId}/deliveryEvents`).get()).empty).toBe(true);
+  }, 60000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
