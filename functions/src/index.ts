@@ -15,6 +15,7 @@ import { withBeverageOptions } from '../../shared/beverage-options.js';
 export { getIntegrationReadiness, saveIntegrationMappings, retryOrderIntegration } from './integration/admin.js';
 export { platformCreateTenant, platformUpdateTenant, platformStartTenantSupport } from './platform/admin.js';
 export { platformAssignTenantPlan } from './platform/plans.js';
+export { setTenantInternalMember } from './platform/members.js';
 export { getTenantCommercialCapabilities } from './commercial-access.js';
 import { currentTenant, rawDb, requireTenantRole, tenantCollection, tenantDb as db, tenantOnCall as onCall } from './tenant.js';
 import { requireCommercialFeature, reserveDeliveryDriverSeat } from './commercial.js';
