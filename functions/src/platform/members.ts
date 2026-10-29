@@ -109,7 +109,7 @@ export const setTenantInternalMember = tenantOnCall({
 
     const now = FieldValue.serverTimestamp();
     transaction.set(ref, {
-      userId: account.uid, tenantId, role, status: nextStatus,
+      userId: account.uid, tenantId, email: account.email, role, status: nextStatus,
       updatedAt: now,
       ...(!membership.exists ? { createdAt: now } : {}),
     }, { merge: true });
