@@ -1,5 +1,20 @@
 # Pre-PC implementation checkpoint — Açaí SaaS
 
+
+## Checkpoint 29/10/2026 — módulos de quotas e informação comercial
+
+**Fonte verificada:** commit `39e5abe893ab7a71c86dbde9276c24b0f235ee7b` (branch de desenvolvimento), CI [40956494470](https://github.com/CristianoRFB/Acaiteria/actions/runs/40956494470) com jobs de qualidade e segurança **PASS**. Não ocorreu merge em `main` nem migração/deploy de produção.
+
+- `functions/src/order-usage.ts`: cotas mensais transacionais por tenant e mês local, com contagem inicial dos pedidos anteriores ao plano e concorrência serializada. Repetição idempotente não é debitada novamente.
+- `functions/src/index.ts`: valida a cota na mesma transação que cria pedido, antes de gerar documentos de pedido/publicOrder/idempotência.
+- `functions/src/create-order.integration.test.ts` + `functions/src/order-usage.test.ts`: cobrem concorrência de pedidos, contagem de legado, isolamento, downgrade, replay e virada de mês/ano.
+- `functions/src/commercial-access.ts`: expõe somente um snapshot de entitlements ao próprio admin do tenant, sem dar leitura cliente ao documento privado de assinatura; autorização real continua no backend.
+- `components/tenant-commercial-capabilities.ts` + `components/admin-shell.tsx`: consulta segura e aviso de plano nas áreas de Caixa e Finanças; histórico permanece visível.
+- Dependências: `re2js@2.8.7`, `@hono/node-server@2.1.3`, `qs>=6.16.1` e `systeminformation@5.33.16` corrigem advisories que afetavam CI; continuam possíveis advisories **low** sem patch em ferramentas de desenvolvimento, que não devem ser ocultados.
+
+**Ainda não completo:** limite de usuários internos; gate de todas as operações de entregas (além de contas de entregador); políticas de status/trial; DemoMode Premium; janela de relatório por plano; downgrade integral; UX comercial/landing; deploy e migração reais autorizados. Dados existentes não devem ser apagados para aplicar planos.
+
+
 > **Checkpoint adicional — 27/10/2026, commit `cc91609d86e49c1309a537b9f303acf6056a3a94`.**
 > CI remoto **PASS** no [workflow 40553552880](https://github.com/CristianoRFB/Acaiteria/actions/runs/40553552880):
 > lint, typecheck, unit tests, Functions, Rules, integração Functions, migração,
