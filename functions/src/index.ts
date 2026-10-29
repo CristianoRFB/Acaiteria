@@ -1007,6 +1007,9 @@ export const sanitizeLegacyDeliveryLinks = onCall({ region, timeoutSeconds: 30, 
 
 export const assignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   const role = await requireRole(request.auth?.uid, ['admin', 'staff']);
+  // A new dedicated driver assignment is a Pro feature. In-flight deliveries
+  // remain finishable after downgrade through driver progress/confirmation.
+  await requireCommercialFeature('DRIVER_DISPATCH');
   const parsed = assignDeliverySchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', 'Entrega ou motoboy inválido.');
   const { deliveryId, driverId } = parsed.data;
@@ -1115,6 +1118,7 @@ export const progressDelivery = onCall({ region, timeoutSeconds: 15, memory: '25
 const reassignDeliverySchema = z.object({ deliveryId: z.string().min(1).max(160), driverId: z.string().min(1).max(128) });
 export const reassignDelivery = onCall({ region, timeoutSeconds: 15, memory: '256MiB', enforceAppCheck }, async (request) => {
   const role = await requireRole(request.auth?.uid, ['admin', 'staff']);
+  await requireCommercialFeature('DELIVERY_REASSIGNMENT');
   const parsed = reassignDeliverySchema.safeParse(request.data);
   if (!parsed.success) throw new HttpsError('invalid-argument', 'Entrega ou motoboy inválido.');
   const { deliveryId, driverId } = parsed.data;
