@@ -6,6 +6,7 @@ import { z } from 'zod';
 
 import { defaultStorePublicConfig } from '../../../shared/store-config.js';
 import { rawDb } from '../tenant.js';
+import { assertInternalMemberSeat } from './members.js';
 
 const region = 'southamerica-east1';
 const colorSchema = z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Informe uma cor hexadecimal, como #5634A5.');
@@ -165,6 +166,15 @@ export const platformUpdateTenant = onCall({ region, timeoutSeconds: 20, memory:
     if (newOwner && newOwner.uid !== previousOwnerId && newOwnerRef) {
       const membership = await transaction.get(newOwnerRef);
       if (membership.exists && membership.data()?.status !== 'ACTIVE') throw new HttpsError('failed-precondition', 'A associação desse usuário está desativada.');
+      if (membership.data()?.role === 'driver') throw new HttpsError('failed-precondition', 'O acesso de entregador não pode ser promovido diretamente a proprietário.');
+      // The outgoing owner becomes an internal admin. Check the approved
+      // commercial seat limit atomically; the incoming owner no longer
+      // consumes an internal seat if previously counted as staff/admin.
+      if (previousOwnerId && previousMembership?.exists &&
+          previousMembership.data()?.role === 'tenant_owner' &&
+          previousMembership.data()?.status === 'ACTIVE') {
+        await assertInternalMemberSeat(transaction, { tenantId: input.tenantId, excludeUserId: newOwner.uid });
+      }
     }
     const updates = {
       ...(input.displayName ? { displayName: input.displayName } : {}),
