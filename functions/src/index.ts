@@ -17,6 +17,7 @@ export { platformCreateTenant, platformUpdateTenant, platformStartTenantSupport 
 export { platformAssignTenantPlan } from './platform/plans.js';
 import { currentTenant, rawDb, requireTenantRole, tenantCollection, tenantDb as db, tenantOnCall as onCall } from './tenant.js';
 import { requireCommercialFeature, reserveDeliveryDriverSeat } from './commercial.js';
+import { reserveMonthlyOrder } from './order-usage.js';
 
 import {
   calculateCartPreview,
@@ -155,6 +156,9 @@ export const createOrder = onCall({ region, timeoutSeconds: 30, memory: '256MiB'
       if (idempotency.data()?.requestHash && idempotency.data()?.requestHash !== requestHash) throw new HttpsError('already-exists', 'Tentativa já usada com outro conteúdo.');
       finalOrderId = idempotency.data()?.orderId as string; return;
     }
+    // Idempotent retries do not consume another seat; quota reservation and
+    // order creation commit together or both roll back on any failure.
+    await reserveMonthlyOrder(transaction, requestTime);
     transaction.create(orderRef, orderData);
     transaction.create(db.doc(`publicOrders/${publicCode}`), { orderNumber, publicCode, createdAt: now, updatedAt: now, items: cart.items, fulfillment: { mode: input.fulfillment.mode }, pricing: { totalCents }, status: 'NEW', statusMessage: getCustomerOrderStatusMessage('NEW'), estimatedMinutes: orderData.estimatedMinutes, pricingReviewStatus: 'VERIFIED', integrationMessage: 'Pedido recebido pela loja. Não envie outro pedido.' });
     transaction.create(requestRef, { orderId: orderRef.id, requestHash, createdAt: now });
