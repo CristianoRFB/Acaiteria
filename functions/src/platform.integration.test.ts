@@ -325,6 +325,73 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect(other.status).not.toBe(200);
   });
 
+  it('reserva vagas internas sem ultrapassar o Essencial em convites concorrentes', async () => {
+    const slug = `qa-users-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Equipe', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const assign = await call('platformAssignTenantPlan', {
+      tenantId, planId: 'ESSENTIAL', expectedPlanId: null,
+      reason: 'Teste de limite de usuários internos e concorrência',
+    }, platformToken);
+    expect(assign.status).toBe(200);
+
+    const team = await Promise.all(Array.from({ length: 4 }, () =>
+      getAuth().createUser({ email: `qa-team-${randomUUID()}@example.test`, password })));
+    const payload = (email: string, enabled: boolean, role: 'admin' | 'staff' = 'staff') => ({
+      tenantSlug: slug, email, role, enabled, reason: 'Alteração autorizada para testes de equipe',
+    });
+
+    // Role/tenant checks happen server-side; an anonymous or unrelated user
+    // cannot grant an admin role even if they know tenantSlug and email.
+    const denied = await call('setTenantInternalMember', payload(team[0].email!, true, 'admin'), regularToken);
+    expect(denied.body.error?.status).toBe('PERMISSION_DENIED');
+    expect((await db.doc(`tenants/${tenantId}/members/${team[0].uid}`).get()).exists).toBe(false);
+
+    const missing = await call('setTenantInternalMember', payload(`unregistered-${randomUUID()}@example.test`, true), ownerToken);
+    expect(missing.body.error?.status).toBe('NOT_FOUND');
+    const first = await call('setTenantInternalMember', payload(team[0].email!, true), ownerToken);
+    expect(first.status).toBe(200);
+    const repeated = await call('setTenantInternalMember', payload(team[0].email!, true), ownerToken);
+    expect(repeated.status).toBe(200);
+    expect(repeated.body.result?.unchanged).toBe(true);
+
+    // There is now just one free internal seat. Competing requests may not
+    // both grant it even if they initially read the same quota.
+    const results = await Promise.all([
+      call('setTenantInternalMember', payload(team[1].email!, true), ownerToken),
+      call('setTenantInternalMember', payload(team[2].email!, true, 'admin'), ownerToken),
+    ]);
+    expect(results.filter((result) => result.status === 200)).toHaveLength(1);
+    expect(results.filter((result) => result.status !== 200)).toHaveLength(1);
+    expect(results.find((result) => result.status !== 200)?.body.error?.status)
+      .toMatch(/RESOURCE_EXHAUSTED|ABORTED/);
+    const active = await db.collection(`tenants/${tenantId}/members`)
+      .where('status', '==', 'ACTIVE').get();
+    expect(active.docs.filter((doc) => ['staff', 'admin'].includes(String(doc.data().role)))).toHaveLength(2);
+    expect(active.docs.filter((doc) => doc.data().role === 'tenant_owner')).toHaveLength(1);
+
+    const firstAsStaff = await signIn(team[0].email!);
+    const selfPromotion = await call('setTenantInternalMember', payload(team[3].email!, true, 'admin'), firstAsStaff);
+    expect(selfPromotion.body.error?.status).toBe('PERMISSION_DENIED');
+
+    const disabled = await call('setTenantInternalMember', payload(team[0].email!, false), ownerToken);
+    expect(disabled.status).toBe(200);
+    const granted = await call('setTenantInternalMember', payload(team[3].email!, true), ownerToken);
+    expect(granted.status).toBe(200);
+
+    const auditable = await db.collection(`tenants/${tenantId}/auditLogs`)
+      .where('action', '==', 'INTERNAL_MEMBER_GRANTED').get();
+    expect(auditable.size).toBe(3);
+    const noPlaintextSecrets = await db.doc(`users/${team[3].uid}`).get();
+    expect(JSON.stringify(noPlaintextSecrets.data())).not.toContain(password);
+  }, 120000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
