@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { ShieldCheck, Users } from 'lucide-react';
 
 import { AdminShell } from '@/components/admin-shell';
+import { useTenantCommercialCapabilities } from '@/components/tenant-commercial-capabilities';
 import { useAuth } from '@/components/providers';
 import { useTenant } from '@/components/tenant-provider';
 import { Button } from '@/components/ui/button';
@@ -21,6 +22,7 @@ const inputClass = 'mt-2 h-11 w-full rounded-xl border border-border-soft bg-whi
 
 export default function TeamPage() {
   const { role } = useAuth();
+  const { capabilities } = useTenantCommercialCapabilities();
   const { tenant } = useTenant();
   const tenantId = tenant?.id;
   const [members, setMembers] = useState<TeamMember[]>([]);
@@ -73,6 +75,7 @@ export default function TeamPage() {
 
   const internal = members.filter((member) => ['admin', 'staff'].includes(member.role));
   const activeCount = internal.filter((member) => member.status === 'ACTIVE').length;
+  const planLimit = capabilities?.mode === 'ASSIGNED' ? capabilities.limits.internalUsers : null;
 
   return <AdminShell adminOnly>
     <div className="flex items-center gap-3">
@@ -87,7 +90,7 @@ export default function TeamPage() {
     ) : <>
       <p className="mt-6 rounded-2xl border bg-white p-4 text-sm text-text-muted">
         <ShieldCheck className="mr-2 inline size-4 text-brand" />
-        Usuários internos ativos: <strong>{activeCount}</strong>. O proprietário principal e os entregadores não contam neste limite.
+        Usuários internos ativos: <strong>{activeCount}{planLimit !== null ? ` / ${planLimit}` : ''}</strong>. O proprietário principal e os entregadores não contam neste limite.
         Os limites são validados no servidor, conforme o plano comercial atribuído.
       </p>
       {(error || notice) && <p role={error ? 'alert' : 'status'} className={`mt-4 rounded-2xl p-4 text-sm font-bold ${error ? 'bg-red-50 text-red-800' : 'bg-emerald-50 text-emerald-800'}`}>{error || notice}</p>}
