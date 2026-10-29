@@ -425,6 +425,40 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.collection(`tenants/${tenantId}/deliveryEvents`).get()).empty).toBe(true);
   }, 60000);
 
+  it('does not let platform owner transfers bypass internal member quotas', async () => {
+    const slug = `qa-owner-seat-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Transfer Quota', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    expect((await call('platformAssignTenantPlan', {
+      tenantId, planId: 'ESSENTIAL', expectedPlanId: null,
+      reason: 'Testar troca segura de propriedade',
+    }, platformToken)).status).toBe(200);
+    const subscription = db.doc(`tenants/${tenantId}/private/subscription`);
+    await subscription.update({ limitOverrides: { internalUsers: 0 } });
+    const attempt = await call('platformUpdateTenant', {
+      tenantId, ownerEmail: newOwnerEmail,
+    }, platformToken);
+    expect(attempt.body.error?.status).toBe('RESOURCE_EXHAUSTED');
+    const oldOwner = await getAuth().getUserByEmail(ownerEmail);
+    expect((await db.doc(`tenants/${tenantId}/private/platform`).get()).data()?.ownerUserId).toBe(oldOwner.uid);
+    expect((await db.doc(`tenants/${tenantId}/members/${oldOwner.uid}`).get()).data()?.role).toBe('tenant_owner');
+
+    await subscription.update({ limitOverrides: { internalUsers: 1 } });
+    const transferred = await call('platformUpdateTenant', {
+      tenantId, ownerEmail: newOwnerEmail,
+    }, platformToken);
+    expect(transferred.status).toBe(200);
+    const nextOwner = await getAuth().getUserByEmail(newOwnerEmail);
+    expect((await db.doc(`tenants/${tenantId}/members/${oldOwner.uid}`).get()).data()?.role).toBe('admin');
+    expect((await db.doc(`tenants/${tenantId}/members/${nextOwner.uid}`).get()).data()?.role).toBe('tenant_owner');
+    expect((await db.doc(`tenants/${tenantId}/private/platform`).get()).data()?.ownerUserId).toBe(nextOwner.uid);
+  }, 60000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
