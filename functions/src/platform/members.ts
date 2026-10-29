@@ -16,9 +16,13 @@ import { currentTenant, rawDb, requireTenantRole, tenantOnCall } from '../tenant
  * becomes tenant_owner stops consuming a seat within that same transaction.
  */
 export async function assertInternalMemberSeat(
-  transaction: Transaction, excludeUserId?: string,
+  transaction: Transaction,
+  options: { tenantId?: string; excludeUserId?: string } = {},
 ): Promise<void> {
-  const { tenantId } = currentTenant();
+  // Platform Owner actions run outside the tenantOnCall AsyncLocalStorage
+  // context, so the tenant must be passed explicitly for owner transfers.
+  const tenantId = options.tenantId ?? currentTenant().tenantId;
+  const { excludeUserId } = options;
   const subscription = await transaction.get(rawDb.doc(`tenants/${tenantId}/private/subscription`));
   if (!subscription.exists) return; // tenants not yet assigned a commercial plan
   const resolved = resolveEntitlements(subscription.data() ?? {});
