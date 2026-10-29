@@ -126,6 +126,97 @@ describe('createOrder no Emulator Suite', () => {
     expect(edited.status).toBe(200);
     expect((await db.doc(`orders/${mismatchingId}`).get()).data()).toMatchObject({ pricing: { totalCents: 1800 }, pricingVerification: { status: 'VERIFIED', source: 'SERVER' }, customerEditApproval: { status: 'PENDING' } });
   }, 120000);
+
+  it('enforces monthly quota with existing orders, concurrent final seat and idempotent retries', async () => {
+    const tenantId = `quota-${crypto.randomUUID().slice(0, 8)}`;
+    const timezone = 'America/Sao_Paulo';
+    const settings = (await db.doc('settings/public').get()).data()!;
+    const product = (await db.doc('products/simple').get()).data()!;
+    const category = (await db.doc('categories/acai').get()).data()!;
+    await Promise.all([
+      db.doc(`tenantSlugs/${tenantId}`).set({ tenantId }),
+      db.doc(`tenants/${tenantId}`).set({
+        slug: tenantId, displayName: 'QA Quota', status: 'ACTIVE', timezone,
+        locale: 'pt-BR', currency: 'BRL', branding: { primaryColor: '#5634a5', secondaryColor: '#ffffff' },
+      }),
+      db.doc(`tenants/${tenantId}/settings/public`).set(settings),
+      db.doc(`tenants/${tenantId}/categories/acai`).set(category),
+      db.doc(`tenants/${tenantId}/products/simple`).set(product),
+      db.doc(`tenants/${tenantId}/private/subscription`).set({
+        planId: 'ESSENTIAL', subscriptionStatus: 'active',
+        limitOverrides: { ordersPerMonth: 2 },
+      }),
+      // The first subscription-period counter must include existing orders.
+      db.doc(`tenants/${tenantId}/orders/preexisting`).set({
+        createdAt: new Date(), status: 'COMPLETED', clientRequestId: 'legacy',
+      }),
+    ]);
+    const firstId = crypto.randomUUID();
+    const secondId = crypto.randomUUID();
+    const firstOrder = { ...basePayload, tenantSlug: tenantId, clientRequestId: firstId };
+    const secondOrder = { ...basePayload, tenantSlug: tenantId, clientRequestId: secondId };
+    const [first, second] = await Promise.all([call(firstOrder), call(secondOrder)]);
+    const successes = [first, second].filter((r) => r.status === 200);
+    const failures = [first, second].filter((r) => r.status !== 200);
+    expect(successes).toHaveLength(1);
+    expect(failures).toHaveLength(1);
+    expect(failures[0].body.error?.status).toBe('RESOURCE_EXHAUSTED');
+
+    const acceptedPayload = first.status === 200 ? firstOrder : secondOrder;
+    const retry = await call(acceptedPayload);
+    expect(retry.status).toBe(200);
+    expect(retry.body.result?.idempotent).toBe(true);
+    const actual = await db.collection(`tenants/${tenantId}/orders`).get();
+    expect(actual.size).toBe(2); // one existing + one new, never three
+    const quota = await db.collection(`tenants/${tenantId}/commercialUsage`).get();
+    expect(quota.size).toBe(1);
+    expect(quota.docs[0].data()).toMatchObject({ count: 2 });
+
+    // A different tenant has its own quota and is unaffected.
+    const other = await call({
+      ...basePayload, clientRequestId: crypto.randomUUID(),
+      tenantSlug: TEST_TENANT_B_SLUG, clientPreviewTotalCents: 2500,
+    });
+    expect(other.status).toBe(200);
+
+    // A quota rejection must not leave an idempotency tombstone or phantom order.
+    const rejectedPayload = first.status === 200 ? secondOrder : firstOrder;
+    expect((await db.doc(`tenants/${tenantId}/orderRequests/${rejectedPayload.clientRequestId}`).get()).exists).toBe(false);
+  }, 120000);
+
+  it('blocks a newly assigned plan below accumulated usage without deleting old orders', async () => {
+    const tenantId = `quota-upgrade-${crypto.randomUUID().slice(0, 8)}`;
+    const settings = (await db.doc('settings/public').get()).data()!;
+    const product = (await db.doc('products/simple').get()).data()!;
+    const category = (await db.doc('categories/acai').get()).data()!;
+    await Promise.all([
+      db.doc(`tenantSlugs/${tenantId}`).set({ tenantId }),
+      db.doc(`tenants/${tenantId}`).set({
+        slug: tenantId, displayName: 'QA Downgrade', status: 'ACTIVE',
+        timezone: 'America/Sao_Paulo', locale: 'pt-BR', currency: 'BRL',
+        branding: { primaryColor: '#5634a5', secondaryColor: '#ffffff' },
+      }),
+      db.doc(`tenants/${tenantId}/settings/public`).set(settings),
+      db.doc(`tenants/${tenantId}/categories/acai`).set(category),
+      db.doc(`tenants/${tenantId}/products/simple`).set(product),
+      db.doc(`tenants/${tenantId}/private/subscription`).set({
+        planId: 'PRO', limitOverrides: { ordersPerMonth: 1 },
+      }),
+    ]);
+    const payload = { ...basePayload, tenantSlug: tenantId, clientRequestId: crypto.randomUUID() };
+    const allowed = await call(payload);
+    expect(allowed.status).toBe(200);
+    await db.doc(`tenants/${tenantId}/private/subscription`).update({
+      planId: 'ESSENTIAL', limitOverrides: { ordersPerMonth: 0 },
+    });
+    const blocked = await call({ ...basePayload, tenantSlug: tenantId, clientRequestId: crypto.randomUUID() });
+    expect(blocked.body.error?.status).toBe('RESOURCE_EXHAUSTED');
+    expect((await db.collection(`tenants/${tenantId}/orders`).get()).size).toBe(1);
+    const retry = await call(payload);
+    expect(retry.status).toBe(200);
+    expect(retry.body.result?.idempotent).toBe(true);
+  }, 120000);
+
 });
 
 describe('persisted integration outbox', () => {
