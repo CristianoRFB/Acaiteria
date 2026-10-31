@@ -1,5 +1,16 @@
 # Pre-PC implementation checkpoint — Açaí SaaS
 
+## Incremento — Relatórios comerciais e landing SaaS (31/10/2026)
+
+- `shared/report-window.ts`: calcula a janela comercial real de 30 dias (Essencial), 365 dias (Pro) e histórico completo (Premium), respeitando a data civil do fuso horário de cada tenant e os limites já aprovados.
+- `functions/src/monthly-report.ts`: relatório comercial autenticado e tenant-scoped, consultado pelo backend, retorna somente campos essenciais para os gráficos sem nome/telefone/endereço do cliente. Aplica a janela de tempo, o estado da assinatura e o entitlement financeiro; recusa truncamento silencioso de resultados.
+- `app/admin/financas/page.tsx`: a inteligência comercial usa agora a callable em vez de ler pedidos diretamente para gerar relatórios; lançamentos históricos continuam presentes no livro-caixa para consulta e reconciliação.
+- `tests/report-window.test.ts` e `functions/src/platform.integration.test.ts`: cenários de fuso, virada de mês, planos, acesso indevido, isolamento, payload sanitizado e downgrade sem exclusão.
+- `app/saas/page.tsx`: landing de vendas separada do storefront, com preços/limites reais do catálogo aprovado, Pro recomendado, trial Pro e implantação assistida; não promete gateway, assinatura automatizada nem recursos futuros como existentes.
+- `shared/tenancy.ts` e `functions/src/platform/admin.ts`: `/saas` é rota reservada; onboarding recusa slugs de rotas operacionais e de sistema.
+- **Ainda pendente:** DemoMode Premium isolado (sem inventar tenant real), cobertura residual de gating, validação visual e operacional dos módulos, migração dos dados verdadeiros, configuração final e deploy autorizado. Nenhum screenshot foi tratado como prova de implementação sem captura do sistema executado.
+
+
 
 ## Implementação incremental — SubscriptionStatus e trial Pro (30/10/2026)
 
