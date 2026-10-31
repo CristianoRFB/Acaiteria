@@ -1,6 +1,7 @@
 import { FieldValue, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
-import { canUseFeature, resolveEntitlements } from '../../shared/entitlements.js';
+import { canUseFeature, type ResolvedEntitlements } from '../../shared/entitlements.js';
+import { resolveSubscriptionAccess } from '../../shared/subscription-status.js';
 import type { CommercialFeature } from '../../shared/plan-catalog.js';
 import { currentTenant, rawDb } from './tenant.js';
 
@@ -12,15 +13,26 @@ import { currentTenant, rawDb } from './tenant.js';
  * An explicit but malformed commercial assignment is never treated as free.
  * Rules prevent clients from modifying private/subscription directly.
  */
+export function requireActiveCommercialEntitlements(
+  subscription: Record<string, unknown> | undefined,
+  nowMs = Date.now(),
+): ResolvedEntitlements | null {
+  const access = resolveSubscriptionAccess(subscription, nowMs);
+  if (access.state === 'UNASSIGNED') return null;
+  if (access.state === 'BLOCKED') {
+    if (access.reason === 'EXPIRED_TRIAL') {
+      throw new HttpsError('failed-precondition', 'O período de teste Pro terminou. Solicite um plano à administração da plataforma.');
+    }
+    throw new HttpsError('failed-precondition', 'Assinatura inativa ou inválida. Contate a administração da plataforma.');
+  }
+  return access.entitlements;
+}
+
 export async function requireCommercialFeature(feature: CommercialFeature): Promise<void> {
   const { tenantId } = currentTenant();
   const subscription = await rawDb.doc(`tenants/${tenantId}/private/subscription`).get();
-  if (!subscription.exists) return;
-
-  const resolved = resolveEntitlements(subscription.data() ?? {});
-  if (!resolved) {
-    throw new HttpsError('failed-precondition', 'Plano comercial inválido; contate a administração da plataforma.');
-  }
+  const resolved = requireActiveCommercialEntitlements(subscription.data());
+  if (!resolved) return; // Migration tenant with no assigned plan.
   if (!canUseFeature(resolved, feature)) {
     throw new HttpsError('failed-precondition', 'Recurso indisponível no plano atual deste estabelecimento.');
   }
@@ -42,11 +54,8 @@ export async function reserveDeliveryDriverSeat(transaction: Transaction): Promi
   const subscription = await transaction.get(subscriptionRef);
   if (!subscription.exists) return; // legacy tenant: no commercial assignment
 
-  const resolved = resolveEntitlements(subscription.data() ?? {});
-  if (!resolved) {
-    throw new HttpsError('failed-precondition', 'Plano comercial inválido; contate a administração da plataforma.');
-  }
-  if (!canUseFeature(resolved, 'DRIVER_APP') || resolved.limits.deliveryDrivers < 1) {
+  const resolved = requireActiveCommercialEntitlements(subscription.data());
+  if (!resolved || !canUseFeature(resolved, 'DRIVER_APP') || resolved.limits.deliveryDrivers < 1) {
     throw new HttpsError('failed-precondition', 'Entregadores com acesso próprio não estão disponíveis no plano atual.');
   }
 
