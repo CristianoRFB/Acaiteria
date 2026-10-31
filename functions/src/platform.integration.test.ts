@@ -579,9 +579,6 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect(created.status).toBe(200);
     const tenantId = String(created.body.result?.tenantId);
     const ownerToken = await signIn(ownerEmail);
-    const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
-    }).format(d);
     // Use ISO keys via formatToParts rather than relying on environment locale.
     const dayKey = (d: Date) => {
       const p = new Intl.DateTimeFormat('en-US', {
