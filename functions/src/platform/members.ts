@@ -4,7 +4,7 @@ import { FieldValue, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
-import { resolveEntitlements } from '../../../shared/entitlements.js';
+import { requireActiveCommercialEntitlements } from '../commercial.js';
 import { currentTenant, rawDb, requireTenantRole, tenantOnCall } from '../tenant.js';
 
 /**
@@ -25,8 +25,8 @@ export async function assertInternalMemberSeat(
   const { excludeUserId } = options;
   const subscription = await transaction.get(rawDb.doc(`tenants/${tenantId}/private/subscription`));
   if (!subscription.exists) return; // tenants not yet assigned a commercial plan
-  const resolved = resolveEntitlements(subscription.data() ?? {});
-  if (!resolved) throw new HttpsError('failed-precondition', 'Plano do estabelecimento inválido.');
+  const resolved = requireActiveCommercialEntitlements(subscription.data());
+  if (!resolved) return;
 
   const lockRef = rawDb.doc(`tenants/${tenantId}/commercialUsage/memberSeats`);
   await transaction.get(lockRef);
