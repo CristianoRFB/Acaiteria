@@ -459,6 +459,71 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.doc(`tenants/${tenantId}/private/platform`).get()).data()?.ownerUserId).toBe(nextOwner.uid);
   }, 60000);
 
+  it('activates a single 14-day Pro trial, expires it server-side and allows manual conversion', async () => {
+    const slug = `qa-trial-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Trial Pro', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const trialPayload = { tenantId, reason: 'Teste Pro gratuito por quatorze dias' };
+    const denied = await call('platformStartProTrial', trialPayload, regularToken);
+    expect(denied.body.error?.status).toBe('PERMISSION_DENIED');
+
+    const started = await call('platformStartProTrial', trialPayload, platformToken);
+    expect(started.status).toBe(200);
+    expect(started.body.result).toMatchObject({ planId: 'PRO', subscriptionStatus: 'trialing' });
+    const subscriptionRef = db.doc(`tenants/${tenantId}/private/subscription`);
+    const initial = (await subscriptionRef.get()).data()!;
+    expect(initial.paymentVerified).toBe(false);
+    expect(initial.trialUsedAt).toBeTruthy();
+    const trialUntilMillis = (initial.trialUntil as { toMillis: () => number }).toMillis();
+    expect(trialUntilMillis - Date.now()).toBeGreaterThan(13 * 24 * 60 * 60 * 1000);
+    expect(trialUntilMillis - Date.now()).toBeLessThanOrEqual(14 * 24 * 60 * 60 * 1000);
+
+    const snapshot = await call('getTenantCommercialCapabilities', { tenantSlug: slug }, ownerToken);
+    expect(snapshot.status).toBe(200);
+    expect(snapshot.body.result).toMatchObject({ mode: 'ASSIGNED', planId: 'PRO', accessState: 'TRIALING' });
+    expect(snapshot.body.result?.trialUntilMillis).toBe(trialUntilMillis);
+    const financeInput = () => ({
+      tenantSlug: slug, clientRequestId: randomUUID(),
+      kind: 'EXPENSE', category: 'Insumos', description: 'Lançamento em período de teste',
+      amountCents: 1350, date: '2026-10-27', status: 'PAID',
+    });
+    const createdEntry = await call('saveFinanceEntry', financeInput(), ownerToken);
+    expect(createdEntry.status).toBe(200);
+    const entryId = String(createdEntry.body.result?.entryId);
+
+    await subscriptionRef.update({ trialUntil: new Date(Date.now() - 1000) });
+    const expired = await call('getTenantCommercialCapabilities', { tenantSlug: slug }, ownerToken);
+    expect(expired.status).toBe(200);
+    expect(expired.body.result).toMatchObject({ mode: 'BLOCKED', accessState: 'EXPIRED_TRIAL', features: null });
+    expect((await call('saveFinanceEntry', financeInput(), ownerToken)).body.error?.status).toBe('FAILED_PRECONDITION');
+    // Existing historical entries remain editable; downgrade/expiry never deletes data.
+    expect((await call('saveFinanceEntry', { ...financeInput(), id: entryId, description: 'Correção pós-trial' }, ownerToken)).status).toBe(200);
+    expect((await db.doc(`tenants/${tenantId}/financeEntries/${entryId}`).get()).exists).toBe(true);
+
+    const repeated = await call('platformStartProTrial', trialPayload, platformToken);
+    expect(repeated.body.error?.status).toBe('FAILED_PRECONDITION');
+    const converted = await call('platformAssignTenantPlan', {
+      tenantId, planId: 'PRO', expectedPlanId: 'PRO',
+      reason: 'Converter trial Pro para atribuição ativa manual',
+    }, platformToken);
+    expect(converted.status).toBe(200);
+    expect(converted.body.result?.unchanged).toBe(false);
+    const active = (await subscriptionRef.get()).data()!;
+    expect(active.subscriptionStatus).toBe('active');
+    expect(active.trialUntil).toBeUndefined();
+    expect(active.trialUsedAt).toBeTruthy();
+    expect((await call('saveFinanceEntry', financeInput(), ownerToken)).status).toBe(200);
+    expect((await call('platformStartProTrial', trialPayload, platformToken)).body.error?.status).toBe('FAILED_PRECONDITION');
+    const audits = await db.collection('platformAuditLogs').where('tenantId', '==', tenantId).get();
+    expect(audits.docs.filter((doc) => doc.data().action === 'PRO_TRIAL_STARTED')).toHaveLength(1);
+  }, 120000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
