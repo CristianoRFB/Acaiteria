@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { FieldValue } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp } from 'firebase-admin/firestore';
 import { HttpsError, onCall } from 'firebase-functions/v2/https';
 import { z } from 'zod';
 
 import { rawDb } from '../tenant.js';
+import { PRO_TRIAL_DAYS } from '../../../shared/subscription-status.js';
 import { requirePlatformOwner } from './admin.js';
 
 /**
@@ -75,5 +76,61 @@ export const platformAssignTenantPlan = onCall({
       createdAt: FieldValue.serverTimestamp(),
     });
     return { tenantId, planId, unchanged: false };
+  });
+});
+
+/**
+ * Explicit platform-controlled activation of the approved 14-day Pro trial.
+ * No checkout, card, payment confirmation or recurring subscription is created.
+ * One tenant may enter the trial once; expired trials cannot be restarted.
+ */
+const trialSchema = z.object({
+  tenantId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),
+  reason: z.string().trim().min(8).max(300),
+}).strict();
+
+export const platformStartProTrial = onCall({
+  region: 'southamerica-east1',
+  timeoutSeconds: 20,
+  memory: '256MiB',
+  enforceAppCheck: process.env.FUNCTIONS_EMULATOR !== 'true',
+}, async (request) => {
+  const actorUid = await requirePlatformOwner(request.auth?.uid);
+  const parsed = trialSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Estabelecimento ou justificativa inválidos.');
+  const { tenantId, reason } = parsed.data;
+  const tenantRef = rawDb.doc(`tenants/${tenantId}`);
+  const subscriptionRef = rawDb.doc(`tenants/${tenantId}/private/subscription`);
+  const auditRef = rawDb.collection('platformAuditLogs').doc(randomUUID());
+  const startedAt = Timestamp.now();
+  const trialUntil = Timestamp.fromMillis(startedAt.toMillis() + PRO_TRIAL_DAYS * 24 * 60 * 60 * 1000);
+
+  return rawDb.runTransaction(async (transaction) => {
+    const [tenant, subscription] = await Promise.all([
+      transaction.get(tenantRef), transaction.get(subscriptionRef),
+    ]);
+    if (!tenant.exists) throw new HttpsError('not-found', 'Estabelecimento não encontrado.');
+    if (tenant.data()?.status !== 'ACTIVE') throw new HttpsError('failed-precondition', 'Ative o estabelecimento antes do teste.');
+    if (subscription.exists) {
+      throw new HttpsError('failed-precondition', 'Já existe histórico comercial para este estabelecimento. O trial não pode ser reiniciado.');
+    }
+    transaction.create(subscriptionRef, {
+      planId: 'PRO',
+      subscriptionStatus: 'trialing',
+      trialUntil,
+      trialStartedAt: startedAt,
+      trialUsedAt: startedAt,
+      assignmentMode: 'TRIAL',
+      paymentVerified: false,
+      createdAt: FieldValue.serverTimestamp(),
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: actorUid,
+    });
+    transaction.create(auditRef, {
+      action: 'PRO_TRIAL_STARTED', actorUid, tenantId, reason,
+      planId: 'PRO', trialUntil, source: 'PLATFORM_CALLABLE',
+      createdAt: FieldValue.serverTimestamp(),
+    });
+    return { tenantId, planId: 'PRO' as const, subscriptionStatus: 'trialing' as const, trialUntilMillis: trialUntil.toMillis() };
   });
 });
