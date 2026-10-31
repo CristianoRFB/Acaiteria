@@ -50,7 +50,7 @@ export default function SaasOverviewPage() {
         <h1 className="mt-6 max-w-3xl text-4xl font-black leading-tight tracking-[-.055em] sm:text-6xl">Seu cardápio, seus pedidos e sua operação em um só lugar.</h1>
         <p className="mt-6 max-w-2xl text-base leading-8 text-[#755c6b]">Do cliente que monta o próprio copo ao acompanhamento da entrega, com gestão da loja e recursos conforme o plano escolhido. A experiência de cada açaiteria fica separada por estabelecimento.</p>
         <a href="#planos" className="mt-7 inline-flex min-h-12 items-center gap-2 rounded-full bg-[#82204f] px-6 text-sm font-black text-white transition hover:bg-[#68153d]">Conheça os planos <ArrowDown className="size-4"/></a>
-        <p className="mt-4 text-xs text-[#826a75]">Sem plano gratuito permanente. Teste Pro de 14 dias sem cartão inicial, com ativação assistida.</p>
+        <p className="mt-4 text-xs text-[#826a75]">Sem plano gratuito permanente. Teste Pro de 14 dias sem cartão inicial para proprietários de lojas cadastradas. O cadastro inicial da loja é assistido.</p>
       </div>
       <div className="rounded-[32px] bg-[#351924] p-6 text-white shadow-2xl sm:p-8">
         <span className="text-xs font-black uppercase tracking-[.2em] text-[#d7f04a]">Fluxo da loja</span>
@@ -86,9 +86,9 @@ export default function SaasOverviewPage() {
     </section>
 
     <section className="mx-auto grid max-w-6xl gap-6 px-5 py-16 sm:grid-cols-3">
-      <div className="rounded-3xl border border-[#82204f]/10 bg-white p-6"><Clock3 className="size-7 text-[#82204f]"/><h3 className="mt-5 font-black">14 dias para experimentar</h3><p className="mt-2 text-sm leading-6 text-[#826a75]">Teste das capacidades Pro, sem solicitar cartão inicial. A ativação é assistida, não um checkout online.</p></div>
+      <div className="rounded-3xl border border-[#82204f]/10 bg-white p-6"><Clock3 className="size-7 text-[#82204f]"/><h3 className="mt-5 font-black">14 dias para experimentar</h3><p className="mt-2 text-sm leading-6 text-[#826a75]">Teste das capacidades Pro, sem solicitar cartão inicial. O proprietário pode iniciar o teste uma única vez pelo painel. O cadastro inicial é assistido; não há checkout online.</p></div>
       <div className="rounded-3xl border border-[#82204f]/10 bg-white p-6"><ShieldCheck className="size-7 text-[#82204f]"/><h3 className="mt-5 font-black">Dados preservados</h3><p className="mt-2 text-sm leading-6 text-[#826a75]">Alterações de plano não excluem pedidos, lançamentos ou cadastros existentes. Segurança e isolamento não são extras Premium.</p></div>
-      <div className="rounded-3xl border border-[#82204f]/10 bg-white p-6"><CreditCard className="size-7 text-[#82204f]"/><h3 className="mt-5 font-black">Ativação transparente</h3><p className="mt-2 text-sm leading-6 text-[#826a75]">Planos atribuídos manualmente pela plataforma. Gateway, renovação e checkout de assinatura ainda não estão disponíveis.</p></div>
+      <div className="rounded-3xl border border-[#82204f]/10 bg-white p-6"><CreditCard className="size-7 text-[#82204f]"/><h3 className="mt-5 font-black">Ativação transparente</h3><p className="mt-2 text-sm leading-6 text-[#826a75]">Planos pagos atribuídos manualmente pela plataforma; trial ativável pelo proprietário. Gateway, renovação e checkout automático ainda não estão disponíveis.</p></div>
     </section>
     <footer className="border-t border-[#82204f]/10 px-5 py-7 text-center text-xs text-[#826a75]">Açaí SaaS — apresentação comercial. Recursos e limites conforme planos aprovados. <ArrowRight className="ml-1 inline size-3" aria-hidden="true"/></footer>
   </main>;
