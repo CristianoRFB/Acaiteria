@@ -53,13 +53,21 @@ export const getTenantMonthlySalesReport = tenantOnCall({
   const [entries, orders] = await Promise.all([
     rawDb.collection(`tenants/${tenantId}/financeEntries`)
       .where('date', '>=', fromDate)
-      .where('date', '<', untilDate).orderBy('date', 'desc').limit(1000).get(),
+      .where('date', '<', untilDate).orderBy('date', 'desc')
+      .select('date', 'kind', 'status', 'category', 'amountCents', 'paymentMethod', 'sourceOrderId', 'sourceLocalSaleId')
+      .limit(6000).get(),
     rawDb.collection(`tenants/${tenantId}/orders`)
       .where('status', '==', 'COMPLETED')
       .where('updatedAt', '>=', begin)
       .where('updatedAt', '<', end)
-      .orderBy('updatedAt', 'desc').limit(500).get(),
+      .orderBy('updatedAt', 'desc')
+      .select('updatedAt', 'items', 'fulfillment', 'pricing')
+      .limit(6000).get(),
   ]);
+
+  if (entries.size >= 6000 || orders.size >= 6000) {
+    throw new HttpsError('resource-exhausted', 'Relatório muito volumoso. Reduza o período ou utilize exportação segmentada.');
+  }
 
   return {
     month: period.month,
