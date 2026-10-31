@@ -9,7 +9,8 @@ import type { ResolvedEntitlements } from '@/shared/entitlements';
 
 export type TenantCommercialCapabilities =
   | { mode: 'UNASSIGNED'; planId: null; features: null; limits: null }
-  | ({ mode: 'ASSIGNED' } & ResolvedEntitlements);
+  | { mode: 'BLOCKED'; planId: null; features: null; limits: null; accessState: string; trialUntilMillis: number | null }
+  | ({ mode: 'ASSIGNED'; accessState: 'ACTIVE' | 'TRIALING'; trialUntilMillis: number | null } & ResolvedEntitlements);
 
 /**
  * UI is explanatory only. Backend authorization and quotas remain authoritative.
