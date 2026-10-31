@@ -1,7 +1,7 @@
 import { FieldValue, Timestamp, type Transaction } from 'firebase-admin/firestore';
 import { HttpsError } from 'firebase-functions/v2/https';
 
-import { resolveEntitlements } from '../../shared/entitlements.js';
+import { requireActiveCommercialEntitlements } from './commercial.js';
 import { currentTenant, rawDb } from './tenant.js';
 
 /**
@@ -36,10 +36,8 @@ export async function reserveMonthlyOrder(transaction: Transaction, at: Date): P
   const subscription = await transaction.get(subscriptionRef);
   if (!subscription.exists) return;
 
-  const entitlements = resolveEntitlements(subscription.data() ?? {});
-  if (!entitlements) {
-    throw new HttpsError('failed-precondition', 'Plano comercial inválido; contate a administração da plataforma.');
-  }
+  const entitlements = requireActiveCommercialEntitlements(subscription.data(), at.getTime());
+  if (!entitlements) return;
   const tenantRef = rawDb.doc(`tenants/${tenantId}`);
   const tenant = await transaction.get(tenantRef);
   const timezone = tenant.data()?.timezone;
