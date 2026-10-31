@@ -569,6 +569,80 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect(audits.docs.filter((doc) => doc.data().action === 'SUBSCRIPTION_STATUS_UPDATED')).toHaveLength(2);
   }, 120000);
 
+  it('enforces tenant report window on the backend, sanitizes orders and preserves ledger history', async () => {
+    const slug = `qa-report-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Commercial Reports', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const fmt = (d: Date) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+    // Use ISO keys via formatToParts rather than relying on environment locale.
+    const dayKey = (d: Date) => {
+      const p = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(d);
+      const v = (key: string) => p.find((part) => part.type === key)?.value;
+      return `${v('year')}-${v('month')}-${v('day')}`;
+    };
+    const today = dayKey(new Date());
+    const oldDay = dayKey(new Date(Date.now() - 400 * 86_400_000));
+    const month = today.slice(0, 7);
+    const oldMonth = oldDay.slice(0, 7);
+    await Promise.all([
+      db.doc(`tenants/${tenantId}/financeEntries/recent`).set({
+        date: today, kind: 'INCOME', category: 'Vendas de açaí',
+        amountCents: 2500, status: 'PAID', paymentMethod: 'PIX',
+        description: 'Receita com campo interno', notes: 'NÃO EXPOR SEGREDO',
+      }),
+      db.doc(`tenants/${tenantId}/financeEntries/historic`).set({
+        date: oldDay, kind: 'INCOME', category: 'Vendas de açaí',
+        amountCents: 1200, status: 'PAID',
+      }),
+      db.doc(`tenants/${tenantId}/orders/report-qa`).set({
+        status: 'COMPLETED', updatedAt: new Date(),
+        customer: { name: 'NOME PRIVADO', whatsapp: '17999990000' },
+        items: [{ productName: 'Açaí tradicional', quantity: 1, totalPriceCents: 2500 }],
+        pricing: { totalCents: 2500 }, fulfillment: { mode: 'PICKUP' },
+      }),
+    ]);
+    const ask = (requestedMonth: string, token = ownerToken, slugOverride = slug) =>
+      call('getTenantMonthlySalesReport', { tenantSlug: slugOverride, month: requestedMonth }, token);
+
+    const legacy = await ask(month);
+    expect(legacy.status).toBe(200);
+    expect(legacy.body.result?.entries).toHaveLength(1);
+    expect(JSON.stringify(legacy.body.result)).not.toMatch(/NÃO EXPOR SEGREDO|NOME PRIVADO|17999990000/);
+
+    const unauthorized = await ask(month, regularToken);
+    expect(unauthorized.body.error?.status).toBe('PERMISSION_DENIED');
+    expect((await ask(month, ownerToken, 'not-existing-tenant')).status).not.toBe(200);
+
+    const assign = (planId: 'ESSENTIAL' | 'PRO' | 'PREMIUM', expectedPlanId: 'ESSENTIAL' | 'PRO' | 'PREMIUM' | null) =>
+      call('platformAssignTenantPlan', { tenantId, planId, expectedPlanId,
+        reason: 'Validar janela comercial sem apagar histórico' }, platformToken);
+    expect((await assign('ESSENTIAL', null)).status).toBe(200);
+    expect((await ask(month)).body.error?.status).toBe('PERMISSION_DENIED'); // no finance insights in Essential
+    expect((await assign('PRO', 'ESSENTIAL')).status).toBe(200);
+    expect((await ask(month)).status).toBe(200);
+    expect((await ask(oldMonth)).body.error?.status).toBe('PERMISSION_DENIED'); // older than 365 days
+
+    expect((await assign('PREMIUM', 'PRO')).status).toBe(200);
+    const fullHistory = await ask(oldMonth);
+    expect(fullHistory.status).toBe(200);
+    expect(fullHistory.body.result?.entries).toHaveLength(1);
+    expect((await db.doc(`tenants/${tenantId}/financeEntries/historic`).get()).exists).toBe(true);
+
+    expect((await assign('PRO', 'PREMIUM')).status).toBe(200);
+    expect((await ask(oldMonth)).body.error?.status).toBe('PERMISSION_DENIED');
+    expect((await db.doc(`tenants/${tenantId}/financeEntries/historic`).get()).exists).toBe(true);
+  }, 120000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
