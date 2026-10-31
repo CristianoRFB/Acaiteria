@@ -1,6 +1,20 @@
 # Pre-PC implementation checkpoint — Açaí SaaS
 
 
+## Implementação incremental — SubscriptionStatus e trial Pro (30/10/2026)
+
+- `shared/subscription-status.ts`: avaliação determinística e independente de UI do estado comercial: tenant legado `UNASSIGNED`, manual `ACTIVE`, `TRIALING` Pro antes de `trialUntil`, e `BLOCKED` em expiração ou status inativo/inválido.
+- `functions/src/platform/plans.ts`: trial Pro de **14 dias**, iniciado uma única vez pelo Platform Owner, sem cartão nem billing; timestamps privados e audit log; conversão explícita de trial em atribuição manual ativa; suspensão/reativação manual auditada.
+- `functions/src/commercial.ts`, `order-usage.ts`, `platform/members.ts`: o estado é verificado no backend antes de novas operações e reservas de cotas. Uma assinatura expirada/inativa não recebe novos direitos; legado sem documento continua compatível até atribuição explícita.
+- `functions/src/commercial-access.ts`, `components/tenant-commercial-capabilities.ts`, `admin-shell.tsx`: leitura autorizada das capacidades e estados, alerta de teste expirado, painel mostra prazo do trial sem expor `private/subscription` a clientes comuns.
+- `app/platform/page.tsx`: operações explícitas de iniciar trial único, converter em plano manual, suspender/reativar acesso comercial, com justificativa.
+- `tests/subscription-status.test.ts` e `functions/src/platform.integration.test.ts`: limites temporais de trial, expiração, contas legadas, conversão, auditoria, permissão global e preservação de documentos históricos.
+- Segurança: dependências transitivas vulneráveis `glob` e `minimatch` das Functions atualizadas para versões corrigidas; confirmar no CI de cada HEAD.
+
+**Observações:** não há assinatura recorrente, gateway, confirmação automática de pagamento ou trial self-service universal. A loja não perde registros quando a assinatura vence. A migração e a publicação em produção continuam dependentes de autorização e validação operacional. A execução em CI não substitui deploy real.
+
+
+
 ## Incremento validado — equipe e delivery (29/10/2026)
 
 Código na branch de desenvolvimento (não deployado em produção):
