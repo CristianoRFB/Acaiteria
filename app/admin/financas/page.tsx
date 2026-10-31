@@ -1,11 +1,9 @@
 'use client';
 
 import {
-  limit,
   onSnapshot,
   orderBy,
   query,
-  Timestamp,
   where,
 } from 'firebase/firestore';
 import { tenantCallable } from '@/lib/firebase/callable';
@@ -64,6 +62,8 @@ export default function FinancesPage() {
   const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
   const [view, setView] = useState<'LEDGER' | 'INSIGHTS'>('LEDGER');
   const [insightOrders, setInsightOrders] = useState<FinanceInsightOrder[]>([]);
+  const [reportEntries, setReportEntries] = useState<FinanceEntry[]>([]);
+  const [reportFromDate, setReportFromDate] = useState<string | null>(null);
   const [insightLoading, setInsightLoading] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -89,35 +89,42 @@ export default function FinancesPage() {
   }, [month, role, tenantId]);
 
   useEffect(() => {
+    let cancelled = false;
+    setReportEntries([]);
+    setInsightOrders([]);
+    setReportFromDate(null);
     if (!tenantId || !isTenantAdminRole(role) || view !== 'INSIGHTS') {
-      setInsightOrders([]);
       setInsightLoading(false);
-      return undefined;
+      return () => { cancelled = true; };
     }
+
     setInsightLoading(true);
-    const [year, monthNumber] = month.split('-').map(Number);
-    const start = Timestamp.fromDate(new Date(Date.UTC(year, monthNumber - 1, 1, 3)));
-    const endMonth = monthNumber === 12 ? 1 : monthNumber + 1;
-    const endYear = monthNumber === 12 ? year + 1 : year;
-    const end = Timestamp.fromDate(new Date(Date.UTC(endYear, endMonth - 1, 1, 3)));
-    return onSnapshot(
-      query(
-        tenantCollection(getFirebaseClient().db, tenantId, 'orders'),
-        where('status', '==', 'COMPLETED'),
-        where('updatedAt', '>=', start),
-        where('updatedAt', '<', end),
-        orderBy('updatedAt', 'desc'),
-        limit(500),
-      ),
-      (snapshot) => {
-        setInsightOrders(snapshot.docs.map((item) => ({ id: item.id, ...item.data() }) as FinanceInsightOrder));
-        setInsightLoading(false);
-      },
-      () => {
-        setInsightLoading(false);
-        setError('Não foi possível carregar os pedidos para a visão comercial.');
-      },
-    );
+    setError('');
+    const loadReport = async () => {
+      try {
+        // Only the backend assembles commercial reports. Historical ledger
+        // records remain preserved and accessible for reconciliation.
+        const callable = tenantCallable<{ month: string }, {
+          month: string; fromDate: string; untilDate: string; limited: boolean;
+          entries: FinanceEntry[]; orders: FinanceInsightOrder[];
+        }>(getFirebaseClient().functions, 'getTenantMonthlySalesReport');
+        const result = await callable({ month });
+        if (cancelled) return;
+        setReportEntries(result.data.entries);
+        setInsightOrders(result.data.orders);
+        setReportFromDate(result.data.limited ? result.data.fromDate : null);
+      } catch (cause) {
+        if (cancelled) return;
+        const message = cause instanceof Error ? cause.message : '';
+        setError(message.includes('fora do histórico') || message.includes('não estão disponíveis')
+          ? 'Este mês não está disponível nos relatórios do seu plano. Os registros históricos continuam preservados.'
+          : 'Não foi possível carregar este relatório comercial. Confira o período e tente novamente.');
+      } finally {
+        if (!cancelled) setInsightLoading(false);
+      }
+    };
+    void loadReport();
+    return () => { cancelled = true; };
   }, [month, role, tenantId, view]);
 
   const visibleEntries = useMemo(
@@ -231,7 +238,7 @@ export default function FinancesPage() {
         <button type="button" role="tab" aria-selected={view === 'INSIGHTS'} onClick={() => setView('INSIGHTS')} className={`rounded-xl px-4 py-2.5 text-sm font-black ${view === 'INSIGHTS' ? 'bg-white text-[#82204f] shadow-sm' : 'text-[#826a75]'}`}>Inteligência de vendas</button>
       </div>
 
-      {view === 'INSIGHTS' ? (insightLoading ? <div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Carregando os dados de vendas…</div> : <Suspense fallback={<div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Preparando os gráficos…</div>}><FinanceInsights entries={visibleEntries} orders={insightOrders} /></Suspense>) : <>
+      {view === 'INSIGHTS' ? (insightLoading ? <div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Carregando relatório autorizado…</div> : error ? <p role="alert" className="mt-7 rounded-2xl bg-amber-50 p-5 text-sm text-amber-900">{error}</p> : <>{reportFromDate && <p role="status" className="mt-5 rounded-2xl bg-violet-50 p-4 text-sm text-violet-900">O relatório considera somente registros desde {reportFromDate.split('-').reverse().join('/')} conforme o período do seu plano. Nenhum dado foi excluído.</p>}<Suspense fallback={<div className="mt-7 rounded-[26px] bg-white p-10 text-center text-sm font-bold text-[#826a75]">Preparando os gráficos…</div>}><FinanceInsights entries={reportEntries} orders={insightOrders} /></Suspense></>) : <>
       <section className="mt-5 rounded-[26px] bg-white p-5 shadow-sm sm:p-7"><div className="flex items-center gap-3"><WalletCards className="size-5 text-[#82204f]" /><div><p className="text-xs font-black uppercase tracking-wider text-[#a62c63]">Resumo das vendas</p><h2 className="mt-1 text-xl font-black">Receitas por forma de pagamento</h2></div></div><div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{summary.payments.map(({ paymentMethod, amountCents }) => <div key={paymentMethod} className="rounded-2xl bg-[#fffaf5] p-4"><span className="text-xs font-bold text-[#826a75]">{paymentMethodLabel(paymentMethod)}</span><strong className="mt-1 block text-lg font-black text-[#82204f]">{formatBRL(amountCents)}</strong></div>)}</div><p className="mt-4 text-xs text-[#826a75]">Valores de pedidos concluídos, sem dados sensíveis de cartão. Use o Caixa para conferir o dinheiro contado.</p></section>
 
       {formOpen && <section className="mt-7 rounded-[26px] bg-white p-5 shadow-sm sm:p-7">
