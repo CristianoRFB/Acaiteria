@@ -49,7 +49,11 @@ export const platformAssignTenantPlan = onCall({
     // A replay that already reached the requested state is idempotent, even
     // when its original expectedPlanId was null. Different targets must still
     // satisfy the optimistic concurrency precondition.
-    if (currentPlanId === planId) {
+    const status = subscription.data()?.subscriptionStatus ?? 'active';
+    // Repeating an already-active assignment is idempotent. But approving
+    // the *same* Pro plan during/after trial must explicitly transition its
+    // lifecycle to ACTIVE rather than silently leaving the trial to expire.
+    if (currentPlanId === planId && status === 'active') {
       return { tenantId, planId, unchanged: true };
     }
     if (currentPlanId !== expectedPlanId) {
@@ -59,6 +63,9 @@ export const platformAssignTenantPlan = onCall({
     transaction.set(subscriptionRef, {
       planId,
       subscriptionStatus: 'active',
+      // Clear temporary trial permission while retaining trialUsedAt history:
+      // a used trial cannot be started again through another assignment.
+      trialUntil: FieldValue.delete(),
       assignmentMode: 'MANUAL',
       paymentVerified: false,
       updatedBy: actorUid,
@@ -70,6 +77,7 @@ export const platformAssignTenantPlan = onCall({
       actorUid,
       tenantId,
       previousPlanId: currentPlanId,
+      previousSubscriptionStatus: status,
       planId,
       reason,
       source: 'PLATFORM_CALLABLE',
