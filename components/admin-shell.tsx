@@ -15,7 +15,7 @@ import {
   Users,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 import { useAuth } from '@/components/providers';
 import { useTenantCommercialCapabilities } from '@/components/tenant-commercial-capabilities';
@@ -23,6 +23,7 @@ import { AdminNotifications } from '@/components/admin-notifications';
 import { AdminTutorial } from '@/components/admin-tutorial';
 import { BrandLogo } from '@/components/brand-logo';
 import { getFirebaseClient, hasFirebaseConfig } from '@/lib/firebase/client';
+import { tenantCallable } from '@/lib/firebase/callable';
 import { usePathname } from 'next/navigation';
 import { useTenant } from '@/components/tenant-provider';
 import { isTenantAdminRole, resolveTenantRoute, tenantPath } from '@/shared/tenancy';
@@ -57,6 +58,21 @@ export function AdminShell({
   const pathname = usePathname();
   const { slug, tenant } = useTenant();
   const { capabilities } = useTenantCommercialCapabilities();
+  const [trialBusy, setTrialBusy] = useState(false);
+  const [trialError, setTrialError] = useState('');
+  async function beginTrial() {
+    if (!slug || trialBusy || role !== 'tenant_owner' || capabilities?.mode !== 'UNASSIGNED') return;
+    if (!window.confirm('Iniciar seu único teste Pro de 14 dias, sem cartão ou cobrança automática?')) return;
+    setTrialBusy(true);
+    setTrialError('');
+    try {
+      await tenantCallable(getFirebaseClient().functions, 'tenantStartProTrial')({});
+      window.location.reload(); // Refresh the authorized commercial snapshot after activation.
+    } catch (cause) {
+      setTrialError(cause instanceof Error ? cause.message : 'Não foi possível iniciar o teste.');
+      setTrialBusy(false);
+    }
+  }
   const route = resolveTenantRoute(pathname ?? '/');
   const activePath = route.kind === 'tenant' ? route.internalPath : pathname;
   const restrictedFeature = activePath?.startsWith('/admin/financas') ? 'FINANCE'
@@ -162,6 +178,11 @@ export function AdminShell({
           </span>
         </header>
         <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8">
+          {capabilities?.mode === 'UNASSIGNED' && role === 'tenant_owner' && <section className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-violet-300 bg-violet-50 p-4 text-sm text-violet-950">
+            <div><p className="font-black">Experimente o Pro por 14 dias</p><p className="mt-1">Ativação única para sua loja, sem cartão inicial nem cobrança automática. O teste não pode ser reiniciado.</p></div>
+            <button type="button" disabled={trialBusy} onClick={() => void beginTrial()} className="min-h-10 rounded-full bg-[#82204f] px-5 font-black text-white disabled:opacity-50">{trialBusy ? 'Ativando…' : 'Ativar teste Pro'}</button>
+            {trialError && <p role="alert" className="w-full text-sm font-bold text-red-800">{trialError}</p>}
+          </section>}
           {capabilities?.mode === 'BLOCKED' && <div role="alert" className="mb-5 rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-900">
             <p className="font-black">Assinatura inativa ou período de teste encerrado</p>
             <p className="mt-1">Novas operações comerciais podem estar bloqueadas. Seus pedidos e registros existentes não foram apagados. Solicite a regularização à administração da plataforma.</p>
