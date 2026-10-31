@@ -70,7 +70,7 @@ export function resolveTenantRoute(pathname: string): TenantRouteResolution {
   const first = parts[0];
 
   if (!first) return { kind: 'legacy', slug: TENANT_A.slug, destination: `/${TENANT_A.slug}` };
-  if (first === 'platform') return { kind: 'platform' };
+  if (first === 'platform' || first === 'saas') return { kind: 'platform' };
   if (publicRootFiles.has(first) || publicRootDirectories.has(first) || first.includes('.')) return { kind: 'asset' };
   if (legacyRootRoutes.has(first)) {
     return {
