@@ -1,5 +1,15 @@
 # Pre-PC implementation checkpoint — Açaí SaaS
 
+## Incremento — Trial Pro self-service para tenant_owner (31/10/2026)
+
+- `functions/src/tenant-trial.ts`: callable protegida `tenantStartProTrial` permite ao proprietário iniciar seu trial Pro de 14 dias sem cartão ou cobrança, apenas quando o tenant ainda não tiver qualquer documento de assinatura. Firestore Transaction garante unicidade, mesmo sob chamadas simultâneas.
+- `components/admin-shell.tsx`: mostra ativação do trial somente ao `tenant_owner` sem plano atribuído; confirma antes da ação, mantém mensagens de erro e recarrega o snapshot comercial após sucesso.
+- `functions/src/platform.integration.test.ts`: teste de permissão de usuário comum/anônimo, corrida de ativações, replay bloqueado, trial persistido e audit log global único.
+- `app/saas/page.tsx`: apresentação do trial diferencia autoativação por owner de cadastro inicial assistido. Não promete gateway, checkout automático ou renovação automática.
+
+**Status:** implementado na branch, sujeito à confirmação do CI do HEAD e à homologação funcional em ambiente real. **DemoMode Premium isolado permanece pendente.**
+
+
 ## Incremento — Relatórios comerciais e landing SaaS (31/10/2026)
 
 - `shared/report-window.ts`: calcula a janela comercial real de 30 dias (Essencial), 365 dias (Pro) e histórico completo (Premium), respeitando a data civil do fuso horário de cada tenant e os limites já aprovados.
