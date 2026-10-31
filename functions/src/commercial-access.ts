@@ -1,6 +1,6 @@
 import { HttpsError } from 'firebase-functions/v2/https';
 import { tenantOnCall, currentTenant, rawDb, requireTenantRole } from './tenant.js';
-import { resolveEntitlements } from '../../shared/entitlements.js';
+import { resolveSubscriptionAccess } from '../../shared/subscription-status.js';
 
 /**
  * Authorized, read-only commercial snapshot for tenant administrators.
@@ -19,14 +19,20 @@ export const getTenantCommercialCapabilities = tenantOnCall({
   if (!subscription.exists) {
     return { mode: 'UNASSIGNED' as const, planId: null, features: null, limits: null };
   }
-  const resolved = resolveEntitlements(subscription.data() ?? {});
-  if (!resolved) {
-    throw new HttpsError('failed-precondition', 'Plano comercial inválido. Contate a administração da plataforma.');
+  const access = resolveSubscriptionAccess(subscription.data(), Date.now());
+  if (access.state === 'BLOCKED') {
+    return { mode: 'BLOCKED' as const, planId: null, features: null, limits: null,
+      accessState: access.reason, trialUntilMillis: access.trialUntil };
+  }
+  if (access.state === 'UNASSIGNED') {
+    return { mode: 'UNASSIGNED' as const, planId: null, features: null, limits: null };
   }
   return {
     mode: 'ASSIGNED' as const,
-    planId: resolved.planId,
-    features: resolved.features,
-    limits: resolved.limits,
+    planId: access.entitlements.planId,
+    features: access.entitlements.features,
+    limits: access.entitlements.limits,
+    accessState: access.state,
+    trialUntilMillis: access.trialUntil,
   };
 });
