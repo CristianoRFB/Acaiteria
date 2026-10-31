@@ -20,7 +20,7 @@ import { paymentMethodLabel, type CashPaymentMethod } from '@/shared/cash-regist
 
 export interface FinanceInsightOrder {
   id: string;
-  items?: PricedItem[];
+  items?: Array<Pick<PricedItem, 'productName' | 'quantity' | 'totalPriceCents'>>;
   fulfillment?: { mode?: string };
   pricing?: { totalCents?: number };
 }
