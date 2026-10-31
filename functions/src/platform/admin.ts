@@ -18,7 +18,8 @@ const brandingSchema = z.object({
 });
 const createTenantSchema = z.object({
   displayName: z.string().trim().min(2).max(80),
-  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(3).max(50),
+  slug: z.string().trim().toLowerCase().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).min(3).max(50)
+    .refine((slug) => !['saas', 'platform', 'admin', 'checkout', 'carrinho', 'pedido', 'montar', 'entregador', 'informacoes'].includes(slug), 'Este endereço é reservado ao sistema.'),
   ownerEmail: z.email().trim().toLowerCase(),
   branding: brandingSchema,
   timezone: z.string().trim().min(1).max(80).default('America/Sao_Paulo'),
