@@ -652,6 +652,44 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     }
   });
 
+  it('starts Pro trial once via tenant owner and rejects concurrent replay or unrelated actors', async () => {
+    const slug = `qa-trial-self-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Trial Self Service', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    const ownerToken = await signIn(ownerEmail);
+    const payload = { tenantSlug: slug };
+    const unauthorized = await call('tenantStartProTrial', payload, regularToken);
+    expect(unauthorized.body.error?.status).toBe('PERMISSION_DENIED');
+    const anonymous = await call('tenantStartProTrial', payload);
+    expect(anonymous.status).not.toBe(200);
+    const [a, b] = await Promise.all([
+      call('tenantStartProTrial', payload, ownerToken),
+      call('tenantStartProTrial', payload, ownerToken),
+    ]);
+    expect([a,b].filter((response) => response.status === 200)).toHaveLength(1);
+    expect([a,b].filter((response) => response.status !== 200)).toHaveLength(1);
+    expect([a,b].find((response) => response.status !== 200)?.body.error?.status)
+      .toMatch(/FAILED_PRECONDITION|ABORTED/);
+    const data = (await db.doc(`tenants/${tenantId}/private/subscription`).get()).data();
+    expect(data).toMatchObject({
+      planId: 'PRO', subscriptionStatus: 'trialing', paymentVerified: false,
+      assignmentMode: 'TRIAL',
+    });
+    expect(data?.trialUsedAt).toBeTruthy();
+    expect((await call('tenantStartProTrial', payload, ownerToken)).body.error?.status).toBe('FAILED_PRECONDITION');
+    expect((await call('getTenantCommercialCapabilities', payload, ownerToken)).body.result)
+      .toMatchObject({ mode: 'ASSIGNED', planId: 'PRO', accessState: 'TRIALING' });
+    const audits = await db.collection('platformAuditLogs').where('tenantId', '==', tenantId).get();
+    expect(audits.docs.filter((entry) => entry.data().action === 'PRO_TRIAL_STARTED')).toHaveLength(1);
+    expect(audits.docs.find((entry) => entry.data().action === 'PRO_TRIAL_STARTED')?.data().source)
+      .toBe('TENANT_OWNER_CALLABLE');
+  }, 120000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
