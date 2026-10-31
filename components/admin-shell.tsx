@@ -162,6 +162,14 @@ export function AdminShell({
           </span>
         </header>
         <main className="min-w-0 p-4 pb-24 sm:p-6 lg:p-8">
+          {capabilities?.mode === 'BLOCKED' && <div role="alert" className="mb-5 rounded-2xl border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+            <p className="font-black">Assinatura inativa ou período de teste encerrado</p>
+            <p className="mt-1">Novas operações comerciais podem estar bloqueadas. Seus pedidos e registros existentes não foram apagados. Solicite a regularização à administração da plataforma.</p>
+          </div>}
+          {capabilities?.mode === 'ASSIGNED' && capabilities.accessState === 'TRIALING' && <div role="status" className="mb-5 rounded-2xl border border-violet-300 bg-violet-50 p-4 text-sm text-violet-900">
+            <p className="font-black">Teste Pro em andamento</p>
+            <p className="mt-1">Seu período de teste termina em {capabilities.trialUntilMillis ? new Date(capabilities.trialUntilMillis).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' }) : 'data não informada'}. O teste não gera cobrança automática.</p>
+          </div>}
           {isRestricted && <div role="status" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
             <p className="font-black">Recurso disponível no Pro e Premium</p>
             <p className="mt-1">Este plano não permite novas operações deste módulo. Os registros existentes permanecem preservados para consulta e reconciliação. O controle definitivo é feito pelo servidor.</p>
