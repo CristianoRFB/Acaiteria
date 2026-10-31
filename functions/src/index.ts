@@ -17,6 +17,7 @@ export { platformCreateTenant, platformUpdateTenant, platformStartTenantSupport 
 export { platformAssignTenantPlan, platformStartProTrial, platformSetSubscriptionStatus } from './platform/plans.js';
 export { setTenantInternalMember } from './platform/members.js';
 export { getTenantCommercialCapabilities } from './commercial-access.js';
+export { getTenantMonthlySalesReport } from './monthly-report.js';
 import { currentTenant, rawDb, requireTenantRole, tenantCollection, tenantDb as db, tenantOnCall as onCall } from './tenant.js';
 import { requireCommercialFeature, reserveDeliveryDriverSeat } from './commercial.js';
 import { reserveMonthlyOrder } from './order-usage.js';
