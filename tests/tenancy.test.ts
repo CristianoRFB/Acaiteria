@@ -44,6 +44,8 @@ describe('tenant route resolution', () => {
 
   it('does not silently assign platform, asset, or malformed paths to a tenant', () => {
     expect(resolveTenantRoute('/platform/tenants')).toEqual({ kind: 'platform' });
+    expect(resolveTenantRoute('/saas')).toEqual({ kind: 'platform' });
+    expect(resolveTenantRoute('/saas/planos')).toEqual({ kind: 'platform' });
     expect(resolveTenantRoute('/menu/combinados.webp')).toEqual({ kind: 'asset' });
     expect(resolveTenantRoute('/Bad Slug/admin')).toEqual({ kind: 'invalid' });
   });
