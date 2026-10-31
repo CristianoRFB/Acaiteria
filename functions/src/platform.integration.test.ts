@@ -524,6 +524,51 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect(audits.docs.filter((doc) => doc.data().action === 'PRO_TRIAL_STARTED')).toHaveLength(1);
   }, 120000);
 
+  it('suspends and resumes manually assigned subscriptions without deleting records', async () => {
+    const slug = `qa-sub-status-${randomUUID().slice(0, 8)}`;
+    const created = await call('platformCreateTenant', {
+      displayName: 'QA Status de Assinatura', slug, ownerEmail,
+      branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+      timezone: 'America/Sao_Paulo',
+    }, platformToken);
+    expect(created.status).toBe(200);
+    const tenantId = String(created.body.result?.tenantId);
+    expect((await call('platformAssignTenantPlan', {
+      tenantId, planId: 'PRO', expectedPlanId: null,
+      reason: 'Plano Pro manual para testes de suspensão',
+    }, platformToken)).status).toBe(200);
+    const ownerToken = await signIn(ownerEmail);
+    const expense = () => ({
+      tenantSlug: slug, clientRequestId: randomUUID(), kind: 'EXPENSE',
+      category: 'Insumos', description: 'Entrada de QA', amountCents: 1200,
+      date: '2026-10-27', status: 'PAID',
+    });
+    const saved = await call('saveFinanceEntry', expense(), ownerToken);
+    expect(saved.status).toBe(200);
+    const entryId = String(saved.body.result?.entryId);
+    const payload = { tenantId, expectedStatus: 'active', status: 'suspended', reason: 'Suspensão manual para teste de segurança' };
+    expect((await call('platformSetSubscriptionStatus', payload, regularToken)).body.error?.status).toBe('PERMISSION_DENIED');
+    expect((await call('platformSetSubscriptionStatus', payload, platformToken)).status).toBe(200);
+    const blocked = await call('saveFinanceEntry', expense(), ownerToken);
+    expect(blocked.body.error?.status).toBe('FAILED_PRECONDITION');
+    expect((await call('getTenantCommercialCapabilities', { tenantSlug: slug }, ownerToken)).body.result)
+      .toMatchObject({ mode: 'BLOCKED', accessState: 'INACTIVE_SUBSCRIPTION' });
+    expect((await call('saveFinanceEntry', { ...expense(), id: entryId, description: 'Corrigido' }, ownerToken)).status).toBe(200);
+    expect((await db.doc(`tenants/${tenantId}/financeEntries/${entryId}`).get()).exists).toBe(true);
+
+    const replay = await call('platformSetSubscriptionStatus', payload, platformToken);
+    expect(replay.status).toBe(200);
+    expect(replay.body.result?.unchanged).toBe(true);
+    const resume = await call('platformSetSubscriptionStatus', {
+      tenantId, expectedStatus: 'suspended', status: 'active',
+      reason: 'Reativação manual autorizada em QA',
+    }, platformToken);
+    expect(resume.status).toBe(200);
+    expect((await call('saveFinanceEntry', expense(), ownerToken)).status).toBe(200);
+    const audits = await db.collection('platformAuditLogs').where('tenantId', '==', tenantId).get();
+    expect(audits.docs.filter((doc) => doc.data().action === 'SUBSCRIPTION_STATUS_UPDATED')).toHaveLength(2);
+  }, 120000);
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
