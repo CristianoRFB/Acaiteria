@@ -142,3 +142,52 @@ export const platformStartProTrial = onCall({
     return { tenantId, planId: 'PRO' as const, subscriptionStatus: 'trialing' as const, trialUntilMillis: trialUntil.toMillis() };
   });
 });
+
+/**
+ * Manual access suspension/resumption is distinct from tenant suspension and
+ * from payment processing. Only an ACTIVE manually-assigned subscription can
+ * be suspended, and only a SUSPENDED one can be reactivated. Trial/canceled
+ * states cannot be bypassed by this control.
+ */
+const statusSchema = z.object({
+  tenantId: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/).max(100),
+  expectedStatus: z.enum(['active', 'suspended']),
+  status: z.enum(['active', 'suspended']),
+  reason: z.string().trim().min(8).max(300),
+}).strict();
+
+export const platformSetSubscriptionStatus = onCall({
+  region: 'southamerica-east1',
+  timeoutSeconds: 20,
+  memory: '256MiB',
+  enforceAppCheck: process.env.FUNCTIONS_EMULATOR !== 'true',
+}, async (request) => {
+  const actorUid = await requirePlatformOwner(request.auth?.uid);
+  const parsed = statusSchema.safeParse(request.data);
+  if (!parsed.success) throw new HttpsError('invalid-argument', 'Status comercial ou justificativa inválidos.');
+  const { tenantId, status, expectedStatus, reason } = parsed.data;
+  const subscriptionRef = rawDb.doc(`tenants/${tenantId}/private/subscription`);
+  const auditRef = rawDb.collection('platformAuditLogs').doc(randomUUID());
+
+  return rawDb.runTransaction(async (transaction) => {
+    const subscription = await transaction.get(subscriptionRef);
+    if (!subscription.exists || !['ESSENTIAL', 'PRO', 'PREMIUM'].includes(String(subscription.data()?.planId))) {
+      throw new HttpsError('failed-precondition', 'Atribua primeiro um dos planos aprovados.');
+    }
+    if (subscription.data()?.assignmentMode !== 'MANUAL') {
+      throw new HttpsError('failed-precondition', 'O acesso de trial é controlado pelo prazo e não pode ser reativado como assinatura manual.');
+    }
+    const current = subscription.data()?.subscriptionStatus;
+    if (current === status) return { tenantId, status, unchanged: true };
+    if (current !== expectedStatus) throw new HttpsError('aborted', 'O status mudou. Atualize os dados antes de continuar.');
+    transaction.update(subscriptionRef, {
+      subscriptionStatus: status, updatedAt: FieldValue.serverTimestamp(), updatedBy: actorUid,
+    });
+    transaction.create(auditRef, {
+      action: 'SUBSCRIPTION_STATUS_UPDATED', actorUid, tenantId,
+      previousStatus: current, status, reason,
+      source: 'PLATFORM_CALLABLE', createdAt: FieldValue.serverTimestamp(),
+    });
+    return { tenantId, status, unchanged: false };
+  });
+});
