@@ -42,6 +42,8 @@ export default function PlatformPage() {
   const [editingTenant, setEditingTenant] = useState<PlatformTenant | null>(null);
   const [planTenant, setPlanTenant] = useState<PlatformTenant | null>(null);
   const [currentPlanId, setCurrentPlanId] = useState<PlanId | null>(null);
+  const [hasSubscription, setHasSubscription] = useState(false);
+  const [currentPlanStatus, setCurrentPlanStatus] = useState<string | null>(null);
   const [selectedPlanId, setSelectedPlanId] = useState<PlanId>('PRO');
   const [planReason, setPlanReason] = useState('');
   const [editName, setEditName] = useState('');
@@ -118,6 +120,8 @@ export default function PlatformPage() {
       const candidate = snapshot.data()?.planId;
       const previous = PLAN_IDS.find((id) => id === candidate) ?? null;
       setCurrentPlanId(previous);
+      setHasSubscription(snapshot.exists());
+      setCurrentPlanStatus(typeof snapshot.data()?.subscriptionStatus === 'string' ? snapshot.data()!.subscriptionStatus : null);
       setSelectedPlanId(previous ?? 'PRO');
       setPlanReason('');
       setPlanTenant(tenant);
@@ -127,7 +131,7 @@ export default function PlatformPage() {
 
   async function assignPlan(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!planTenant || selectedPlanId === currentPlanId) return;
+    if (!planTenant || (selectedPlanId === currentPlanId && (currentPlanStatus === 'active' || currentPlanStatus === null && hasSubscription))) return;
     setBusy(true); setError(''); setNotice('');
     try {
       const callable = platformCallable(getFirebaseClient().functions, 'platformAssignTenantPlan');
@@ -138,6 +142,20 @@ export default function PlatformPage() {
         reason: planReason.trim(),
       });
       setNotice(`Plano ${ACAI_PLAN_CATALOG[selectedPlanId].name} atribuído manualmente a ${planTenant.displayName}. Nenhuma cobrança foi realizada.`);
+      setPlanTenant(null);
+      setPlanReason('');
+    } catch (cause) { setError(explainError(cause)); }
+    finally { setBusy(false); }
+  }
+
+  async function startProTrial() {
+    if (!planTenant || hasSubscription || planReason.trim().length < 8) return;
+    if (!window.confirm(`Iniciar um único teste Pro de 14 dias para ${planTenant.displayName}? Não há cobrança automática.`)) return;
+    setBusy(true); setError(''); setNotice('');
+    try {
+      const callable = platformCallable(getFirebaseClient().functions, 'platformStartProTrial');
+      await callable({ tenantId: planTenant.id, reason: planReason.trim() });
+      setNotice(`Teste Pro de 14 dias iniciado para ${planTenant.displayName}, sem cobrança ou cartão.`);
       setPlanTenant(null);
       setPlanReason('');
     } catch (cause) { setError(explainError(cause)); }
@@ -189,7 +207,7 @@ export default function PlatformPage() {
           <h3 className="font-black">Plano de {planTenant.displayName}</h3>
           <button type="button" className="text-sm font-bold text-[#6846af]" onClick={() => setPlanTenant(null)}>Cancelar</button>
         </div>
-        <p className="text-xs text-[#6f6878]">Atual: {currentPlanId ? ACAI_PLAN_CATALOG[currentPlanId].name : 'sem plano comercial atribuído'}. Atribuição manual não confirma pagamento nem ativa bloqueios por plano.</p>
+        <p className="text-xs text-[#6f6878]">Atual: {currentPlanId ? ACAI_PLAN_CATALOG[currentPlanId].name : 'sem plano comercial atribuído'}. Atribuição manual não confirma pagamento; o backend aplica recursos e limites do plano. Um trial vencido pode ser convertido explicitamente em Pro ativo.</p>
         <label className="block text-sm font-bold">Plano aprovado
           <select className={inputClass} value={selectedPlanId} onChange={(event) => setSelectedPlanId(event.target.value as PlanId)}>
             {PLAN_IDS.map((id) => <option key={id} value={id}>{ACAI_PLAN_CATALOG[id].name}</option>)}
@@ -198,7 +216,8 @@ export default function PlatformPage() {
         <label className="block text-sm font-bold">Justificativa da alteração
           <textarea className={`${inputClass} min-h-24 py-3`} value={planReason} onChange={(event) => setPlanReason(event.target.value)} minLength={8} maxLength={300} required />
         </label>
-        <Button disabled={busy || selectedPlanId === currentPlanId} className="min-h-11 w-full rounded-full bg-[#5634a5] text-white">Registrar atribuição</Button>
+        <Button disabled={busy || (selectedPlanId === currentPlanId && (currentPlanStatus === 'active' || currentPlanStatus === null && hasSubscription))} className="min-h-11 w-full rounded-full bg-[#5634a5] text-white">Registrar atribuição</Button>
+        {!hasSubscription && planTenant.status === 'ACTIVE' && <Button type="button" disabled={busy || planReason.trim().length < 8} variant="outline" className="min-h-11 w-full rounded-full" onClick={() => void startProTrial()}>Iniciar trial Pro de 14 dias</Button>}
       </form>}{editingTenant && <form onSubmit={(event) => void saveTenant(event)} className="mt-5 space-y-3 rounded-2xl border border-[#d9cbed] bg-[#faf7ff] p-4"><div className="flex items-center justify-between gap-3"><h3 className="font-black">Editar {editingTenant.displayName}</h3><button type="button" className="text-sm font-bold text-[#6846af]" onClick={() => setEditingTenant(null)}>Cancelar</button></div><label className="block text-sm font-bold">Nome da loja<input className={inputClass} value={editName} onChange={(event) => setEditName(event.target.value)} required minLength={2} maxLength={80} /></label><label className="block text-sm font-bold">Novo e-mail do owner (opcional)<input className={inputClass} type="email" value={editOwnerEmail} onChange={(event) => setEditOwnerEmail(event.target.value)} placeholder="Deixe vazio para manter o atual" /></label><label className="block text-sm font-bold">Fuso horário<select className={inputClass} value={editTimezone} onChange={(event) => setEditTimezone(event.target.value)}><option value="America/Sao_Paulo">Brasília</option><option value="America/Manaus">Manaus</option><option value="America/Belem">Belém</option><option value="America/Fortaleza">Fortaleza</option><option value="America/Recife">Recife</option><option value="America/Rio_Branco">Rio Branco</option></select></label><div className="grid grid-cols-2 gap-3"><label className="block text-sm font-bold">Cor principal<input className={`${inputClass} h-12 p-1.5`} type="color" value={editPrimaryColor} onChange={(event) => setEditPrimaryColor(event.target.value)} /></label><label className="block text-sm font-bold">Cor de apoio<input className={`${inputClass} h-12 p-1.5`} type="color" value={editSecondaryColor} onChange={(event) => setEditSecondaryColor(event.target.value)} /></label></div><Button disabled={busy} className="min-h-11 w-full rounded-full bg-[#5634a5] text-white">{busy ? 'Salvando…' : 'Salvar alterações'}</Button></form>}<form onSubmit={(event) => void createTenant(event)} className="mt-5 space-y-3"><label className="block text-sm font-bold">Nome da loja<input className={inputClass} value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Ex.: Amora Açaí" minLength={2} maxLength={80} required /></label><label className="block text-sm font-bold">Endereço curto (slug)<input className={inputClass} value={slug} onChange={(event) => setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))} placeholder="amora-acai" minLength={3} maxLength={50} pattern="[a-z0-9]+(?:-[a-z0-9]+)*" required /><span className="mt-1 block text-xs font-normal text-[#6f6878]">O cardápio ficará em /{slug || 'nome-da-loja'}.</span></label><label className="block text-sm font-bold">E-mail do owner<input className={inputClass} type="email" value={ownerEmail} onChange={(event) => setOwnerEmail(event.target.value)} placeholder="responsavel@loja.com" required /><span className="mt-1 block text-xs font-normal text-[#6f6878]">A conta precisa existir antes no Firebase Authentication.</span></label><label className="block text-sm font-bold">Fuso horário<select className={inputClass} value={timezone} onChange={(event) => setTimezone(event.target.value)}><option value="America/Sao_Paulo">Brasília (America/Sao_Paulo)</option><option value="America/Manaus">Manaus</option><option value="America/Belem">Belém</option><option value="America/Fortaleza">Fortaleza</option><option value="America/Recife">Recife</option><option value="America/Rio_Branco">Rio Branco</option></select></label><div className="grid grid-cols-2 gap-3"><label className="block text-sm font-bold">Cor principal<input className={`${inputClass} h-12 p-1.5`} type="color" value={primaryColor} onChange={(event) => setPrimaryColor(event.target.value)} /></label><label className="block text-sm font-bold">Cor de apoio<input className={`${inputClass} h-12 p-1.5`} type="color" value={secondaryColor} onChange={(event) => setSecondaryColor(event.target.value)} /></label></div><Button disabled={busy} className="min-h-11 w-full rounded-full bg-[#5634a5] text-white">{busy ? 'Cadastrando…' : 'Criar estabelecimento'}</Button></form><p className="mt-4 text-xs leading-5 text-[#6f6878]">Criar/suspender uma loja gera registro de auditoria. Suspender não apaga dados.</p></section>
     </div></div></main>;
 }
