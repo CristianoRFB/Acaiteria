@@ -640,6 +640,18 @@ describe('Platform Owner onboarding no Emulator Suite', () => {
     expect((await db.doc(`tenants/${tenantId}/financeEntries/historic`).get()).exists).toBe(true);
   }, 120000);
 
+  it('rejects SaaS and operational routes as tenant slugs before any provisioning', async () => {
+    for (const slug of ['saas', 'platform', 'admin', 'checkout']) {
+      const response = await call('platformCreateTenant', {
+        displayName: 'Reserved name test', slug, ownerEmail,
+        branding: { primaryColor: '#5634A5', secondaryColor: '#FFB6C9' },
+        timezone: 'America/Sao_Paulo',
+      }, platformToken);
+      expect(response.body.error?.status).toBe('INVALID_ARGUMENT');
+      expect((await db.doc(`tenantSlugs/${slug}`).get()).exists).toBe(false);
+    }
+  });
+
   it('nega onboarding para usuário que não é platform_owner', async () => {
     const result = await call('platformCreateTenant', {
       displayName: 'Loja não autorizada', slug: `nega-${randomUUID().slice(0, 8)}`, ownerEmail,
