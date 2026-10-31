@@ -10,6 +10,6 @@
 
 ## DEFERRED — fora deste goal
 
-- Global Standard v01: billing, plans, trial, entitlements, gating, enforcement de limits e downgrade.
+- Billing/gateway automático, checkout de assinatura, webhooks e dunning seguem fora de escopo. Planos, trial, entitlements, limites e gating já têm implementação parcial na branch e ainda exigem homologação, DemoMode Premium e cobertura comercial integral.
 - Multi-unidade, subdomínios, custom domains, marketplace e biblioteca compartilhada.
 - Integração Saipos real, fiscal, PDV/KDS, estoque e novos módulos comerciais.
