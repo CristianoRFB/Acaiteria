@@ -13,8 +13,9 @@ describe('Açaí commercial report windows', () => {
     expect(getReportPeriod('2026-10', now, 30, 'America/Sao_Paulo')).toEqual({
       month: '2026-10', fromDate: '2026-10-01', untilDate: '2026-11-01', limited: false,
     });
-    expect(getReportPeriod('2026-09', now, 30, 'America/Sao_Paulo')).toEqual({
-      month: '2026-09', fromDate: '2026-09-30', untilDate: '2026-10-01', limited: true,
+    const midMonth = new Date('2026-10-15T13:00:00Z');
+    expect(getReportPeriod('2026-09', midMonth, 30, 'America/Sao_Paulo')).toEqual({
+      month: '2026-09', fromDate: '2026-09-16', untilDate: '2026-10-01', limited: true,
     });
     expect(getReportPeriod('2026-08', now, 30, 'America/Sao_Paulo')).toBeNull();
   });
