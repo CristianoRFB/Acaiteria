@@ -12,10 +12,11 @@ Atualizado em 2026-11-06. Este documento registra evidências verificadas nos re
 ## Incidente atual de CI e correção isolada
 - CI da demo falhou em `npm ci` na execução [42279428679](https://github.com/CristianoRFB/Acaiteria/actions/runs/42279428679), antes de lint/testes/build. Causa observada nos logs: transitive dependencies ausentes em `package-lock.json` (incluindo `proxy-agent` e dependências Puppeteer).
 - Branch `fix/acaiteria-lockfile-ci-20261106` partiu da `main` para corrigir exclusivamente a instalação reproduzível. Um job temporário executou `npm install --package-lock-only --ignore-scripts` e `npm ci --dry-run --ignore-scripts` com sucesso em [42280923417](https://github.com/CristianoRFB/Acaiteria/actions/runs/42280923417). O workflow temporário foi removido.
-- PR de revisão: [#1 — corrigir lockfile](https://github.com/CristianoRFB/Acaiteria/pull/1). A revisão e a execução de CI completo deste PR são necessárias antes do merge.
+- PR de revisão: [#1 — CI, dependências e segurança](https://github.com/CristianoRFB/Acaiteria/pull/1). As versões corrigidas incluem Zod, RE2JS e fast-uri no aplicativo, e Zod, rimraf/glob/minimatch e body-parser nas Functions; checar sempre os pacotes resolvidos no lockfile. O job [42282214151](https://github.com/CristianoRFB/Acaiteria/actions/runs/42282214151) concluiu `npm ci --prefix functions --dry-run` e `npm audit --prefix functions --omit=dev` com sucesso. O frontend também passou `npm audit --omit=dev`.
+- O CI foi dividido em jobs independentes `security` e `quality`, sem suprimir alertas: a auditoria completa de dependências de desenvolvimento segue com vulnerabilidades e precisa de correção/revisão; quality deverá executar os testes mesmo se o audit falhar. Não inferir que build ou testes passaram sem verificar a execução mais recente.
 
 ## Bloqueios e ordem recomendada
-1. Confirmar aprovação do CI completo da correção de lockfile; corrigir outros problemas que aparecerem.
+1. Confirmar resultados do job `quality` do CI atualizado; corrigir erros de lint, typecheck, testes ou build e investigar alertas ainda abertos em `security`, inclusive ferramentas de desenvolvimento.
 2. Integrar as correções sem sobrescrever a branch multi-tenant ou misturar o Worker comercial com a aplicação operacional.
 3. Homologar os fluxos cliente → pedido persistido → painel → entrega → acompanhamento em ambiente Firebase de testes autorizado.
 4. Verificar autenticação e permissões por tenant com testes negativos A × B; revisar isolamento de pedidos e dados pessoais.
