@@ -1,0 +1,34 @@
+name: One-time lockfile repair
+on:
+  push:
+    branches:
+      - fix/acaiteria-lockfile-ci-20261106
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate npm lockfile without running dependency scripts
+        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Validate lockfile against package manifests
+        run: npm ci --dry-run --ignore-scripts --no-audit --no-fund
+      - name: Commit only repaired lockfile
+        run: |
+          if git diff --quiet -- package-lock.json; then
+            echo 'Lockfile already synchronized'
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          git commit -m "fix(security): lock patched dependency versions"
+          git push origin HEAD:fix/acaiteria-lockfile-ci-20261106
