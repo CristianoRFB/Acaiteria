@@ -1,0 +1,30 @@
+name: One-time functions dependency refresh
+on:
+  push:
+    branches: [fix/acaiteria-lockfile-ci-20261106]
+permissions:
+  contents: write
+jobs:
+  refresh-functions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Refresh functions lockfile
+        run: npm install --prefix functions --package-lock-only --ignore-scripts --no-audit --no-fund
+      - name: Patch vulnerable transitive packages within permitted ranges
+        run: npm audit fix --prefix functions --package-lock-only --ignore-scripts --omit=dev || true
+      - name: Verify clean functions installation
+        run: npm ci --prefix functions --dry-run --ignore-scripts --no-audit --no-fund
+      - name: Commit functions dependency lockfile only
+        run: |
+          if git diff --quiet -- functions/package-lock.json; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add functions/package-lock.json
+          git commit -m "fix(functions): refresh lockfile and patch transitive dependencies"
+          git push origin HEAD:fix/acaiteria-lockfile-ci-20261106
+      - name: Audit deployed backend dependencies
+        run: npm audit --prefix functions --omit=dev
